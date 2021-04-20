@@ -2,7 +2,6 @@
 Description=cuems-engine
 After=network.target cuems-nodeconf.service jackd.service rtpmidid.service
 Requires=cuems-nodeconf.service jackd.service rtpmidid.service
-Wants=cuems-wifi.service apache2.service
 
 [Service]
 Type=exec
