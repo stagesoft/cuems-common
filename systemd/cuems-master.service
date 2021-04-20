@@ -1,0 +1,13 @@
+[Unit]
+Description=cuems-master
+Requires=apache2.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+
+#ExecCondition=systemctl show cuems-nodeconf.service --property=ExecMainStatus
+
+[Install]
+WantedBy=multi-user.target
