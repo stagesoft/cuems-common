@@ -1,0 +1,14 @@
+[Unit]
+Description=cuems-nodeconf
+After=network.target avahi-daemon.service
+Requires=avahi-daemon.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Restart=no
+ExecStart=/home/ion/.pyenv/versions/cuems/bin/python /home/ion/src/cuems/cuems-engine/src/nodeconf.py
+SuccessExitStatus=100 101
+
+[Install]
+WantedBy=multi-user.target

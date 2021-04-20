@@ -1,0 +1,15 @@
+[Unit]
+Description=cuems-engine
+After=network.target cuems-nodeconf.service jackd.service rtpmidid.service
+Requires=cuems-nodeconf.service jackd.service rtpmidid.service
+Wants=cuems-wifi.service apache2.service
+
+[Service]
+Type=exec
+Restart=always
+ExecStartPre=/bin/mkdir -p /var/run/cuems-engine
+PIDFile=/var/run/cuems-engine/service.pid
+ExecStart=/home/ion/.pyenv/versions/cuems/bin/python /home/ion/src/cuems/cuems-engine/src/engine.py
+
+[Install]
+WantedBy=multi-user.target
