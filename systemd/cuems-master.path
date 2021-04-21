@@ -1,0 +1,11 @@
+[Unit]
+Description=Monitor if cuems-master lock file exists
+Requires=cuems-nodeconf.service
+After=cuems-nodeconf.service
+
+[Path]
+PathExists=/etc/cuems/master.lock
+Unit=cuems-master.service
+
+[Install]
+WantedBy=multi-user.target
