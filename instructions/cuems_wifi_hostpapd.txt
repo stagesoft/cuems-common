@@ -1,0 +1,65 @@
+apt purge network-manager*
+
+
+/etc/apt/preferences:
+Package: network-manager*
+Pin: release *
+Pin-Priority: -1
+
+
+apt install net-tools iw wireless-tools hostapd bridge-utils rfkill resolvconf isc-dhcp-server
+
+sudo systemctl unmask hostapd
+sudo systemctl enable hostapd
+sudo systemctl start hostapd
+
+/etc/default/isc-dhcp-server:
+INTERFACESv4="wlo2"
+
+
+/etc/network/interfaces:
+
+# wireless wlo2
+auto wlo2
+allow-hotplug wlo2
+iface wlo2 inet static
+	address 192.168.6.1
+	netmask 255.255.255.0
+
+
+
+/etc/hostapd/hostapd.conf:
+interface=wlo2
+driver=nl80211
+ssid=Cuems
+channel=8
+hw_mode=g
+ieee80211n=1
+ieee80211ac=1
+wme_enabled=1
+macaddr_acl=0
+auth_algs=1
+wpa=2
+wpa_passphrase=debolodebolo
+wpa_key_mgmt=WPA-PSK
+wpa_pairwise=TKIP
+rsn_pairwise=CCMP
+
+---
+
+hw_mode = a(5GHZ), g(2,4GHZ)
+
+
+/etc/dhcpd/dhcpd.conf:
+default-lease-time 86400;
+max-lease-time 604800;
+
+authoritative;
+
+subnet 192.168.6.0 netmask 255.255.255.0 {
+        ## dhcp start  and end IP range ##
+        range 192.168.6.2 192.168.6.200;
+        option subnet-mask 255.255.255.0;     ## subnet 
+        option broadcast-address 192.168.6.255; ## broadcast
+#        option routers 192.168.6.1; ## router IP
+}
