@@ -29,6 +29,8 @@ if len(sys.argv) > 1:
 else:
     print('Especify if you just want test local outputs or really write system files!!')
     print(f'use: python {__file__} test or python {__file__} write')
+    print(f'\ttest will create local files for you to check changes before applying them')
+    print(f'\twrite will modify and/or create files in system and cuems dirs')
     exit()
 
 ##### /etc/cuems/settings.xml
