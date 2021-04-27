@@ -1,0 +1,11 @@
+apt-get install libapache2-mod-dnssd
+
+---- create cert
+
+sudo openssl req -new > new.cert.csr
+
+sudo openssl rsa -in privkey.pem -out new.cert.key
+sudo openssl x509 -in new.cert.csr -out new.cert.cert -req -signkey new.cert.key -days NNN
+
+sudo cp new.cert.cert /etc/ssl/certs/apache-selfsigned.crt
+sudo cp new.cert.key /etc/ssl/private/apache-selfsigned.key
