@@ -7,7 +7,7 @@ Requires=avahi-daemon.service
 Type=oneshot
 RemainAfterExit=yes
 Restart=no
-ExecStart=/home/ion/.pyenv/versions/cuems/bin/python /home/ion/src/cuems/cuems-engine/src/nodeconf.py
+ExecStart=/usr/bin/python3.7 /home/stagelab/src/cuems-engine/src/nodeconf.py
 SuccessExitStatus=100 101
 
 [Install]
