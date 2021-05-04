@@ -100,22 +100,6 @@ else:
     
 
 
-#####/etc/avahi/sudoers
-print(f'Modifying /etc/avahi/sudoers')
-with open('/etc/sudoers', 'r') as configfile:
-    lines = configfile.readlines()
-
-for index, line in enumerate(lines.copy()):
-    if line[:26] == '#includedir /etc/sudoers.d':
-        lines[index] = f'includedir /etc/sudoers.d\n'
-
-if write_flag:
-    with open('/etc/sudoers', 'w') as writingfile:
-        writingfile.writelines(lines)
-else:
-    with open('sudoers', 'w') as writingfile:
-        writingfile.writelines(lines)
-
 
 #####/etc/hostname
 print(f'Modifying /etc/hostname')
