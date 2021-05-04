@@ -7,8 +7,7 @@ import sys
 import xml.etree.ElementTree
 
 # Retrieve MAC address from 1st network interface
-iface = netifaces.gateways()['default'][netifaces.AF_INET][1]
-mac = netifaces.ifaddresses(iface)[netifaces.AF_LINK][0]['addr'].replace(':','').lower()
+mac = netifaces.ifaddresses('ethernet0')[netifaces.AF_LINK][0]['addr'].replace(':','').lower()
 
 # Generate a new uuid
 uuid = str(uuid1())
@@ -117,3 +116,31 @@ else:
     with open('sudoers', 'w') as writingfile:
         writingfile.writelines(lines)
 
+
+#####/etc/hostname
+print(f'Modifying /etc/hostname')
+with open('/etc/hostname', 'r') as configfile:
+    lines = configfile.readlines()
+
+lines[0]=mac
+
+if write_flag:
+    with open('/etc/hostname', 'w') as writingfile:
+        writingfile.writelines(lines)
+else:
+    with open('hostname', 'w') as writingfile:
+        writingfile.writelines(lines)
+
+#####/etc/hosts
+print(f'Modifying /etc/hosts')
+with open('/etc/hosts', 'r') as configfile:
+    lines = configfile.readlines()
+
+lines[1]=f"127.0.1.1       {mac}"
+
+if write_flag:
+    with open('/etc/hosts', 'w') as writingfile:
+        writingfile.writelines(lines)
+else:
+    with open('hosts', 'w') as writingfile:
+        writingfile.writelines(lines)
