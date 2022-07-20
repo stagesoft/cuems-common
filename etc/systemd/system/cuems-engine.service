@@ -1,7 +1,7 @@
 [Unit]
 Description=cuems-engine
-After=cuems-nodeconf.service rtpmidid.service lightdm.service
-Requires=cuems-nodeconf.service rtpmidid.service lightdm.service
+After=cuems-xorg.service rtpmidid.service
+Requires=cuems-nodeconf.service cuems-xorg.service rtpmidid.service
 
 [Service]
 Environment="DISPLAY=:0.0"
