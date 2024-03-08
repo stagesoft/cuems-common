@@ -1,0 +1,15 @@
+[Unit]
+Description=cuems-xorg
+After=systemd-user-sessions.service cuems-nodeconf.service
+Requires=cuems-nodeconf.service
+
+[Service]
+Environment="DISPLAY=:0.0"
+Type=exec
+Restart=always
+ExecStartPre=/bin/mkdir -p /var/run/cuems-xorg
+PIDFile=/var/run/cuems-xorg/service.pid
+ExecStart=/usr/bin/xinit /etc/X11/xinit/xinitrc.cuems -- /usr/bin/X -br -nocursor
+
+[Install]
+WantedBy=graphical.target
