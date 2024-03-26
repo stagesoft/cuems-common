@@ -1,0 +1,13 @@
+[Unit]
+Description=cuems-osclistener
+After=rtpmidid.service
+Requires=rtpmidid.service
+
+[Service]
+User=stagelab
+Group=stagelab
+Type=exec
+ExecStart=/usr/bin/python3.7 /home/stagelab/src/cuems-wsclient/osclistener.py
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,13 @@
+[Unit]
+Description=Start and stop Cuems system
+After=network-online.target
+Requires=network.target
+
+[Service]
+User=stagelab
+Group=stagelab
+Type=oneshot
+ExecStart=/bin/bash /usr/local/bin/start.sh
+
+[Install]
+WantedBy=default.target
