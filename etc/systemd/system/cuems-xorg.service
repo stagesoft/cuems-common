@@ -1,7 +1,6 @@
 [Unit]
 Description=cuems-xorg
-After=systemd-user-sessions.service cuems-nodeconf.service
-Requires=cuems-nodeconf.service
+After=systemd-user-sessions.service
 
 [Service]
 Environment="DISPLAY=:0.0"
