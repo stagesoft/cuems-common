@@ -1,7 +1,7 @@
+## set sudo systemctl set-default graphical.target
 [Unit]
 Description=cuems-xorg
-After=cuems-nodeconf.service rtpmidid.service
-Requires=cuems-nodeconf.service rtpmidid.service
+After=graphical.target systemd-user-sessions.service
 
 [Service]
 Environment="DISPLAY=:0.0"
