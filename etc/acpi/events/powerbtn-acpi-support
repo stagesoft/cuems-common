@@ -1,0 +1,3 @@
+event=power (PBTN)
+action=/etc/acpi/powerbtn-custom-handler.sh
+

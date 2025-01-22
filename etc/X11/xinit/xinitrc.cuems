@@ -1,0 +1,31 @@
+#!/bin/sh
+
+# invoke global X session script
+#export XAUTHORITY=/home/stagelab/.Xauthority
+#
+# 1080p mode
+xrandr --newmode "1920x1080_60.00" 173.00  1920 2048 2248 2576  1080 1083 1088 1120 -hsync +vsync
+# WXGA mode
+xrandr --newmode "1280x800_60.00"   83.50  1280 1352 1480 1680  800 803 809 831 -hsync +vsync
+
+# 1080p modes
+xrandr --addmode HDMI-1 1920x1080_60.00
+xrandr --addmode DP-1 1920x1080_60.00
+
+# WXGA modes
+xrandr --addmode HDMI-1 1280x800_60.00
+xrandr --addmode DP-1 1280x800_60.00
+
+
+# WXGA 2 monitors
+xrandr --output HDMI-1 --primary --mode 1280x800_60.00
+xrandr --output DP-1 --mode 1280x800_60.00 --right-of HDMI-1
+
+# 1080p 2 monitors
+#xrandr --output HDMI-1 --primary --mode 1920x1080_60.00 --output DP-1 --mode 1920x1080_60.00 --right-of HDMI-1
+
+/usr/bin/xset dpms 0 0 0
+/usr/bin/xset s off -dpms
+
+xsetbg -fullscreen /home/stagelab/pantalla_stagelab.png
+/usr/bin/openbox
