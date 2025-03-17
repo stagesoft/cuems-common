@@ -7,8 +7,8 @@ After=systemd-user-sessions.service
 Environment="DISPLAY=:0.0"
 Type=exec
 Restart=always
-ExecStartPre=/bin/mkdir -p /var/run/cuems-xorg
-PIDFile=/var/run/cuems-xorg/service.pid
+ExecStartPre=/bin/mkdir -p /run/cuems-xorg
+PIDFile=/run/cuems-xorg/service.pid
 ExecStart=/usr/bin/xinit /etc/X11/xinit/xinitrc.cuems -- /usr/bin/X -br -nocursor
 
 [Install]

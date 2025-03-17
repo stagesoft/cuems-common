@@ -8,8 +8,8 @@ Requires=cuems-node.service apache2.service
 Environment="DISPLAY=:0.0"
 Type=exec
 Restart=always
-ExecStartPre=/bin/mkdir -p /var/run/cuems-engine
-PIDFile=/var/run/cuems-engine/service.pid
+ExecStartPre=/bin/mkdir -p /run/cuems-engine
+PIDFile=/run/cuems-engine/service.pid
 ExecStart=/usr/bin/python3.7 /home/stagelab/src/cuems_editor/editor.py
 
 [Install]
