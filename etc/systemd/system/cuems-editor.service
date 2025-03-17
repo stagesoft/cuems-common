@@ -10,7 +10,7 @@ Type=exec
 Restart=always
 ExecStartPre=/bin/mkdir -p /run/cuems-engine
 PIDFile=/run/cuems-engine/service.pid
-ExecStart=/usr/bin/python3.7 /home/stagelab/src/cuems_editor/editor.py
+ExecStart=/usr/bin/python3.11 /home/stagelab/src/cuems-engine/src/ws-server.py
 
 [Install]
 WantedBy=cuems-controller.service
