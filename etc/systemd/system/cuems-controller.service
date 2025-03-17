@@ -1,7 +1,7 @@
 [Unit]
 Description=Cuems Controller service group
 Requires=apache2.service
-wants=cuems-wifi.service
+Wants=cuems-wifi.service
 
 [Service]
 Type=oneshot
