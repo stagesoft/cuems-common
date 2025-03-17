@@ -1,5 +1,6 @@
 [Unit]
 Description=cuems-xorg
+PartOf=cuems-node.service
 After=systemd-user-sessions.service
 
 [Service]

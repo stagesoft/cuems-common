@@ -1,6 +1,6 @@
 [Unit]
 Description=Cuems Controller service group
-Requires=apache2.service
+Requires=cuems-node.service apache2.service cuems-editor.service
 Wants=cuems-wifi.service
 
 [Service]

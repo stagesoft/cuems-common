@@ -1,9 +1,8 @@
 [Unit]
 Description=cuems-editor
-PartOf=cuems-master.service
-After=rtpmidid.service lightdm.service cuems-engine.service cuems-master.service cuems-master.service
-Requires=rtpmidid.service lightdm.service cuems-engine.service
-
+PartOf=cuems-controller.service
+After=cuems-node.service apache2.service
+Requires=cuems-node.service apache2.service
 
 [Service]
 Environment="DISPLAY=:0.0"

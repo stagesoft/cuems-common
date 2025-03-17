@@ -1,13 +1,12 @@
 [Unit]
-Description=cuems-master
-Requires=apache2.service
+Description=Cuems Node service group
+Requires=cuems-engine.service rtpmidid.service cuems-xorg.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/true
 
-#ExecCondition=systemctl show cuems-nodeconf.service --property=ExecMainStatus
 
 [Install]
 WantedBy=multi-user.target
