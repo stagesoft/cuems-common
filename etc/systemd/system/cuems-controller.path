@@ -1,7 +1,5 @@
 [Unit]
 Description=Monitor if cuems-controller lock file exists
-Requires=cuems-nodeconf.service
-After=cuems-nodeconf.service
 
 [Path]
 PathExists=/etc/cuems/master.lock
