@@ -1,9 +1,9 @@
 [Unit]
 Description=cuems-wifi
 # When systemd stops or restarts the app.service, the action is propagated to this unit
-PartOf=cuems-master.service
+PartOf=cuems-controller.service
 # Start this unit after the app.service start
-After=cuems-master.service
+After=cuems-controller.service
 Requires=hostapd.service isc-dhcp-server.service
 
 [Service]
@@ -14,4 +14,4 @@ ExecStart=/bin/true
 #ExecCondition=systemctl show cuems-nodeconf.service --property=ExecMainStatus
 
 [Install]
-WantedBy=cuems-master.service
+WantedBy=cuems-controller.service

@@ -1,0 +1,10 @@
+[Unit]
+Description=Cuems Controller service group
+Requires=apache2.service
+wants=cuems-wifi.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+
