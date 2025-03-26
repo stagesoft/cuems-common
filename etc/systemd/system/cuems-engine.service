@@ -1,8 +1,8 @@
 [Unit]
 Description=cuems-engine
 PartOf=cuems-node.service
-After=rtpmidid.service cuems-xorg.service
-Requires=rtpmidid.service cuems-xorg.service
+After=cuems-nodeconf.service rtpmidid.service cuems-xorg.service
+Requires=rtpmidid.service cuems-xorg.service cuems-nodeconf.service
 
 [Service]
 Environment="DISPLAY=:0.0"
@@ -10,7 +10,7 @@ Type=exec
 Restart=always
 ExecStartPre=/bin/mkdir -p /run/cuems-engine
 PIDFile=/run/cuems-engine/service.pid
-ExecStart=/usr/bin/python3.11 /home/stagelab/src/cuems-engine/src/engine.py
+ExecStart=/home/stagelab/.pyenv/versions/cuems/bin/python3 /home/stagelab/src/cuems/cuems-engine/src/engine.py
 
 [Install]
 WantedBy=cuems-node.service
