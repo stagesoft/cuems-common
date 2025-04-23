@@ -7,8 +7,8 @@ Wants=network-online.target
 
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
+Type=notify
+NotifyAccess=main
 Restart=no
 ExecStart=/home/stagelab/.pyenv/versions/cuems/bin/python3 /home/stagelab/src/cuems/cuems-engine/src/nodeconf.py
 SuccessExitStatus=100 101
