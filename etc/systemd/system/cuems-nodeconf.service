@@ -2,7 +2,8 @@
 Description=cuems-nodeconf
 PartOf=cuems-node.service
 Requires=avahi-daemon.service
-After=network.target avahi-daemon.service
+After=network-online.target avahi-daemon.service
+Wants=network-online.target
 
 
 [Service]
