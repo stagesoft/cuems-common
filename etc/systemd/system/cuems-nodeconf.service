@@ -9,9 +9,9 @@ Wants=network-online.target
 [Service]
 Type=notify
 NotifyAccess=main
-Restart=no
+Restart=on-failure	
 ExecStart=/home/stagelab/.pyenv/versions/cuems/bin/python3 /home/stagelab/src/cuems/cuems-engine/src/nodeconf.py
-SuccessExitStatus=100 101
+SuccessExitStatus=101
 TimeoutSec=900
 
 [Install]
