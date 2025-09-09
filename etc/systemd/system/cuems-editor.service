@@ -5,12 +5,11 @@ After=cuems-node.service apache2.service
 Requires=cuems-node.service apache2.service
 
 [Service]
-Environment="DISPLAY=:0.0"
 Type=exec
 Restart=always
 ExecStartPre=/bin/mkdir -p /run/cuems-engine
 PIDFile=/run/cuems-engine/service.pid
-ExecStart=/home/stagelab/.pyenv/versions/cuems/bin/python3 /home/stagelab/src/cuems/cuems-engine/src/ws-server.py
+ExecStart=/usr/lib/cuems/bin/python3 /home/debian/src/cuems/cuems-editor/ws-server.py
 
 [Install]
 WantedBy=cuems-controller.service

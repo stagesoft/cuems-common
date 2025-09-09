@@ -1,6 +1,6 @@
 [Unit]
 Description=cuems-nodeconf
-PartOf=cuems-node.service
+#PartOf=cuems-node.service
 Requires=avahi-daemon.service
 After=network-online.target avahi-daemon.service avahi-autoipd.service
 
