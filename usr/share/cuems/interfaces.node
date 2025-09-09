@@ -1,0 +1,33 @@
+# This file describes the network interfaces available on your system
+# and how to activate them. For more information, see interfaces(5).
+
+source /etc/network/interfaces.d/*
+
+#cuems node network interfaces file
+
+# The loopback network interface
+auto lo wifi0
+
+iface lo inet loopback
+
+iface ethernet0 inet manual
+iface ethernet1 inet manual
+
+auto bridge0
+iface bridge0 inet ipv4ll
+    gateway 192.254.1.1
+    dns-nameservers 192.254.1.1
+    bridge_ports ethernet0 ethernet1
+
+
+# wireless wlan0
+iface wifi0 inet static
+    address 192.168.6.1
+    netmask 255.255.255.0
+#    gateway 192.168.6.1
+#    dns-nameservers 192.168.6.1
+
+iface wifi-out inet dhcp
+	wpa-ssid wifiname
+	wpa-psk wifipass
+
