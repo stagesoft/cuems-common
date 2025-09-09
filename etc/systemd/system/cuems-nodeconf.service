@@ -1,16 +1,21 @@
 [Unit]
 Description=cuems-nodeconf
-#PartOf=cuems-node.service
+PartOf=cuems-node.service
 Requires=avahi-daemon.service
-After=network-online.target avahi-daemon.service avahi-autoipd.service
+After=network-online.target avahi-daemon.service
+Wants=network-online.target
+StartLimitBurst=5
+StartLimitIntervalSec=33
+
 
 [Service]
-Type=oneshot
+#Environment="PYTHONPATH=/usr/lib/cuems/site-packages"
+Type=notify
 RemainAfterExit=yes
-Restart=no
-ExecStartPre=/bin/sleep 10
-ExecStart=/usr/lib/cuems/bin/python3 /home/stagelab/src/cuems/cuems-nodeconf/CuemsNodeConf.py
-SuccessExitStatus=100 101
+NotifyAccess=main
+Restart=on-failure
+RestartSec=10
+ExecStart=/home/ion/.pyenv/versions/3.11.2/envs/cuems/bin/python3 /home/ion/src/cuems/cuems-nodeconf/run_nodeconf.py
 TimeoutSec=900
 
 [Install]
