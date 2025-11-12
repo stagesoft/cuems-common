@@ -1,0 +1,38 @@
+Source: cuems-common
+Section: admin
+Priority: optional
+Maintainer: Ion Reguera <ion@stagelab.coop>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.0
+
+Package: cuems-common
+Architecture: all
+Depends: ${misc:Depends},
+         cuems-utils (>= 1.0.0),
+         systemd,
+         python3,
+         kwin-wayland,
+         apache2,
+         openssl,
+         avahi-daemon,
+         isc-dhcp-server,
+         hostapd,
+         rsync,
+         iproute2
+Description: CUEMS common configuration and systemd services
+ This package contains systemd service files, configuration files,
+ and scripts required for CUEMS operation.
+ .
+ All Python scripts use /usr/lib/cuems/bin/python3 provided by
+ the cuems-utils package.
+ .
+ This package requires isc-dhcp-server and hostapd for WiFi access
+ point functionality (cuems-wifi.service and hostapd.service).
+ .
+ This package uses Wayland (kwin-wayland) for display server
+ functionality (cuems-wayland.service).
+ .
+ This package installs Apache2 site configuration files and enables
+ required Apache2 modules and sites. Module files are provided by their
+ respective Debian packages (libapache2-mod-*).
+

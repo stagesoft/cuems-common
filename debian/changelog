@@ -1,0 +1,10 @@
+cuems-common (1.0.0-1) unstable; urgency=medium
+
+  * Initial release
+  * CUEMS common configuration and systemd services
+  * All Python scripts use /usr/lib/cuems/bin/python3 from cuems-utils
+  * Wayland support via cuems-wayland.service
+  * WiFi access point support via hostapd and isc-dhcp-server
+
+ -- Ion Reguera <ion@stagelab.coop>  Wed, 12 Nov 2025 19:10:00 +0100
+

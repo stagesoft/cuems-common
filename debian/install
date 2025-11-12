@@ -1,0 +1,59 @@
+# Debian package installation mapping
+# Format: source_path destination_path
+
+# CUEMS binaries and scripts (must be executable)
+scripts/check-ip.sh usr/lib/cuems/bin/
+scripts/wifi-auto.sh usr/lib/cuems/bin/
+scripts/cuems-healthcheck.sh usr/lib/cuems/bin/
+
+# Python scripts (executable)
+scripts/config_mac_and_uuid.py usr/lib/cuems/bin/
+
+# Systemd unit files (excluding cuems-osclistener.service and cuems-xorg.service)
+# Package-provided services should be in /lib/systemd/system/ (not /etc/systemd/system/)
+etc/systemd/system/cuems-controller.target lib/systemd/system/
+etc/systemd/system/cuems-wifi.target lib/systemd/system/
+etc/systemd/system/cuems-editor.service lib/systemd/system/
+etc/systemd/system/cuems-engine.service lib/systemd/system/
+etc/systemd/system/cuems-midiconnector.service lib/systemd/system/
+etc/systemd/system/cuems-node-engine.service lib/systemd/system/
+etc/systemd/system/cuems-node.service lib/systemd/system/
+etc/systemd/system/cuems-nodeconf.service lib/systemd/system/
+etc/systemd/system/cuems-start.service lib/systemd/system/
+etc/systemd/system/cuems-wifi.service lib/systemd/system/
+etc/systemd/system/hostapd.service lib/systemd/system/
+etc/systemd/system/rsync@.service lib/systemd/system/
+etc/systemd/system/cuems-wayland.service lib/systemd/system/
+etc/systemd/system/*.path lib/systemd/system/
+etc/systemd/system/*.socket lib/systemd/system/
+# Systemd drop-in directories (package-provided overrides)
+etc/systemd/system/avahi-daemon.d/* lib/systemd/system/avahi-daemon.service.d/
+etc/systemd/system/apache2.service.d/* lib/systemd/system/apache2.service.d/
+etc/systemd/system/isc-dhcp-server.service.d/* lib/systemd/system/isc-dhcp-server.service.d/
+etc/systemd/system/rtpmidid.service.d/* lib/systemd/system/rtpmidid.service.d/
+
+# Configuration files
+etc/X11/xinit/xinitrc.cuems etc/X11/xinit/
+etc/avahi/avahi-daemon.conf etc/avahi/
+etc/network/interfaces etc/network/
+etc/rsyncd.conf etc/
+etc/rsyncd.secrets etc/
+etc/rsyslog.conf etc/
+etc/hostapd/hostapd.conf etc/hostapd/
+etc/dhcp/dhcpd.conf etc/dhcp/
+etc/sudoers.d/99-cuems etc/sudoers.d/
+etc/sysctl.d/99-cuems-performance.conf etc/sysctl.d/
+etc/logrotate.d/cuems etc/logrotate.d/
+
+# Shared data files
+usr/share/cuems/* usr/share/cuems/
+
+# Apache configuration
+# Note: Module files come from their respective Debian packages (libapache2-mod-*)
+# We only install our CUEMS site configuration files and enable modules/sites in postinst
+etc/apache2/sites-available/cuems-ui.conf etc/apache2/sites-available/
+etc/apache2/sites-available/cuems-ui-ssl.conf etc/apache2/sites-available/
+
+# ACPI scripts (if needed)
+etc/acpi/** etc/acpi/
+

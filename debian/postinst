@@ -1,0 +1,161 @@
+#!/bin/bash
+set -e
+
+# CUEMS Common package post-installation script
+
+# Ensure all scripts are executable
+if [ -d /usr/lib/cuems/bin ]; then
+    chmod +x /usr/lib/cuems/bin/*.sh 2>/dev/null || true
+    chmod +x /usr/lib/cuems/bin/*.py 2>/dev/null || true
+    
+    # Verify critical scripts
+    if [ ! -x /usr/lib/cuems/bin/check-ip.sh ]; then
+        echo "WARNING: check-ip.sh is not executable, fixing..." >&2
+        chmod +x /usr/lib/cuems/bin/check-ip.sh
+    fi
+fi
+
+# Verify Python wrapper exists (provided by cuems-utils package)
+if [ ! -f /usr/lib/cuems/bin/python3 ]; then
+    echo "ERROR: /usr/lib/cuems/bin/python3 not found!" >&2
+    echo "Please ensure cuems-utils package is installed." >&2
+    exit 1
+fi
+
+# Verify it's executable
+if [ ! -x /usr/lib/cuems/bin/python3 ]; then
+    echo "WARNING: /usr/lib/cuems/bin/python3 is not executable, fixing..." >&2
+    chmod +x /usr/lib/cuems/bin/python3
+fi
+
+# Reload systemd to pick up new unit files
+# Use deb-systemd-helper instead of direct systemctl call
+if command -v deb-systemd-helper >/dev/null 2>&1; then
+    deb-systemd-helper update-state >/dev/null 2>&1 || true
+elif command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload
+fi
+
+# Set proper permissions on sensitive files
+if [ -f /etc/rsyncd.secrets ]; then
+    chmod 600 /etc/rsyncd.secrets
+fi
+
+if [ -f /etc/sudoers.d/99-cuems ]; then
+    chmod 440 /etc/sudoers.d/99-cuems
+fi
+
+# Generate SSL certificates for Apache2 if they don't exist
+SSL_CERT="/etc/ssl/certs/apache-selfsigned.crt"
+SSL_KEY="/etc/ssl/private/apache-selfsigned.key"
+SSL_SERVER_NAME="cuems.local"
+SSL_ALIAS_NAME="controller.local"
+
+if [ ! -f "$SSL_CERT" ] || [ ! -f "$SSL_KEY" ]; then
+    # Ensure directories exist
+    mkdir -p /etc/ssl/certs
+    mkdir -p /etc/ssl/private
+    
+    # Generate self-signed certificate with Subject Alternative Name (SAN)
+    if command -v openssl >/dev/null 2>&1; then
+        # Create temporary config file for SAN extension
+        SSL_CONFIG=$(mktemp)
+        cat > "$SSL_CONFIG" <<EOF
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+
+[req_distinguished_name]
+C = ES
+ST = State
+L = City
+O = CUEMS
+CN = ${SSL_SERVER_NAME}
+
+[v3_req]
+keyUsage = keyEncipherment, dataEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = ${SSL_SERVER_NAME}
+DNS.2 = ${SSL_ALIAS_NAME}
+EOF
+        
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+            -keyout "$SSL_KEY" \
+            -out "$SSL_CERT" \
+            -config "$SSL_CONFIG" \
+            -extensions v3_req \
+            2>/dev/null
+        
+        # Clean up temporary config file
+        rm -f "$SSL_CONFIG"
+        
+        # Set proper permissions
+        chmod 644 "$SSL_CERT"
+        chmod 600 "$SSL_KEY"
+        
+        echo "Generated SSL certificate for ${SSL_SERVER_NAME} and ${SSL_ALIAS_NAME}"
+    else
+        echo "WARNING: openssl not found, cannot generate SSL certificates!" >&2
+        echo "Apache2 SSL site may not work without certificates." >&2
+    fi
+fi
+
+# Enable Apache2 modules
+if command -v a2enmod >/dev/null 2>&1; then
+    # List of modules to enable (extracted from mods-enabled/)
+    MODULES="access_compat alias auth_basic authn_core authn_file authz_core authz_host authz_user autoindex deflate dir dnssd env filter mime mpm_prefork negotiation proxy proxy_http proxy_wstunnel reqtimeout rewrite setenvif socache_shmcb ssl status"
+    
+    for module in $MODULES; do
+        if [ -f /etc/apache2/mods-available/${module}.load ] || [ -f /etc/apache2/mods-available/${module}.conf ]; then
+            a2enmod -q ${module} 2>/dev/null || true
+        fi
+    done
+    
+    # Reload Apache2 configuration
+    # Use invoke-rc.d instead of direct systemctl call
+    if command -v invoke-rc.d >/dev/null 2>&1; then
+        invoke-rc.d apache2 reload >/dev/null 2>&1 || true
+    elif command -v systemctl >/dev/null 2>&1 && systemctl is-enabled apache2.service >/dev/null 2>&1; then
+        systemctl reload apache2.service >/dev/null 2>&1 || true
+    fi
+fi
+
+# Configure Apache2 sites
+if command -v a2dissite >/dev/null 2>&1 && command -v a2ensite >/dev/null 2>&1; then
+    # Disable all existing enabled sites first
+    # This ensures we start with a clean slate and only our sites are enabled
+    if [ -d /etc/apache2/sites-enabled ]; then
+        for site_file in /etc/apache2/sites-enabled/*.conf; do
+            # Check if file exists (handles case where glob doesn't match)
+            [ -e "$site_file" ] || break
+            if [ -L "$site_file" ]; then
+                site_name=$(basename "$site_file" .conf)
+                a2dissite -q "$site_name" 2>/dev/null || true
+            fi
+        done
+    fi
+    
+    # Enable only our CUEMS sites
+    CUEMS_SITES="cuems-ui cuems-ui-ssl"
+    
+    for site in $CUEMS_SITES; do
+        if [ -f /etc/apache2/sites-available/${site}.conf ]; then
+            a2ensite -q ${site} 2>/dev/null || true
+        fi
+    done
+    
+    # Reload Apache2 configuration
+    # Use invoke-rc.d instead of direct systemctl call
+    if command -v invoke-rc.d >/dev/null 2>&1; then
+        invoke-rc.d apache2 reload >/dev/null 2>&1 || true
+    elif command -v systemctl >/dev/null 2>&1 && systemctl is-enabled apache2.service >/dev/null 2>&1; then
+        systemctl reload apache2.service >/dev/null 2>&1 || true
+    fi
+fi
+
+echo "CUEMS Common package installed successfully."
+

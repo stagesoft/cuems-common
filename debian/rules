@@ -1,0 +1,18 @@
+#!/usr/bin/make -f
+# Debian packaging rules for CUEMS Common
+
+%:
+	dh $@
+
+override_dh_fixperms:
+	# Ensure all scripts in /usr/lib/cuems/bin/ are executable
+	dh_fixperms
+	chmod +x debian/cuems-common/usr/lib/cuems/bin/*.sh 2>/dev/null || true
+	chmod +x debian/cuems-common/usr/lib/cuems/bin/*.py 2>/dev/null || true
+
+override_dh_install:
+	dh_install
+	# Ensure scripts are executable after installation
+	find debian/cuems-common/usr/lib/cuems/bin/ -type f -name "*.sh" -exec chmod +x {} \;
+	find debian/cuems-common/usr/lib/cuems/bin/ -type f -name "*.py" -exec chmod +x {} \;
+
