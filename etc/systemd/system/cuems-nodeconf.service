@@ -15,7 +15,7 @@ RemainAfterExit=yes
 NotifyAccess=main
 Restart=on-failure
 RestartSec=10
-ExecStart=/home/ion/.pyenv/versions/3.11.2/envs/cuems/bin/python3 /home/ion/src/cuems/cuems-nodeconf/run_nodeconf.py
+ExecStart=/usr/lib/cuems/bin/python3 /home/ion/src/cuems/cuems-nodeconf/run_nodeconf.py
 TimeoutSec=900
 
 [Install]

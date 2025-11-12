@@ -1,6 +1,6 @@
 [Unit]
 Description=Cuems Node service group
-Requires=cuems-nodeconf.service rtpmidid.service cuems-xorg.service cuems-engine.service
+Requires=cuems-nodeconf.service rtpmidid.service cuems-engine.service cuems-wayland.service
 
 [Service]
 Type=oneshot

@@ -1,0 +1,8 @@
+[Unit]
+Description=Cuems WiFi service group target
+Documentation=man:systemd.special(7)
+PartOf=cuems-controller.target
+After=network.target cuems-controller.target
+Requires=isc-dhcp-server.service
+Before=hostapd.service
+

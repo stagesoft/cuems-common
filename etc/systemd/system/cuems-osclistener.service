@@ -7,7 +7,7 @@ Requires=rtpmidid.service
 User=stagelab
 Group=stagelab
 Type=exec
-ExecStart=/usr/bin/python3.7 /home/stagelab/src/cuems-wsclient/osclistener.py
+ExecStart=/usr/lib/cuems/bin/python3 /home/stagelab/src/cuems-wsclient/osclistener.py
 
 [Install]
 WantedBy=default.target

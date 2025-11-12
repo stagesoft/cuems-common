@@ -1,0 +1,6 @@
+[Unit]
+Description=Cuems Controller service group target
+Documentation=man:systemd.special(7)
+Requires=cuems-node.service
+Wants=cuems-wifi.target
+

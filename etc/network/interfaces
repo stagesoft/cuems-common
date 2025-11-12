@@ -23,7 +23,7 @@ iface ethernet0 inet manual
 allow-bond0 wifi0
 iface wifi0 inet manual
 	bond-master bond0
-	bond-primary eth0
+	bond-primary ethernet0
 #	wpa-bridge bond0
 auto ethernet1
 iface ethernet1 inet ipv4ll

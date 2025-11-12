@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 from uuid import uuid1
 import xmlschema
 import xmlschema.converters

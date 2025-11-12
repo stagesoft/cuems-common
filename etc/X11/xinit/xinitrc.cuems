@@ -27,5 +27,6 @@ xrandr --output DP-1 --mode 1280x800_60.00 --right-of HDMI-1
 /usr/bin/xset dpms 0 0 0
 /usr/bin/xset s off -dpms
 
+# Set background
 xsetbg -fullscreen /etc/cuems/pantalla_stagelab.png
 /usr/bin/openbox

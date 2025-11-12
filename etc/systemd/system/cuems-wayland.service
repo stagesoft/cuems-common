@@ -1,4 +1,5 @@
 [Unit]
+Description=cuems-wayland
 After=systemd-user-sessions.service
 Conflicts=getty@tty1.service
 #option to disable unusable tty1

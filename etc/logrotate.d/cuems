@@ -1,0 +1,17 @@
+# CUEMS log rotation configuration
+
+/var/log/cuems.log
+/var/log/cuems-config.log {
+    daily
+    missingok
+    rotate 30
+    compress
+    delaycompress
+    notifempty
+    create 644 root adm
+    postrotate
+        systemctl reload rsyslog.service >/dev/null 2>&1 || true
+    endscript
+}
+
+

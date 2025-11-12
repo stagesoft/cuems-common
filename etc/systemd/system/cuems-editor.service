@@ -1,6 +1,6 @@
 [Unit]
 Description=cuems-editor
-PartOf=cuems-controller.service
+PartOf=cuems-controller.target
 After=cuems-node.service apache2.service
 Requires=cuems-node.service apache2.service
 
@@ -12,4 +12,4 @@ PIDFile=/run/cuems-engine/service.pid
 ExecStart=/usr/lib/cuems/bin/python3 /home/debian/src/cuems/cuems-editor/ws-server.py
 
 [Install]
-WantedBy=cuems-controller.service
+WantedBy=cuems-controller.target
