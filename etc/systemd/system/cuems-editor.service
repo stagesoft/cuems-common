@@ -9,7 +9,7 @@ Type=exec
 Restart=always
 ExecStartPre=/bin/mkdir -p /run/cuems-engine
 PIDFile=/run/cuems-engine/service.pid
-ExecStart=/usr/lib/cuems/bin/python3 /home/debian/src/cuems/cuems-editor/ws-server.py
+ExecStart=/usr/lib/cuems/bin/cuems-ws-server --daemon
 
 [Install]
 WantedBy=cuems-controller.target

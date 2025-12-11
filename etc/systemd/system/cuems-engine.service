@@ -14,7 +14,7 @@ Type=simple
 #NotifyAccess=main
 #Restart=on-failure
 RestartSec=10
-ExecStart=/usr/lib/cuems/bin/python3 /home/ion/src/cuems/cuems-engine/scripts/controller_engine.py
+ExecStart=/usr/lib/cuems/bin/controller-engine --daemon
 TimeoutSec=900
 
 [Install]
