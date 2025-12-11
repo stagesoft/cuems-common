@@ -44,6 +44,8 @@ etc/dhcp/dhcpd.conf etc/dhcp/
 etc/sudoers.d/99-cuems etc/sudoers.d/
 etc/sysctl.d/99-cuems-performance.conf etc/sysctl.d/
 etc/logrotate.d/cuems etc/logrotate.d/
+etc/cuems/network_map.xml etc/cuems/
+etc/cuems/network_map.xsd etc/cuems/
 
 # Shared data files
 usr/share/cuems/* usr/share/cuems/
