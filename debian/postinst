@@ -157,5 +157,33 @@ if command -v a2dissite >/dev/null 2>&1 && command -v a2ensite >/dev/null 2>&1; 
     fi
 fi
 
+# Configure CPU governor to performance mode
+if [ ! -f /etc/default/cpufrequtils ] || ! grep -q 'GOVERNOR="performance"' /etc/default/cpufrequtils 2>/dev/null; then
+    echo 'GOVERNOR="performance"' >> /etc/default/cpufrequtils
+    echo "Configured CPU governor to performance mode"
+fi
+
+# Stop and disable unnecessary systemd services/timers for performance
+if command -v systemctl >/dev/null 2>&1; then
+    # Stop man-db.timer
+    if systemctl list-unit-files man-db.timer >/dev/null 2>&1; then
+        systemctl stop man-db.timer >/dev/null 2>&1 || true
+    fi
+    
+    # Disable apt-daily services and timers
+    for unit in apt-daily.service apt-daily.timer apt-daily-upgrade.timer apt-daily-upgrade.service; do
+        if systemctl list-unit-files "$unit" >/dev/null 2>&1; then
+            systemctl disable "$unit" >/dev/null 2>&1 || true
+        fi
+    done
+    
+    # Disable pppd-dns.service
+    if systemctl list-unit-files pppd-dns.service >/dev/null 2>&1; then
+        systemctl disable pppd-dns.service >/dev/null 2>&1 || true
+    fi
+    
+    echo "Disabled unnecessary systemd services/timers for performance"
+fi
+
 echo "CUEMS Common package installed successfully."
 

@@ -13,12 +13,14 @@ Depends: ${misc:Depends},
          python3,
          kwin-wayland,
          apache2,
+         libapache2-mod-dnssd,
          openssl,
          avahi-daemon,
          isc-dhcp-server,
          hostapd,
          rsync,
-         iproute2
+         iproute2,
+         cpufrequtils
 Description: CUEMS common configuration and systemd services
  This package contains systemd service files, configuration files,
  and scripts required for CUEMS operation.

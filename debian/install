@@ -32,30 +32,52 @@ etc/systemd/system/apache2.service.d/* lib/systemd/system/apache2.service.d/
 etc/systemd/system/isc-dhcp-server.service.d/* lib/systemd/system/isc-dhcp-server.service.d/
 etc/systemd/system/rtpmidid.service.d/* lib/systemd/system/rtpmidid.service.d/
 
+# Systemd journald configuration
+etc/systemd/journald.conf etc/systemd/
+
+# Systemd network link files
+etc/systemd/network/*.link etc/systemd/network/
+
 # Configuration files
 etc/X11/xinit/xinitrc.cuems etc/X11/xinit/
+etc/X11/xorg.conf.d/*.conf etc/X11/xorg.conf.d/
+etc/X11/Xwrapper.config etc/X11/
 etc/avahi/avahi-daemon.conf etc/avahi/
+etc/avahi/services/*.service etc/avahi/services/
 etc/network/interfaces etc/network/
 etc/rsyncd.conf etc/
 etc/rsyncd.secrets etc/
 etc/rsyslog.conf etc/
 etc/hostapd/hostapd.conf etc/hostapd/
 etc/dhcp/dhcpd.conf etc/dhcp/
+etc/dhcp/dhclient.conf etc/dhcp/
+etc/default/isc-dhcp-server etc/default/
 etc/sudoers.d/99-cuems etc/sudoers.d/
 etc/sysctl.d/99-cuems-performance.conf etc/sysctl.d/
 etc/logrotate.d/cuems etc/logrotate.d/
 etc/cuems/network_map.xml etc/cuems/
 etc/cuems/network_map.xsd etc/cuems/
+etc/cuems/pantalla_stagelab.png etc/cuems/
 
 # Shared data files
 usr/share/cuems/* usr/share/cuems/
 
 # Apache configuration
-# Note: Module files come from their respective Debian packages (libapache2-mod-*)
-# We only install our CUEMS site configuration files and enable modules/sites in postinst
+# Module files (.load and .conf) in mods-available
+etc/apache2/mods-available/*.load etc/apache2/mods-available/
+etc/apache2/mods-available/*.conf etc/apache2/mods-available/
+# Site configuration files
 etc/apache2/sites-available/cuems-ui.conf etc/apache2/sites-available/
 etc/apache2/sites-available/cuems-ui-ssl.conf etc/apache2/sites-available/
 
-# ACPI scripts (if needed)
-etc/acpi/** etc/acpi/
+# ACPI scripts
+etc/acpi/*.sh etc/acpi/
+etc/acpi/events/* etc/acpi/events/
 
+# Splash screen files
+splash/* usr/share/plymouth/themes/cuems/
+
+# Documentation (optional - uncomment if you want to install these)
+# LICENSE usr/share/doc/cuems-common/
+# README.md usr/share/doc/cuems-common/
+# instructions/* usr/share/doc/cuems-common/instructions/
