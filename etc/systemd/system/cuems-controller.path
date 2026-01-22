@@ -2,7 +2,7 @@
 Description=Monitor if cuems-controller lock file exists
 
 [Path]
-PathExists=/etc/cuems/master.lock
+PathExists=/etc/cuems/controller.lock
 Unit=cuems-controller.target
 
 [Install]

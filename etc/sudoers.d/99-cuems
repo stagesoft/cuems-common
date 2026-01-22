@@ -1,5 +1,5 @@
 # CUEMS sudo configuration - minimal required privileges
 cuems ALL=(root) NOPASSWD: /bin/systemctl reload avahi-daemon.service
 cuems ALL=(root) NOPASSWD: /usr/bin/cp /usr/share/cuems/cuems.service.firstrun /etc/avahi/services/cuems.service
-cuems ALL=(root) NOPASSWD: /usr/bin/cp /usr/share/cuems/cuems.service.master /etc/avahi/services/cuems.service
-cuems ALL=(root) NOPASSWD: /usr/bin/cp /usr/share/cuems/cuems.service.slave /etc/avahi/services/cuems.service
+cuems ALL=(root) NOPASSWD: /usr/bin/cp /usr/share/cuems/cuems.service.controller /etc/avahi/services/cuems.service
+cuems ALL=(root) NOPASSWD: /usr/bin/cp /usr/share/cuems/cuems.service.node /etc/avahi/services/cuems.service
