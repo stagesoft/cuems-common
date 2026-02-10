@@ -14,14 +14,14 @@ scripts/config_mac_and_uuid.py usr/lib/cuems/bin/
 etc/systemd/system/cuems-controller.target lib/systemd/system/
 etc/systemd/system/cuems-wifi.target lib/systemd/system/
 etc/systemd/system/cuems-editor.service lib/systemd/system/
-etc/systemd/system/cuems-engine.service lib/systemd/system/
+etc/systemd/system/cuems-controller-engine.service lib/systemd/system/
 etc/systemd/system/cuems-midiconnector.service lib/systemd/system/
 etc/systemd/system/cuems-node-engine.service lib/systemd/system/
 etc/systemd/system/cuems-node.service lib/systemd/system/
 etc/systemd/system/cuems-nodeconf.service lib/systemd/system/
 etc/systemd/system/cuems-start.service lib/systemd/system/
 etc/systemd/system/cuems-wifi.service lib/systemd/system/
-etc/systemd/system/hostapd.service lib/systemd/system/
+etc/systemd/system/hostapd.service.d/* lib/systemd/system/hostapd.service.d/
 etc/systemd/system/rsync@.service lib/systemd/system/
 etc/systemd/system/cuems-wayland.service lib/systemd/system/
 etc/systemd/system/*.path lib/systemd/system/
@@ -33,7 +33,7 @@ etc/systemd/system/isc-dhcp-server.service.d/* lib/systemd/system/isc-dhcp-serve
 etc/systemd/system/rtpmidid.service.d/* lib/systemd/system/rtpmidid.service.d/
 
 # Systemd journald configuration
-etc/systemd/journald.conf etc/systemd/
+etc/systemd/journald.conf.cuems etc/systemd/
 
 # Systemd network link files
 etc/systemd/network/*.link etc/systemd/network/
@@ -41,17 +41,17 @@ etc/systemd/network/*.link etc/systemd/network/
 # Configuration files
 etc/X11/xinit/xinitrc.cuems etc/X11/xinit/
 etc/X11/xorg.conf.d/*.conf etc/X11/xorg.conf.d/
-etc/X11/Xwrapper.config etc/X11/
-etc/avahi/avahi-daemon.conf etc/avahi/
+etc/X11/Xwrapper.config.cuems etc/X11/
+etc/avahi/avahi-daemon.conf.cuems etc/avahi/
 etc/avahi/services/*.service etc/avahi/services/
-etc/network/interfaces etc/network/
+etc/network/interfaces.cuems etc/network/
 etc/rsyncd.conf etc/
 etc/rsyncd.secrets etc/
-etc/rsyslog.conf etc/
-etc/hostapd/hostapd.conf etc/hostapd/
-etc/dhcp/dhcpd.conf etc/dhcp/
-etc/dhcp/dhclient.conf etc/dhcp/
-etc/default/isc-dhcp-server etc/default/
+etc/rsyslog.conf.cuems etc/
+etc/hostapd/hostapd.conf.cuems etc/hostapd/
+etc/dhcp/dhcpd.conf.cuems etc/dhcp/
+etc/dhcp/dhclient.conf.cuems etc/dhcp/
+etc/default/isc-dhcp-server.cuems etc/default/
 etc/sudoers.d/99-cuems etc/sudoers.d/
 etc/sysctl.d/99-cuems-performance.conf etc/sysctl.d/
 etc/logrotate.d/cuems etc/logrotate.d/
@@ -63,10 +63,7 @@ etc/cuems/pantalla_stagelab.png etc/cuems/
 usr/share/cuems/* usr/share/cuems/
 
 # Apache configuration
-# Module files (.load and .conf) in mods-available
-etc/apache2/mods-available/*.load etc/apache2/mods-available/
-etc/apache2/mods-available/*.conf etc/apache2/mods-available/
-# Site configuration files
+# Only install site configuration files (module files are provided by apache2 package)
 etc/apache2/sites-available/cuems-ui.conf etc/apache2/sites-available/
 etc/apache2/sites-available/cuems-ui-ssl.conf etc/apache2/sites-available/
 
