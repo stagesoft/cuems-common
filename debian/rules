@@ -16,3 +16,10 @@ override_dh_install:
 	find debian/cuems-common/usr/lib/cuems/bin/ -type f -name "*.sh" -exec chmod +x {} \;
 	find debian/cuems-common/usr/lib/cuems/bin/ -type f -name "*.py" -exec chmod +x {} \;
 
+override_dh_installdeb:
+	dh_installdeb
+	# Remove xinitrc.cuems from conffiles - we want to always overwrite it
+	@if [ -f debian/cuems-common/DEBIAN/conffiles ]; then \
+		sed -i '/\/etc\/X11\/xinit\/xinitrc\.cuems/d' debian/cuems-common/DEBIAN/conffiles; \
+	fi
+
