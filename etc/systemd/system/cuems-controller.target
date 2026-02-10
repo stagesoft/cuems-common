@@ -1,6 +1,8 @@
 [Unit]
 Description=Cuems Controller service group target
 Documentation=man:systemd.special(7)
-Requires=cuems-node.service
+Requires=cuems-controller-engine.service
 Wants=cuems-wifi.target
 
+[Install]
+WantedBy=multi-user.target

@@ -1,21 +1,22 @@
 [Unit]
 Description=cuems-node-engine
 #PartOf=cuems-node.service
-Requires=avahi-daemon.service
-After=network-online.target avahi-daemon.service
-Wants=network-online.target
+Requires=avahi-daemon.service cuems-controller-engine.service
+Requires=avahi-daemon.service cuems-controller-engine.service jackd-cuems.service
+After=network-online.target avahi-daemon.service cuems-controller-engine.service jackd-cuems.service
 StartLimitBurst=5
 StartLimitIntervalSec=33
 
 
 [Service]
-#Environment="PYTHONPATH=/usr/lib/cuems/site-packages"
+Environment="LD_LIBRARY_PATH=/usr/lib/cuems/lib/python3.11/site-packages/rtmidi"
 Type=simple
 #NotifyAccess=main
 #Restart=on-failure
 RestartSec=10
 ExecStart=/usr/lib/cuems/bin/node-engine --daemon
-TimeoutSec=900
+TimeoutStopSec=10
+TimeoutStartSec=60
 
 [Install]
 WantedBy=default.target

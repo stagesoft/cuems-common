@@ -1,8 +1,8 @@
 [Unit]
-Description=cuems-engine
+Description=cuems-controller-engine
 #PartOf=cuems-node.service
-Requires=avahi-daemon.service
-After=network-online.target avahi-daemon.service
+Requires=avahi-daemon.service cuems-nodeconf.service
+After=network-online.target avahi-daemon.service cuems-nodeconf.service
 Wants=network-online.target
 StartLimitBurst=5
 StartLimitIntervalSec=33
@@ -12,10 +12,13 @@ StartLimitIntervalSec=33
 #Environment="PYTHONPATH=/usr/lib/cuems/site-packages"
 Type=simple
 #NotifyAccess=main
-#Restart=on-failure
+Restart=on-failure
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
 ExecStart=/usr/lib/cuems/bin/controller-engine --daemon
-TimeoutSec=900
+TimeoutStopSec=10
+TimeoutStartSec=60
 
 [Install]
 WantedBy=default.target

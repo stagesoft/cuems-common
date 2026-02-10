@@ -1,15 +1,15 @@
 [Unit]
 Description=cuems-editor
 PartOf=cuems-controller.target
-After=cuems-node.service apache2.service
-Requires=cuems-node.service apache2.service
+After=cuems-controller-engine.service apache2.service
+Requires=cuems-controller-engine.service apache2.service
 
 [Service]
-Type=exec
+Type=simple
 Restart=always
 ExecStartPre=/bin/mkdir -p /run/cuems-engine
 PIDFile=/run/cuems-engine/service.pid
-ExecStart=/usr/lib/cuems/bin/cuems-ws-server --daemon
+ExecStart=/usr/lib/cuems/bin/cuems-editor --daemon
 
 [Install]
 WantedBy=cuems-controller.target

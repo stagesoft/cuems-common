@@ -59,7 +59,7 @@ check_disk_space() {
 log "=== CUEMS Health Check ==="
 
 # Check CUEMS services
-services=("cuems-node.service" "cuems-engine.service" "cuems-xorg.service" "avahi-daemon.service")
+services=("cuems-node.service" "cuems-controller-engine.service" "cuems-xorg.service" "avahi-daemon.service")
 service_issues=0
 
 for service in "${services[@]}"; do
