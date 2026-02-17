@@ -10,13 +10,15 @@ StartLimitIntervalSec=33
 
 [Service]
 #Environment="PYTHONPATH=/usr/lib/cuems/site-packages"
+User=stagelab
+Group=stagelab
 Type=simple
 #NotifyAccess=main
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
-ExecStart=/usr/lib/cuems/bin/controller-engine --daemon
+ExecStart=/usr/lib/cuems/bin/controller-engine
 TimeoutStopSec=10
 TimeoutStartSec=60
 

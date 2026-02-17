@@ -9,12 +9,17 @@ StartLimitIntervalSec=33
 
 
 [Service]
-Environment="LD_LIBRARY_PATH=/usr/lib/cuems/lib/python3.11/site-packages/rtmidi"
+User=stagelab
+Group=stagelab
 Type=simple
+Environment="LD_LIBRARY_PATH=/usr/lib/cuems/lib/python3.11/site-packages/rtmidi"
 #NotifyAccess=main
 #Restart=on-failure
 RestartSec=10
-ExecStart=/usr/lib/cuems/bin/node-engine --daemon
+ExecStartPre=-/bin/sh -c '/usr/bin/pkill -u stagelab -f "xjadeo.*--osc|audioplayer-cuems|dmxplayer-cuems|jack-volume" || true'
+ExecStartPre=-/bin/sleep 1
+ExecStart=/usr/lib/cuems/bin/node-engine
+ExecStopPost=-/bin/sh -c '/usr/bin/pkill -u stagelab -f "xjadeo.*--osc|audioplayer-cuems|dmxplayer-cuems|jack-volume" || true'
 TimeoutStopSec=10
 TimeoutStartSec=60
 
