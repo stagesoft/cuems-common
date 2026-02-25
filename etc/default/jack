@@ -1,0 +1,8 @@
+# JACK daemon configuration
+# JACK runs on the combined HDMI/DP multi device (6 channels, same clock)
+# USB audio is bridged separately via alsa_out (see jack-alsa-bridges.service)
+
+USER=stagelab
+LOG_LEVEL=3
+
+DAEMON_ARGS="-R -dalsa -dmulti_hdmi -r48000 -p512 -n3"
