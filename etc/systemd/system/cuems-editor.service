@@ -9,7 +9,7 @@ Type=simple
 Restart=always
 ExecStartPre=/bin/mkdir -p /run/cuems-engine
 PIDFile=/run/cuems-engine/service.pid
-ExecStart=/usr/lib/cuems/bin/cuems-editor --daemon
+ExecStart=/usr/lib/cuems/bin/cuems-editor
 
 [Install]
 WantedBy=cuems-controller.target
