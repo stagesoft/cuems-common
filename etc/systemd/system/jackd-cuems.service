@@ -1,8 +1,9 @@
 [Unit]
 Description=JACK Audio Connection Kit
 Documentation=man:jackd(1)
-After=sound.target
+After=sound.target cuems-hdmi-audio-map.service
 Wants=sound.target
+Requires=cuems-hdmi-audio-map.service
 
 [Service]
 Type=simple
