@@ -1,7 +1,6 @@
 [Unit]
 Description=cuems-node-engine
 #PartOf=cuems-node.service
-Requires=avahi-daemon.service cuems-controller-engine.service
 Requires=avahi-daemon.service cuems-controller-engine.service jackd-cuems.service
 After=network-online.target avahi-daemon.service cuems-controller-engine.service jackd-cuems.service
 StartLimitBurst=5
@@ -14,7 +13,7 @@ Group=stagelab
 Type=simple
 Environment="LD_LIBRARY_PATH=/usr/lib/cuems/lib/python3.11/site-packages/rtmidi"
 #NotifyAccess=main
-#Restart=on-failure
+Restart=on-failure
 RestartSec=10
 ExecStartPre=-/bin/sh -c '/usr/bin/pkill -u stagelab -f "xjadeo.*--osc|audioplayer-cuems|dmxplayer-cuems|jack-volume" || true'
 ExecStartPre=-/bin/sleep 1
