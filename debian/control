@@ -18,7 +18,8 @@ Depends: ${misc:Depends},
          isc-dhcp-server,
          hostapd,
          rsync,
-         iproute2
+         iproute2,
+         ddcutil
 Description: CUEMS common configuration and systemd services
  This package contains systemd service files, configuration files,
  and scripts required for CUEMS operation.

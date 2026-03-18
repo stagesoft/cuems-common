@@ -9,12 +9,18 @@ scripts/cuems-healthcheck.sh usr/lib/cuems/bin/
 # Python scripts (executable)
 scripts/config_mac_and_uuid.py usr/lib/cuems/bin/
 
+# System scripts
+usr/local/bin/cuems-hdmi-audio-map usr/local/bin/
+usr/local/bin/cuems-i915-rebind.sh usr/local/bin/
+usr/local/bin/cuems-wake-monitors.sh usr/local/bin/
+
 # Systemd unit files (excluding cuems-osclistener.service and cuems-xorg.service)
 # Package-provided services should be in /lib/systemd/system/ (not /etc/systemd/system/)
 etc/systemd/system/cuems-controller.target lib/systemd/system/
 etc/systemd/system/cuems-wifi.target lib/systemd/system/
+etc/systemd/system/cuems-controller-engine.service lib/systemd/system/
 etc/systemd/system/cuems-editor.service lib/systemd/system/
-etc/systemd/system/cuems-engine.service lib/systemd/system/
+etc/systemd/system/cuems-hdmi-audio-map.service lib/systemd/system/
 etc/systemd/system/cuems-midiconnector.service lib/systemd/system/
 etc/systemd/system/cuems-node-engine.service lib/systemd/system/
 etc/systemd/system/cuems-node.service lib/systemd/system/
@@ -22,15 +28,22 @@ etc/systemd/system/cuems-nodeconf.service lib/systemd/system/
 etc/systemd/system/cuems-start.service lib/systemd/system/
 etc/systemd/system/cuems-wifi.service lib/systemd/system/
 etc/systemd/system/hostapd.service lib/systemd/system/
+etc/systemd/system/jack-alsa-bridges.service lib/systemd/system/
+etc/systemd/system/jackd-cuems.service lib/systemd/system/
 etc/systemd/system/rsync@.service lib/systemd/system/
 etc/systemd/system/cuems-wayland.service lib/systemd/system/
 etc/systemd/system/*.path lib/systemd/system/
 etc/systemd/system/*.socket lib/systemd/system/
 # Systemd drop-in directories (package-provided overrides)
+etc/systemd/system/cuems-videocomposer.service.d/hdmi-fix.conf lib/systemd/system/cuems-videocomposer.service.d/
 etc/systemd/system/avahi-daemon.d/* lib/systemd/system/avahi-daemon.service.d/
 etc/systemd/system/apache2.service.d/* lib/systemd/system/apache2.service.d/
+etc/systemd/system/hostapd.service.d/* lib/systemd/system/hostapd.service.d/
 etc/systemd/system/isc-dhcp-server.service.d/* lib/systemd/system/isc-dhcp-server.service.d/
 etc/systemd/system/rtpmidid.service.d/* lib/systemd/system/rtpmidid.service.d/
+
+# GRUB kernel parameter snippet
+etc/default/grub.d/cuems-display.cfg etc/default/grub.d/
 
 # Configuration files
 etc/X11/xinit/xinitrc.cuems etc/X11/xinit/
