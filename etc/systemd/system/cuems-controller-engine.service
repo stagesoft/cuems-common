@@ -1,8 +1,8 @@
 [Unit]
 Description=cuems-controller-engine
 #PartOf=cuems-node.service
-Requires=avahi-daemon.service cuems-nodeconf.service
-After=network-online.target avahi-daemon.service cuems-nodeconf.service
+Requires=avahi-daemon.service
+After=network-online.target avahi-daemon.service
 Wants=network-online.target
 StartLimitBurst=5
 StartLimitIntervalSec=33
