@@ -5,6 +5,7 @@
 scripts/check-ip.sh usr/lib/cuems/bin/
 scripts/wifi-auto.sh usr/lib/cuems/bin/
 scripts/cuems-healthcheck.sh usr/lib/cuems/bin/
+usr/lib/cuems/bin/cuems-generate-display-conf usr/lib/cuems/bin/
 
 # Python scripts (executable)
 scripts/config_mac_and_uuid.py usr/lib/cuems/bin/
@@ -16,6 +17,7 @@ usr/local/bin/cuems-wake-monitors.sh usr/local/bin/
 
 # Systemd unit files (excluding cuems-osclistener.service and cuems-xorg.service)
 # Package-provided services should be in /lib/systemd/system/ (not /etc/systemd/system/)
+etc/systemd/system/cuems-videocomposer.service lib/systemd/system/
 etc/systemd/system/cuems-controller.target lib/systemd/system/
 etc/systemd/system/cuems-wifi.target lib/systemd/system/
 etc/systemd/system/cuems-controller-engine.service lib/systemd/system/

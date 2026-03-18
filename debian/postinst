@@ -7,7 +7,11 @@ set -e
 if [ -d /usr/lib/cuems/bin ]; then
     chmod +x /usr/lib/cuems/bin/*.sh 2>/dev/null || true
     chmod +x /usr/lib/cuems/bin/*.py 2>/dev/null || true
-    
+    # Scripts without standard extensions
+    for f in cuems-generate-display-conf; do
+        [ -f "/usr/lib/cuems/bin/$f" ] && chmod +x "/usr/lib/cuems/bin/$f"
+    done
+
     # Verify critical scripts
     if [ ! -x /usr/lib/cuems/bin/check-ip.sh ]; then
         echo "WARNING: check-ip.sh is not executable, fixing..." >&2
