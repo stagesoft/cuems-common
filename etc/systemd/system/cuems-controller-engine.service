@@ -1,6 +1,6 @@
 [Unit]
 Description=cuems-controller-engine
-#PartOf=cuems-node.service
+PartOf=cuems-node-engine.service
 Requires=avahi-daemon.service
 After=network-online.target avahi-daemon.service
 Wants=network-online.target

@@ -1,6 +1,6 @@
 [Unit]
 Description=cuems-node-engine
-#PartOf=cuems-node.service
+PartOf=jackd-cuems.service
 Requires=avahi-daemon.service cuems-controller-engine.service jackd-cuems.service
 After=network-online.target avahi-daemon.service cuems-controller-engine.service jackd-cuems.service
 StartLimitBurst=5
