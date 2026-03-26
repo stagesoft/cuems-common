@@ -1,12 +1,12 @@
 [Unit]
 Description=Cuems Node service group
-Requires=cuems-nodeconf.service rtpmidid.service cuems-controller-engine.service cuems-wayland.service
+Requires=jackd-cuems.service cuems-node-engine.service cuems-videocomposer.service cuems-editor.service cuems-nodeconf.service rtpmidid.service
+After=jackd-cuems.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/true
-
 
 [Install]
 WantedBy=multi-user.target
