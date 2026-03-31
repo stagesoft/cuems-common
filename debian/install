@@ -45,6 +45,9 @@ etc/systemd/system/rtpmidid.service.d/* lib/systemd/system/rtpmidid.service.d/
 # GRUB kernel parameter snippet
 etc/default/grub.d/cuems-display.cfg etc/default/grub.d/
 
+# Shell aliases
+etc/profile.d/cuems.sh etc/profile.d/
+
 # Configuration files
 etc/avahi/avahi-daemon.conf etc/avahi/
 etc/network/interfaces etc/network/
