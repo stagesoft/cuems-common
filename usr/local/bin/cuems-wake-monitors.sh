@@ -16,6 +16,11 @@
 # Wait for videocomposer DRM modeset to stabilise before sending DDC commands.
 sleep 10
 
+# Ensure i2c-dev is loaded — the i915 rebind destroys i2c adapters and
+# /dev/i2c-* nodes are only recreated if this module is present.
+modprobe i2c-dev 2>/dev/null
+sleep 0.5
+
 echo "cuems-wake-monitors: sending DDC/CI power-on commands..."
 
 # HDMI-A-1 → i2c-4: true HDMI port, DDC confirmed working
