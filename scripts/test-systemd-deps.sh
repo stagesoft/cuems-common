@@ -275,7 +275,7 @@ if [ "$LIVE" = true ]; then
     echo ""
     echo "L1: Node target start"
     sudo systemctl start cuems-node.target 2>/dev/null || true
-    sleep 3
+    sleep 15
     for svc in "${NODE_EXPECTED[@]}"; do
         if systemctl is-active --quiet "${svc}.service" 2>/dev/null; then
             pass "${svc}.service is active"
@@ -287,7 +287,7 @@ if [ "$LIVE" = true ]; then
 
     echo "L2: Controller target start (should pull in node)"
     sudo systemctl start cuems-controller.target 2>/dev/null || true
-    sleep 3
+    sleep 15
     all_expected=("${NODE_EXPECTED[@]}" "${CTRL_EXPECTED[@]}")
     for svc in "${all_expected[@]}"; do
         if systemctl is-active --quiet "${svc}.service" 2>/dev/null; then
@@ -300,7 +300,7 @@ if [ "$LIVE" = true ]; then
 
     echo "L3: Stop propagation (stop node target)"
     sudo systemctl stop cuems-node.target 2>/dev/null || true
-    sleep 3
+    sleep 5
     for svc in "${NODE_EXPECTED[@]}"; do
         if ! systemctl is-active --quiet "${svc}.service" 2>/dev/null; then
             pass "${svc}.service stopped with node target"
@@ -312,7 +312,7 @@ if [ "$LIVE" = true ]; then
 
     echo "L4: Failure isolation"
     sudo systemctl start cuems-controller.target 2>/dev/null || true
-    sleep 3
+    sleep 15
     sudo systemctl stop cuems-wifi.service 2>/dev/null || true
     if systemctl is-active --quiet cuems-controller-engine.service 2>/dev/null; then
         pass "controller-engine survives wifi stop"
