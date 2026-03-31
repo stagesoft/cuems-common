@@ -14,7 +14,7 @@ Type=simple
 #NotifyAccess=main
 #Restart=on-failure
 RestartSec=10
-ExecStart=/usr/lib/cuems/bin/python3 /home/ion/src/cuems/cuems-midi-connector/run_midiconnector.py
+ExecStart=/usr/lib/cuems/bin/cuems-midiconnector
 TimeoutSec=900
 
 [Install]
