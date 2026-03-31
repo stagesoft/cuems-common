@@ -35,4 +35,4 @@ ReadWritePaths=/var/lib/cuems
 RuntimeDirectory=cuems
 
 [Install]
-WantedBy=graphical.target
+WantedBy=cuems-node.target

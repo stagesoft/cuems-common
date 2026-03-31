@@ -1,6 +1,6 @@
 [Unit]
 Description=cuems-midiconnector
-#PartOf=cuems-node.service
+PartOf=cuems-controller.target
 #Requires=avahi-daemon.service
 #After=network-online.target 
 #Wants=network-online.target
@@ -18,4 +18,4 @@ ExecStart=/usr/lib/cuems/bin/python3 /home/ion/src/cuems/cuems-midi-connector/ru
 TimeoutSec=900
 
 [Install]
-WantedBy=default.target
+WantedBy=cuems-controller.target

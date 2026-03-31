@@ -1,6 +1,6 @@
 [Unit]
 Description=cuems-controller-engine
-PartOf=cuems-node-engine.service
+PartOf=cuems-controller.target
 Requires=avahi-daemon.service
 After=network-online.target avahi-daemon.service
 Wants=network-online.target
@@ -23,4 +23,4 @@ TimeoutStopSec=10
 TimeoutStartSec=60
 
 [Install]
-WantedBy=default.target
+WantedBy=cuems-controller.target

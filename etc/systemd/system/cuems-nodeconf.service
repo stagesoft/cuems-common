@@ -1,6 +1,6 @@
 [Unit]
 Description=cuems-nodeconf
-PartOf=cuems-node.service
+PartOf=cuems-node.target
 Requires=avahi-daemon.service
 After=network-online.target avahi-daemon.service
 Wants=network-online.target
@@ -19,4 +19,4 @@ ExecStart=/usr/lib/cuems/bin/cuems-nodeconf
 TimeoutSec=900
 
 [Install]
-WantedBy=default.target
+WantedBy=cuems-node.target

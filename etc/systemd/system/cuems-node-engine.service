@@ -1,8 +1,8 @@
 [Unit]
 Description=cuems-node-engine
-PartOf=jackd-cuems.service
-Requires=avahi-daemon.service cuems-controller-engine.service jackd-cuems.service
-After=network-online.target avahi-daemon.service cuems-controller-engine.service jackd-cuems.service
+PartOf=cuems-node.target
+Requires=avahi-daemon.service jackd-cuems.service
+After=network-online.target avahi-daemon.service jackd-cuems.service
 StartLimitBurst=5
 StartLimitIntervalSec=33
 
@@ -23,4 +23,4 @@ TimeoutStopSec=10
 TimeoutStartSec=60
 
 [Install]
-WantedBy=default.target
+WantedBy=cuems-node.target

@@ -26,4 +26,4 @@ CPUSchedulingPolicy=fifo
 CPUSchedulingPriority=10
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=cuems-node.target

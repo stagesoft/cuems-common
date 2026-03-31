@@ -11,7 +11,6 @@ Depends: ${misc:Depends},
          cuems-utils (>= 1.0.0),
          systemd,
          python3,
-         kwin-wayland,
          apache2,
          openssl,
          avahi-daemon,
@@ -29,9 +28,6 @@ Description: CUEMS common configuration and systemd services
  .
  This package requires isc-dhcp-server and hostapd for WiFi access
  point functionality (cuems-wifi.service and hostapd.service).
- .
- This package uses Wayland (kwin-wayland) for display server
- functionality (cuems-wayland.service).
  .
  This package installs Apache2 site configuration files and enables
  required Apache2 modules and sites. Module files are provided by their
