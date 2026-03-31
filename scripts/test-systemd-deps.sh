@@ -130,6 +130,9 @@ echo "T4: PartOf propagation verification"
 
 # Node services with expected PartOf
 declare -A PARTOF_MAP=(
+    [jackd-cuems]="cuems-node.target"
+    [cuems-hdmi-audio-map]="cuems-node.target"
+    [cuems-videocomposer]="cuems-node.target"
     [cuems-node-engine]="cuems-node.target"
     [cuems-nodeconf]="cuems-node.target"
     [cuems-controller-engine]="cuems-controller.target"

@@ -1,6 +1,7 @@
 [Unit]
 Description=CUEMS Video Composer (multi-layer video compositor)
 Documentation=https://github.com/cuems/cuems-videocomposer
+PartOf=cuems-node.target
 # Start after display and GPU/DRI are available
 After=graphical.target
 Wants=graphical.target

@@ -1,6 +1,7 @@
 [Unit]
 Description=Detect HDMI/DP audio mapping and generate asound.conf
 Documentation=man:aplay(1)
+PartOf=cuems-node.target
 After=sound.target
 Before=jackd-cuems.service
 
