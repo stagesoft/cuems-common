@@ -5,8 +5,12 @@ After=cuems-controller-engine.service apache2.service
 Requires=cuems-controller-engine.service apache2.service
 
 [Service]
+User=stagelab
+Group=stagelab
 Type=simple
 Restart=always
+StandardOutput=journal
+StandardError=journal
 ExecStartPre=/bin/mkdir -p /run/cuems-engine
 PIDFile=/run/cuems-engine/service.pid
 ExecStart=/usr/lib/cuems/bin/cuems-editor
