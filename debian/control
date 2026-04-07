@@ -18,7 +18,8 @@ Depends: ${misc:Depends},
          hostapd,
          rsync,
          iproute2,
-         ddcutil
+         ddcutil,
+         zita-ajbridge
 Description: CUEMS common configuration and systemd services
  This package contains systemd service files, configuration files,
  and scripts required for CUEMS operation.
