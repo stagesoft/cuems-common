@@ -9,11 +9,19 @@ User=stagelab
 Group=stagelab
 Type=simple
 Restart=always
+RestartSec=5
 StandardOutput=journal
 StandardError=journal
-ExecStartPre=/bin/mkdir -p /run/cuems-engine
-PIDFile=/run/cuems-engine/service.pid
+TimeoutStopSec=10
+TimeoutStartSec=30
+RuntimeDirectory=cuems-editor
+PIDFile=/run/cuems-editor/service.pid
 ExecStart=/usr/lib/cuems/bin/cuems-editor
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/opt/cuems /tmp
 
 [Install]
 WantedBy=cuems-controller.target
