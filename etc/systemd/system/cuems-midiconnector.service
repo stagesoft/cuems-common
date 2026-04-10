@@ -1,21 +1,26 @@
 [Unit]
 Description=cuems-midiconnector
 PartOf=cuems-controller.target
-#Requires=avahi-daemon.service
-#After=network-online.target 
-#Wants=network-online.target
 StartLimitBurst=5
 StartLimitIntervalSec=33
 
-
 [Service]
-#Environment="PYTHONPATH=/usr/lib/cuems/site-packages"
+User=stagelab
+Group=stagelab
+SupplementaryGroups=audio
 Type=simple
-#NotifyAccess=main
-#Restart=on-failure
+Restart=on-failure
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
+TimeoutStopSec=10
+TimeoutStartSec=60
 ExecStart=/usr/lib/cuems/bin/cuems-midiconnector
-TimeoutSec=900
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/tmp
 
 [Install]
 WantedBy=cuems-controller.target
