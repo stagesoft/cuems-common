@@ -6,21 +6,26 @@ After=network-online.target avahi-daemon.service jackd-cuems.service
 StartLimitBurst=5
 StartLimitIntervalSec=33
 
-
 [Service]
 User=stagelab
 Group=stagelab
 Type=simple
 Environment="LD_LIBRARY_PATH=/usr/lib/cuems/lib/python3.11/site-packages/rtmidi"
-#NotifyAccess=main
 Restart=on-failure
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
+TimeoutStopSec=10
+TimeoutStartSec=60
 ExecStartPre=-/bin/sh -c '/usr/bin/pkill -u stagelab -f "xjadeo.*--osc|audioplayer-cuems|dmxplayer-cuems|jack-volume" || true'
 ExecStartPre=-/bin/sleep 1
 ExecStart=/usr/lib/cuems/bin/node-engine
 ExecStopPost=-/bin/sh -c '/usr/bin/pkill -u stagelab -f "xjadeo.*--osc|audioplayer-cuems|dmxplayer-cuems|jack-volume" || true'
-TimeoutStopSec=10
-TimeoutStartSec=60
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/opt/cuems /tmp
 
 [Install]
 WantedBy=cuems-node.target
