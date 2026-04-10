@@ -7,16 +7,19 @@ Wants=network-online.target
 StartLimitBurst=5
 StartLimitIntervalSec=33
 
-
 [Service]
-#Environment="PYTHONPATH=/usr/lib/cuems/site-packages"
+# Runs as root: writes to /etc/network/interfaces, /etc/avahi/services/,
+# controls systemd services via DBus. Cannot be demoted to unprivileged user.
 Type=notify
 RemainAfterExit=yes
 NotifyAccess=main
 Restart=on-failure
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
+TimeoutStopSec=10
+TimeoutStartSec=60
 ExecStart=/usr/lib/cuems/bin/cuems-nodeconf
-TimeoutSec=900
 
 [Install]
 WantedBy=cuems-node.target
