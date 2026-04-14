@@ -14,6 +14,7 @@ scripts/config_mac_and_uuid.py usr/lib/cuems/bin/
 usr/local/bin/cuems-hdmi-audio-map usr/local/bin/
 usr/local/bin/cuems-i915-rebind.sh usr/local/bin/
 usr/local/bin/cuems-wake-monitors.sh usr/local/bin/
+usr/local/bin/cuems-ola-profile usr/local/bin/
 
 # Systemd unit files
 # Package-provided services should be in /lib/systemd/system/ (not /etc/systemd/system/)
@@ -31,6 +32,7 @@ etc/systemd/system/cuems-wifi.service lib/systemd/system/
 etc/systemd/system/hostapd.service lib/systemd/system/
 etc/systemd/system/jack-alsa-bridges.service lib/systemd/system/
 etc/systemd/system/jackd-cuems.service lib/systemd/system/
+etc/systemd/system/olad.service lib/systemd/system/
 etc/systemd/system/rsync@.service lib/systemd/system/
 etc/systemd/system/*.path lib/systemd/system/
 etc/systemd/system/*.socket lib/systemd/system/
