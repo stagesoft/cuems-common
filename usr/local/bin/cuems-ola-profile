@@ -1,0 +1,139 @@
+#!/bin/bash
+set -euo pipefail
+trap 'echo "ERROR: Script interrupted, OLA config may be inconsistent. Check /etc/ola/ manually." >&2; exit 1' INT TERM
+
+CONF_DIR="/etc/ola"
+ADDITIVE=false
+
+usage() {
+    echo "Usage: cuems-ola-profile [--add] <profile> [<profile>...]"
+    echo "Profiles: pro, opendmx, artnet, sacn"
+    echo "  --add   Add to current config instead of resetting all plugins first"
+    echo ""
+    echo "All profiles enable ArtNet + sACN (E1.31) by default (no conflicts)."
+    echo ""
+    echo "Examples:"
+    echo "  cuems-ola-profile pro              # Enttec Pro/DMXking + ArtNet + sACN"
+    echo "  cuems-ola-profile opendmx          # Enttec Open DMX + ArtNet + sACN"
+    echo "  cuems-ola-profile artnet            # Network-only (ArtNet + sACN)"
+    echo ""
+    echo "Plugin compatibility:"
+    echo "  - 'pro' and 'opendmx' are MUTUALLY EXCLUSIVE (usbpro vs ftdidmx conflict)"
+    echo "  - ArtNet and sACN are always enabled (safe with all profiles)"
+    exit 1
+}
+
+enable_plugin() {
+    local conf="$CONF_DIR/$1"
+    if [[ ! -f "$conf" ]]; then
+        echo "WARNING: $conf not found, skipping" >&2
+        return
+    fi
+    sed -i 's/^enabled = false/enabled = true/' "$conf"
+}
+
+disable_all_plugins() {
+    for f in "$CONF_DIR"/ola-*.conf; do
+        case "$(basename "$f")" in
+            ola-server.conf|ola-port.conf|ola-universe.conf) continue ;;
+            *) sed -i 's/^enabled = true/enabled = false/' "$f" ;;
+        esac
+    done
+}
+
+[[ $# -eq 0 ]] && usage
+
+# Parse --add flag (can appear anywhere)
+PROFILES=()
+for arg in "$@"; do
+    if [[ "$arg" == "--add" ]]; then
+        ADDITIVE=true
+    else
+        PROFILES+=("$arg")
+    fi
+done
+
+[[ ${#PROFILES[@]} -eq 0 ]] && usage
+
+# Conflict check: pro and opendmx are mutually exclusive
+HAS_PRO=false
+HAS_OPENDMX=false
+for profile in "${PROFILES[@]}"; do
+    case "$profile" in
+        pro) HAS_PRO=true ;;
+        opendmx) HAS_OPENDMX=true ;;
+    esac
+done
+if $HAS_PRO && $HAS_OPENDMX; then
+    echo "ERROR: 'pro' and 'opendmx' are mutually exclusive (usbpro vs ftdidmx conflict)" >&2
+    exit 1
+fi
+
+# Reset unless additive
+if [[ "$ADDITIVE" == false ]]; then
+    echo "Disabling all plugins..."
+    disable_all_plugins
+fi
+
+# Always enable network protocols (no conflicts with anything)
+echo "Enabling ArtNet + sACN (always on)..."
+enable_plugin "ola-artnet.conf"
+enable_plugin "ola-e131.conf"
+
+for profile in "${PROFILES[@]}"; do
+    case "$profile" in
+        pro)
+            echo "Enabling profile: pro (Enttec Pro / DMXking)"
+            enable_plugin "ola-usbserial.conf"
+            enable_plugin "ola-usbdmx.conf"
+            # usbpro needs ftdi_sio — remove blacklist if present
+            if [[ -f /etc/modprobe.d/blacklist-ftdi.conf ]]; then
+                rm -f /etc/modprobe.d/blacklist-ftdi.conf
+                modprobe ftdi_sio 2>/dev/null || true
+                echo "  Removed ftdi_sio blacklist and loaded module."
+            fi
+            ;;
+        opendmx)
+            echo "Enabling profile: opendmx (Enttec Open DMX)"
+            enable_plugin "ola-ftdidmx.conf"
+            enable_plugin "ola-usbdmx.conf"
+            # ftdidmx needs ftdi_sio OUT — blacklist it
+            # WARNING: this affects ALL FTDI serial devices on this machine
+            echo "blacklist ftdi_sio" > /etc/modprobe.d/blacklist-ftdi.conf
+            if ! modprobe -r ftdi_sio 2>/dev/null; then
+                echo "  WARNING: Could not unload ftdi_sio (device may be in use)." >&2
+                echo "  A reboot is required for the blacklist to take effect." >&2
+            else
+                echo "  Blacklisted and unloaded ftdi_sio."
+            fi
+            ;;
+        artnet)
+            # Already enabled above, this profile just means no USB DMX
+            echo "Enabling profile: artnet (network-only)"
+            ;;
+        sacn)
+            # Already enabled above, this profile just means no USB DMX
+            echo "Enabling profile: sacn (network-only)"
+            ;;
+        *)
+            echo "ERROR: Unknown profile: $profile" >&2
+            echo "Available: pro, opendmx, artnet, sacn" >&2
+            exit 1
+            ;;
+    esac
+done
+
+echo "Restarting olad..."
+systemctl restart olad
+sleep 1
+echo ""
+echo "Enabled plugins:"
+for id in $(ola_plugin_info --list-plugin-ids 2>/dev/null); do
+    info=$(ola_plugin_state -p "$id" 2>/dev/null)
+    if echo "$info" | grep -q "Enabled: True"; then
+        echo "  $(echo "$info" | head -1)"
+    fi
+done
+echo ""
+echo "Registered devices:"
+ola_dev_info 2>/dev/null | grep "^Device" || echo "  (none — olad may still be starting)"
