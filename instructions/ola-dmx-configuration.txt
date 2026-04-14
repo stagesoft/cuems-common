@@ -1,0 +1,148 @@
+OLA DMX Configuration for CUEMS
+================================
+
+Overview
+--------
+
+CUEMS uses OLA (Open Lighting Architecture) to output DMX via USB or network
+interfaces. Two packages work together:
+
+  - ola (0.10.9.nojsmin-2+cuems1): Stock Debian OLA + ONE patch (flock serial
+    locking from upstream PR #1770). No other CUEMS-specific changes. Drop this
+    patch when upstream merges PR #1770 (milestoned for OLA 0.12.0) and switch
+    back to stock OLA with a plain "apt install ola".
+
+  - cuems-common: Provides the systemd unit, plugin profile script, and
+    deployment configuration. All CUEMS-specific OLA customization lives here.
+
+Source: https://github.com/stagesoft/ola branch 0.10-cuems (flock patch only)
+
+
+How cuems-common manages OLA
+-----------------------------
+
+cuems-common's postinst does two things for OLA:
+
+1. dpkg-divert on /etc/init.d/olad
+   The stock OLA package ships an init.d script whose postinst runs
+   "invoke-rc.d --skip-systemd-native olad restart", spawning a rogue olad
+   that bypasses our native systemd unit. The divert prevents the init.d
+   script from being installed. Persists across OLA upgrades.
+   To remove: dpkg-divert --remove /etc/init.d/olad
+
+2. Symlink ~/.ola -> /etc/ola for the olad user
+   OLA's client library (libola) has auto_start=true by default. When a client
+   (e.g. cuems-dmxplayer) can't connect to olad, it spawns "olad --daemon
+   --syslog" WITHOUT --config-dir. The spawned olad reads from ~/.ola/.
+   The symlink ensures it reads /etc/ola/ (the system config managed by
+   cuems-ola-profile) regardless of how olad was started.
+
+
+Hardware Profiles
+-----------------
+
+Usage: cuems-ola-profile <profile>
+
+  pro       Enttec DMX USB Pro, DMXking ultraDMX, Robe Universe Interface
+            Enables: usbpro + usbdmx + artnet + e131
+
+  opendmx   Enttec Open DMX USB (simple FTDI adapter, no microprocessor)
+            Enables: ftdidmx + usbdmx + artnet + e131
+            WARNING: Blacklists ftdi_sio kernel module (affects all FTDI devices)
+
+  artnet    Network-only (ArtNet over Ethernet)
+            Enables: artnet + e131
+
+  sacn      Network-only (sACN / E1.31)
+            Enables: artnet + e131
+
+ArtNet and sACN are always enabled in all profiles (no conflicts).
+
+
+Plugin Compatibility
+--------------------
+
+CRITICAL: usbpro and ftdidmx are MUTUALLY EXCLUSIVE.
+
+  - usbpro needs the ftdi_sio kernel module to create /dev/ttyUSB*
+  - ftdidmx uses libftdi which requires ftdi_sio to be unloaded
+  - OLA declares this conflict in FtdiDmxPlugin.h and refuses to start both
+  - The cuems-ola-profile script handles the ftdi_sio blacklist automatically
+
+Safe combinations:
+  - usbpro + usbdmx + artnet + e131 (the "pro" default)
+  - ftdidmx + usbdmx + artnet + e131 (the "opendmx" profile)
+  - artnet + e131 (network-only)
+
+Never enable both usbpro and ftdidmx. Use the profile script.
+
+
+systemd Unit
+------------
+
+The olad.service unit (shipped by cuems-common) replaces the stock init.d:
+
+  [Service]
+  Type=simple
+  User=olad
+  SupplementaryGroups=dialout plugdev
+  ExecStart=/usr/bin/olad --syslog --log-level 3 --config-dir /etc/ola
+  Restart=on-failure
+  RestartSec=2
+
+Key points:
+  - Type=simple (olad runs in foreground, no --daemon flag)
+  - User=olad (stock OLA user — created by OLA package postinst)
+  - SupplementaryGroups=dialout plugdev (for /dev/ttyUSB* and USB access)
+  - Always uses --config-dir /etc/ola
+  - Native unit at /lib/systemd/system/ takes priority over sysv-generator
+
+
+The flock Patch (PR #1770)
+--------------------------
+
+What it fixes:
+  - Self-lock deadlock: olad's usbpro plugin scans /dev/ttyUSB* every 20s.
+    After a USB bus event, it loses the file descriptor, and on rescan the
+    UUCP lock file contains its own PID. AcquireUUCPLockAndOpen() treats this
+    as "another process holds the lock" and fails forever.
+  - Stale lock files after crashes (UUCP files persist, flock doesn't)
+  - Race condition in UUCP check-then-act (acknowledged in OLA source comments)
+
+How it fixes it:
+  - Replaces UUCP lock files with flock() system call
+  - flock() is kernel-managed: released on process exit, no stale files
+  - Also uses TIOCEXCL ioctl as additional safety layer
+  - Falls back to UUCP if flock unavailable (--enable-uucp-locking at build)
+
+When to drop it:
+  - PR #1770 is milestoned for OLA 0.12.0
+  - When Debian ships OLA >= 0.12.0 with the fix:
+    1. Remove /etc/apt/preferences.d/ola-pinned
+    2. apt install ola (stock package)
+    3. cuems-common's divert + symlink + systemd unit keep working
+    4. Done — zero changes needed in cuems-common
+
+
+Troubleshooting
+---------------
+
+"Device /dev/ttyUSB0 locked by PID X and process exists, failed to acquire lock"
+  -> Install the patched OLA package (flock fix).
+
+olad running with wrong plugins:
+  -> A rogue olad was spawned without --config-dir.
+  -> Check: ps aux | grep "olad --daemon"
+  -> Verify symlink: ls -la /usr/lib/olad/.ola (should point to /etc/ola)
+  -> Kill and restart: sudo killall -9 olad && sudo systemctl start olad
+
+Multiple olad instances:
+  -> Check dpkg-divert: dpkg-divert --list olad
+  -> If no divert, the OLA postinst is spawning via init.d
+  -> Fix: dpkg-divert --local --divert /etc/init.d/olad.stock --rename /etc/init.d/olad
+
+No DMX output after profile switch:
+  -> Check: ola_dev_info (shows registered devices)
+  -> Check: journalctl -u olad -f
+  -> For ftdidmx: verify ftdi_sio is unloaded (lsmod | grep ftdi)
+  -> For usbpro: verify /dev/ttyUSB0 exists (ls /dev/ttyUSB*)
