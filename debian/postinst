@@ -184,5 +184,60 @@ if command -v a2dissite >/dev/null 2>&1 && command -v a2ensite >/dev/null 2>&1; 
     fi
 fi
 
+# =========================================================================
+# OLA daemon configuration
+# =========================================================================
+# The stock OLA Debian package ships an init.d script whose postinst runs
+# "invoke-rc.d --skip-systemd-native olad restart", spawning a rogue olad
+# that bypasses our native systemd unit. We use dpkg-divert to prevent
+# the init.d script from being installed.
+#
+# Additionally, OLA's client library (libola) auto-starts olad when a
+# client can't connect. The auto-started olad reads config from ~/.ola/
+# instead of /etc/ola/. We create a symlink so both paths resolve to the
+# same system config managed by cuems-ola-profile.
+# =========================================================================
+
+# Divert OLA init.d script to prevent rogue olad spawning on install/upgrade
+if command -v dpkg-divert >/dev/null 2>&1; then
+    if [ ! -e /etc/init.d/olad.stock ]; then
+        dpkg-divert --local --divert /etc/init.d/olad.stock --rename /etc/init.d/olad 2>/dev/null || true
+    fi
+fi
+
+# Symlink ~/.ola -> /etc/ola for any user that might auto-start olad.
+# OLA's client library (libola) spawns "olad --daemon --syslog" without
+# --config-dir, so it reads ~/.ola/ for whichever user triggered it.
+# We symlink for:
+#   - olad: the systemd unit user (home /usr/lib/olad)
+#   - cuems: the CUEMS service user (runs dmxplayer via node-engine)
+#   - stagelab: legacy — node-engine currently runs as stagelab (to be migrated)
+if [ -d /etc/ola ]; then
+    for user in olad cuems stagelab; do
+        USER_HOME=$(getent passwd "$user" 2>/dev/null | cut -d: -f6)
+        [ -z "$USER_HOME" ] && continue
+        # Create home dir if needed (system users may not have one)
+        [ ! -d "$USER_HOME" ] && mkdir -p "$USER_HOME" 2>/dev/null
+        [ ! -d "$USER_HOME" ] && continue
+        # Replace .ola with symlink to /etc/ola
+        if [ -L "$USER_HOME/.ola" ]; then
+            # Already a symlink — update target
+            ln -sf /etc/ola "$USER_HOME/.ola"
+        elif [ -d "$USER_HOME/.ola" ]; then
+            # Existing config directory — back up and replace with symlink
+            mv "$USER_HOME/.ola" "$USER_HOME/.ola.bak.$(date +%s)"
+            ln -sf /etc/ola "$USER_HOME/.ola"
+        elif [ ! -e "$USER_HOME/.ola" ]; then
+            # Nothing there — create symlink
+            ln -sf /etc/ola "$USER_HOME/.ola"
+        fi
+    done
+fi
+
+# Ensure cuems-ola-profile script is executable
+if [ -f /usr/local/bin/cuems-ola-profile ]; then
+    chmod +x /usr/local/bin/cuems-ola-profile
+fi
+
 echo "CUEMS Common package installed successfully."
 
