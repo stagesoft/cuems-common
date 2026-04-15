@@ -5,8 +5,8 @@ After=cuems-controller-engine.service apache2.service
 Requires=cuems-controller-engine.service apache2.service
 
 [Service]
-User=stagelab
-Group=stagelab
+User=cuems
+Group=cuems
 Type=simple
 Restart=always
 RestartSec=5
@@ -17,11 +17,12 @@ TimeoutStartSec=30
 RuntimeDirectory=cuems-editor
 PIDFile=/run/cuems-editor/service.pid
 ExecStart=/usr/lib/cuems/bin/cuems-editor
-PrivateTmp=yes
+# PrivateTmp=no: CUEMS services share /tmp for NNG IPC sockets
+PrivateTmp=no
 NoNewPrivileges=yes
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/opt/cuems /tmp
+ReadWritePaths=/opt/cuems_library /tmp
 
 [Install]
 WantedBy=cuems-controller.target

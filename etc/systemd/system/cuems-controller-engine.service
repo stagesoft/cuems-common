@@ -8,8 +8,8 @@ StartLimitBurst=5
 StartLimitIntervalSec=33
 
 [Service]
-User=stagelab
-Group=stagelab
+User=cuems
+Group=cuems
 Type=simple
 Restart=on-failure
 RestartSec=10
@@ -18,11 +18,12 @@ StandardError=journal
 TimeoutStopSec=10
 TimeoutStartSec=60
 ExecStart=/usr/lib/cuems/bin/controller-engine
-PrivateTmp=yes
+# PrivateTmp=no: CUEMS services share /tmp for NNG IPC sockets
+PrivateTmp=no
 NoNewPrivileges=yes
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/opt/cuems /tmp
+ReadWritePaths=/opt/cuems_library /tmp
 
 [Install]
 WantedBy=cuems-controller.target

@@ -5,8 +5,8 @@ StartLimitBurst=5
 StartLimitIntervalSec=33
 
 [Service]
-User=stagelab
-Group=stagelab
+User=cuems
+Group=cuems
 SupplementaryGroups=audio
 Type=simple
 Restart=on-failure
@@ -16,11 +16,12 @@ StandardError=journal
 TimeoutStopSec=10
 TimeoutStartSec=60
 ExecStart=/usr/lib/cuems/bin/cuems-midiconnector
-PrivateTmp=yes
+# PrivateTmp=no: CUEMS services share /tmp for NNG IPC sockets
+PrivateTmp=no
 NoNewPrivileges=yes
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/tmp
+ReadWritePaths=/opt/cuems_library /tmp
 
 [Install]
 WantedBy=cuems-controller.target

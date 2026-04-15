@@ -7,7 +7,7 @@ PartOf=jackd-cuems.service
 
 [Service]
 Type=simple
-User=stagelab
+User=cuems
 Group=audio
 Environment="JACK_NO_AUDIO_RESERVATION=1"
 LimitRTPRIO=95

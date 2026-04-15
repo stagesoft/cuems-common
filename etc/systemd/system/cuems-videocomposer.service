@@ -26,7 +26,8 @@ StandardError=journal
 SyslogIdentifier=cuems-videocomposer
 
 # DRI/ALSA: need access to device nodes (run with User=, SupplementaryGroups=video render audio)
-PrivateTmp=yes
+# PrivateTmp=no: CUEMS services share /tmp for NNG IPC sockets
+PrivateTmp=no
 NoNewPrivileges=yes
 # Do not use PrivateDevices so /dev/dri and /dev/snd are visible
 PrivateDevices=no
