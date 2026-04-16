@@ -1,21 +1,27 @@
 [Unit]
 Description=cuems-midiconnector
-#PartOf=cuems-node.service
-#Requires=avahi-daemon.service
-#After=network-online.target 
-#Wants=network-online.target
+PartOf=cuems-controller.target
 StartLimitBurst=5
 StartLimitIntervalSec=33
 
-
 [Service]
-#Environment="PYTHONPATH=/usr/lib/cuems/site-packages"
+User=cuems
+Group=cuems
+SupplementaryGroups=audio
 Type=simple
-#NotifyAccess=main
-#Restart=on-failure
+Restart=on-failure
 RestartSec=10
-ExecStart=/usr/lib/cuems/bin/python3 /home/ion/src/cuems/cuems-midi-connector/run_midiconnector.py
-TimeoutSec=900
+StandardOutput=journal
+StandardError=journal
+TimeoutStopSec=10
+TimeoutStartSec=60
+ExecStart=/usr/lib/cuems/bin/cuems-midiconnector
+# PrivateTmp=no: CUEMS services share /tmp for NNG IPC sockets
+PrivateTmp=no
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/opt/cuems_library /tmp
 
 [Install]
-WantedBy=default.target
+WantedBy=cuems-controller.target

@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+"""Detect DRM connector → GPU pipe → ALSA device mapping and generate asound.conf.
+
+On Intel Alder Lake, the GPU assigns display pipes (CRTCs) to physical ports
+dynamically at boot. The HDA HDMI audio codec maps pipes to fixed ALSA devices:
+
+    Pipe A (CRTC index 0) → hw:PCH,3
+    Pipe B (CRTC index 1) → hw:PCH,7
+    Pipe C (CRTC index 2) → hw:PCH,8
+
+This script reads the current CRTC→connector assignment via DRM ioctls,
+builds the mapping, and writes /etc/asound.conf so that physical ports
+always map to the same JACK channel pairs regardless of boot order.
+
+Connector ordering (determines JACK channel assignment):
+    Slot a (ch 1-2) = first connected port  (alphabetical by DRM name)
+    Slot b (ch 3-4) = second connected port
+    Slot c (ch 5-6) = third connected port  (if any)
+"""
+
+import ctypes
+import struct
+import os
+import sys
+import fcntl
+import array
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+log = logging.getLogger('cuems-hdmi-audio-map')
+
+ASOUND_CONF = '/etc/asound.conf'
+
+# Intel Alder Lake HDA HDMI: pipe index → ALSA device number
+PIPE_TO_DEVICE = {0: 3, 1: 7, 2: 8}
+
+# DRM connector type constants
+CONNECTOR_TYPES = {
+    1: 'VGA', 2: 'DVI-I', 3: 'DVI-D', 4: 'DVI-A', 5: 'Composite',
+    6: 'SVIDEO', 7: 'LVDS', 8: 'Component', 9: '9PinDIN', 10: 'DP',
+    11: 'HDMI-A', 12: 'HDMI-B', 13: 'TV', 14: 'eDP', 15: 'Virtual',
+    16: 'DSI', 17: 'DPI', 18: 'Writeback', 19: 'SPI', 20: 'USB',
+}
+
+DRM_IOCTL_MODE_GETRESOURCES = 0xC04064A0
+DRM_IOCTL_MODE_GETCONNECTOR = 0xC05064A7
+DRM_IOCTL_MODE_GETENCODER = 0xC01464A6
+
+
+def drm_get_resources(fd):
+    """Get DRM resource IDs (CRTCs, connectors, encoders)."""
+    buf = bytearray(64)
+    struct.pack_into('QQQQ', buf, 0, 0, 0, 0, 0)
+    struct.pack_into('IIII', buf, 32, 0, 0, 0, 0)
+    fcntl.ioctl(fd, DRM_IOCTL_MODE_GETRESOURCES, buf)
+
+    _, count_crtcs, count_connectors, count_encoders = struct.unpack_from('IIII', buf, 32)
+
+    crtc_ids = array.array('I', [0] * count_crtcs)
+    conn_ids = array.array('I', [0] * count_connectors)
+    enc_ids = array.array('I', [0] * count_encoders)
+
+    crtc_ptr, _ = crtc_ids.buffer_info()
+    conn_ptr, _ = conn_ids.buffer_info()
+    enc_ptr, _ = enc_ids.buffer_info()
+
+    buf2 = bytearray(64)
+    struct.pack_into('QQQQ', buf2, 0, 0, crtc_ptr, conn_ptr, enc_ptr)
+    struct.pack_into('IIII', buf2, 32, 0, count_crtcs, count_connectors, count_encoders)
+    fcntl.ioctl(fd, DRM_IOCTL_MODE_GETRESOURCES, buf2)
+
+    return list(crtc_ids), list(conn_ids), list(enc_ids)
+
+
+def drm_get_connector(fd, conn_id):
+    """Get connector type, type_id, encoder_id, and connection status."""
+    buf = bytearray(80)
+    struct.pack_into('QQQQ', buf, 0, 0, 0, 0, 0)
+    struct.pack_into('III', buf, 32, 0, 0, 0)
+    struct.pack_into('IIII', buf, 44, 0, conn_id, 0, 0)
+    fcntl.ioctl(fd, DRM_IOCTL_MODE_GETCONNECTOR, buf)
+
+    encoder_id = struct.unpack_from('I', buf, 44)[0]
+    conn_type = struct.unpack_from('I', buf, 52)[0]
+    conn_type_id = struct.unpack_from('I', buf, 56)[0]
+    connection = struct.unpack_from('I', buf, 60)[0]
+
+    type_name = CONNECTOR_TYPES.get(conn_type, f'Unknown-{conn_type}')
+    name = f'{type_name}-{conn_type_id}'
+    connected = (connection == 1)
+
+    return name, encoder_id, connected
+
+
+def drm_get_encoder(fd, enc_id):
+    """Get encoder's assigned CRTC ID."""
+    buf = bytearray(24)
+    struct.pack_into('I', buf, 0, enc_id)
+    fcntl.ioctl(fd, DRM_IOCTL_MODE_GETENCODER, buf)
+    crtc_id = struct.unpack_from('I', buf, 8)[0]
+    return crtc_id
+
+
+def detect_mapping():
+    """Return list of (connector_name, alsa_device) sorted by connector name."""
+    fd = os.open('/dev/dri/card0', os.O_RDWR)
+    try:
+        crtc_ids, conn_ids, enc_ids = drm_get_resources(fd)
+        log.info(f'CRTCs: {crtc_ids}')
+
+        # Build CRTC ID → pipe index map
+        crtc_to_pipe = {cid: idx for idx, cid in enumerate(crtc_ids)}
+
+        mapping = []
+        for cid in conn_ids:
+            name, encoder_id, connected = drm_get_connector(fd, cid)
+            if not connected or encoder_id == 0:
+                log.info(f'  {name}: disconnected')
+                continue
+
+            crtc_id = drm_get_encoder(fd, encoder_id)
+            pipe_idx = crtc_to_pipe.get(crtc_id)
+
+            if pipe_idx is None:
+                log.warning(f'  {name}: connected but CRTC {crtc_id} not in resource list')
+                continue
+
+            device = PIPE_TO_DEVICE.get(pipe_idx)
+            if device is None:
+                log.warning(f'  {name}: pipe {pipe_idx} has no known audio device')
+                continue
+
+            log.info(f'  {name}: CRTC {crtc_id} → pipe {pipe_idx} → hw:PCH,{device}')
+            mapping.append((name, device))
+
+    finally:
+        os.close(fd)
+
+    # Sort by connector name for stable channel ordering
+    mapping.sort(key=lambda x: x[0])
+    return mapping
+
+
+def generate_asound_conf(mapping):
+    """Generate asound.conf content from the detected mapping.
+
+    Always produces 3 slots (6 channels) for JACK stability.
+    Connected ports are assigned first (sorted alphabetically),
+    then remaining ALSA devices fill the unused slots.
+    """
+    ALL_DEVICES = sorted(PIPE_TO_DEVICE.values())  # [3, 7, 8]
+    SLOT_COUNT = len(ALL_DEVICES)
+    slot_names = ['a', 'b', 'c']
+
+    # Connected ports get priority slots; remaining devices fill the rest
+    used_devices = {dev for _, dev in mapping}
+    spare_devices = sorted(d for d in ALL_DEVICES if d not in used_devices)
+
+    slots = []  # list of (label, device)
+    for conn_name, dev in mapping[:SLOT_COUNT]:
+        slots.append((conn_name, dev))
+    for dev in spare_devices:
+        if len(slots) >= SLOT_COUNT:
+            break
+        slots.append((f'(unused, hw:PCH,{dev})', dev))
+
+    # Header comment
+    lines = [
+        '# Auto-generated by cuems-hdmi-audio-map',
+        '# DO NOT EDIT — regenerated at every boot',
+        '#',
+        '# Detected mapping (physical port → ALSA device):',
+    ]
+    for i, (label, dev) in enumerate(slots):
+        slot = slot_names[i]
+        lines.append(f'#   slot {slot} (ch {i*2+1}-{i*2+2}) = {label} → hw:PCH,{dev}')
+    lines.append('#')
+    lines.append('#   hw:HID,0  = USB Audio (bridged via alsa_out)')
+    lines.append('#')
+    lines.append('# JACK runs on multi_hdmi (always 6ch). USB audio bridged separately.')
+    lines.append('')
+
+    # multi_hdmi PCM
+    lines.append('pcm.multi_hdmi {')
+    lines.append('    type multi')
+    lines.append('')
+    lines.append('    slaves {')
+    for i, (label, dev) in enumerate(slots):
+        slot = slot_names[i]
+        lines.append(f'        {slot} {{ pcm "hw:PCH,{dev}" channels 2 }}')
+    lines.append('    }')
+    lines.append('')
+    lines.append('    bindings {')
+    for i in range(len(slots)):
+        slot = slot_names[i]
+        lines.append(f'        {i*2} {{ slave {slot} channel 0 }}')
+        lines.append(f'        {i*2+1} {{ slave {slot} channel 1 }}')
+    lines.append('    }')
+    lines.append('}')
+    lines.append('')
+
+    # Convenience plug device
+    lines.append('pcm.hdmi_all {')
+    lines.append('    type plug')
+    lines.append('    slave.pcm "multi_hdmi"')
+    lines.append('}')
+    lines.append('')
+
+    return '\n'.join(lines)
+
+
+def main():
+    dry_run = '--dry-run' in sys.argv or '-n' in sys.argv
+
+    mapping = detect_mapping()
+
+    if not mapping:
+        log.error('No HDMI/DP audio outputs detected. Leaving asound.conf unchanged.')
+        sys.exit(1)
+
+    conf = generate_asound_conf(mapping)
+
+    if dry_run:
+        print(conf)
+    else:
+        log.info(f'Writing {ASOUND_CONF} with {len(mapping)} output(s)')
+        with open(ASOUND_CONF, 'w') as f:
+            f.write(conf)
+        log.info('Done.')
+
+
+if __name__ == '__main__':
+    main()

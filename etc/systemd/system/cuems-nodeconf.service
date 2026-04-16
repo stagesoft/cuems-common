@@ -1,22 +1,25 @@
 [Unit]
 Description=cuems-nodeconf
-PartOf=cuems-node.service
+PartOf=cuems-node.target
 Requires=avahi-daemon.service
 After=network-online.target avahi-daemon.service
 Wants=network-online.target
 StartLimitBurst=5
 StartLimitIntervalSec=33
 
-
 [Service]
-#Environment="PYTHONPATH=/usr/lib/cuems/site-packages"
+# Runs as root: writes to /etc/network/interfaces, /etc/avahi/services/,
+# controls systemd services via DBus. Cannot be demoted to unprivileged user.
 Type=notify
 RemainAfterExit=yes
 NotifyAccess=main
 Restart=on-failure
 RestartSec=10
-ExecStart=/usr/lib/cuems/bin/python3 /home/ion/src/cuems/cuems-nodeconf/run_nodeconf.py
-TimeoutSec=900
+StandardOutput=journal
+StandardError=journal
+TimeoutStopSec=10
+TimeoutStartSec=60
+ExecStart=/usr/lib/cuems/bin/cuems-nodeconf
 
 [Install]
-WantedBy=default.target
+WantedBy=cuems-node.target

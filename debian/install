@@ -4,31 +4,44 @@
 # CUEMS binaries and scripts (must be executable)
 scripts/check-ip.sh usr/lib/cuems/bin/
 scripts/wifi-auto.sh usr/lib/cuems/bin/
-scripts/cuems-healthcheck.sh usr/lib/cuems/bin/
+usr/bin/cuems-healthcheck usr/bin/
+usr/lib/cuems/bin/cuems-generate-display-conf usr/lib/cuems/bin/
 
 # Python scripts (executable)
-scripts/config_mac_and_uuid.py usr/lib/cuems/bin/
+usr/bin/cuems-config-node usr/bin/
 
-# Systemd unit files (excluding cuems-osclistener.service and cuems-xorg.service)
+# System scripts
+usr/bin/cuems-hdmi-audio-map usr/bin/
+usr/bin/cuems-i915-rebind.sh usr/bin/
+usr/bin/cuems-wake-monitors.sh usr/bin/
+usr/bin/cuems-ola-profile usr/bin/
+usr/bin/cuems-stop usr/bin/
+
+# Systemd unit files
 # Package-provided services should be in /lib/systemd/system/ (not /etc/systemd/system/)
+etc/systemd/system/cuems-videocomposer.service lib/systemd/system/
 etc/systemd/system/cuems-controller.target lib/systemd/system/
 etc/systemd/system/cuems-wifi.target lib/systemd/system/
-etc/systemd/system/cuems-editor.service lib/systemd/system/
 etc/systemd/system/cuems-controller-engine.service lib/systemd/system/
+etc/systemd/system/cuems-editor.service lib/systemd/system/
+etc/systemd/system/cuems-hdmi-audio-map.service lib/systemd/system/
 etc/systemd/system/cuems-midiconnector.service lib/systemd/system/
 etc/systemd/system/cuems-node-engine.service lib/systemd/system/
-etc/systemd/system/cuems-node.service lib/systemd/system/
+etc/systemd/system/cuems-node.target lib/systemd/system/
 etc/systemd/system/cuems-nodeconf.service lib/systemd/system/
-etc/systemd/system/cuems-start.service lib/systemd/system/
 etc/systemd/system/cuems-wifi.service lib/systemd/system/
-etc/systemd/system/hostapd.service.d/* lib/systemd/system/hostapd.service.d/
+etc/systemd/system/hostapd.service lib/systemd/system/
+etc/systemd/system/jack-alsa-bridges.service lib/systemd/system/
+etc/systemd/system/jackd-cuems.service lib/systemd/system/
+etc/systemd/system/olad.service lib/systemd/system/
 etc/systemd/system/rsync@.service lib/systemd/system/
-etc/systemd/system/cuems-wayland.service lib/systemd/system/
 etc/systemd/system/*.path lib/systemd/system/
 etc/systemd/system/*.socket lib/systemd/system/
 # Systemd drop-in directories (package-provided overrides)
+etc/systemd/system/cuems-videocomposer.service.d/hdmi-fix.conf lib/systemd/system/cuems-videocomposer.service.d/
 etc/systemd/system/avahi-daemon.d/* lib/systemd/system/avahi-daemon.service.d/
 etc/systemd/system/apache2.service.d/* lib/systemd/system/apache2.service.d/
+etc/systemd/system/hostapd.service.d/* lib/systemd/system/hostapd.service.d/
 etc/systemd/system/isc-dhcp-server.service.d/* lib/systemd/system/isc-dhcp-server.service.d/
 etc/systemd/system/rtpmidid.service.d/* lib/systemd/system/rtpmidid.service.d/
 
@@ -38,13 +51,17 @@ etc/systemd/journald.conf.cuems etc/systemd/
 # Systemd network link files
 etc/systemd/network/*.link etc/systemd/network/
 
+
+# GRUB kernel parameter snippet
+etc/default/grub.d/cuems-display.cfg etc/default/grub.d/
+
+# Shell aliases
+etc/profile.d/cuems.sh etc/profile.d/
+
 # Configuration files
-etc/X11/xinit/xinitrc.cuems etc/X11/xinit/
-etc/X11/xorg.conf.d/*.conf etc/X11/xorg.conf.d/
-etc/X11/Xwrapper.config.cuems etc/X11/
-etc/avahi/avahi-daemon.conf.cuems etc/avahi/
+etc/avahi/avahi-daemon.conf etc/avahi/
 etc/avahi/services/*.service etc/avahi/services/
-etc/network/interfaces.cuems etc/network/
+etc/network/interfaces etc/network/
 etc/rsyncd.conf etc/
 etc/rsyncd.secrets etc/
 etc/rsyslog.conf.cuems etc/
@@ -54,6 +71,7 @@ etc/dhcp/dhclient.conf.cuems etc/dhcp/
 etc/default/isc-dhcp-server.cuems etc/default/
 etc/sudoers.d/99-cuems etc/sudoers.d/
 etc/sysctl.d/99-cuems-performance.conf etc/sysctl.d/
+etc/tmpfiles.d/jack-cuems.conf etc/tmpfiles.d/
 etc/logrotate.d/cuems etc/logrotate.d/
 etc/cuems/network_map.xml etc/cuems/
 etc/cuems/network_map.xsd etc/cuems/

@@ -1,0 +1,29 @@
+[Unit]
+Description=JACK ALSA output bridges (USB audio)
+Documentation=man:zita-j2a(1)
+After=jackd-cuems.service
+Requires=jackd-cuems.service
+PartOf=jackd-cuems.service
+
+[Service]
+Type=simple
+User=cuems
+Group=audio
+Environment="JACK_NO_AUDIO_RESERVATION=1"
+LimitRTPRIO=95
+LimitMEMLOCK=infinity
+
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 60); do jack_lsp > /dev/null 2>&1 && exit 0; sleep 0.5; done; exit 1'
+ExecStartPre=/bin/bash -c '/usr/sbin/alsactl -E HOME=/run/alsa restore HID 2>/dev/null || amixer -c HID set PCM 95%% unmute 2>/dev/null || true'
+ExecStart=/usr/bin/zita-j2a -j usb_audio -d hw:HID,0 -r 48000 -p 512 -n 3
+ExecStartPost=/bin/bash -c 'for i in $(seq 1 20); do jack_lsp 2>/dev/null | grep -q "usb_audio:playback_1" && break; sleep 0.5; done; jack_connect 0_mixer:output_7 usb_audio:playback_1 2>/dev/null; jack_connect 0_mixer:output_8 usb_audio:playback_2 2>/dev/null'
+
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=120
+StartLimitBurst=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=cuems-node.target

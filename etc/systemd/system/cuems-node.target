@@ -1,0 +1,6 @@
+[Unit]
+Description=CUEMS Node service group
+Documentation=man:systemd.special(7)
+
+[Install]
+WantedBy=multi-user.target

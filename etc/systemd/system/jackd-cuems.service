@@ -1,0 +1,30 @@
+[Unit]
+Description=JACK Audio Connection Kit
+Documentation=man:jackd(1)
+PartOf=cuems-node.target
+After=sound.target cuems-hdmi-audio-map.service
+Wants=sound.target
+Requires=cuems-hdmi-audio-map.service
+
+[Service]
+Type=simple
+User=cuems
+Group=audio
+Environment="JACK_NO_AUDIO_RESERVATION=1"
+# Configuration will be read from /etc/default/jack
+EnvironmentFile=-/etc/default/jack
+# Use simple wrapper to set limits
+LimitRTPRIO=95
+LimitMEMLOCK=infinity
+ExecStart=/usr/bin/jackd $DAEMON_ARGS
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Real-time scheduling
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=10
+
+[Install]
+WantedBy=cuems-node.target

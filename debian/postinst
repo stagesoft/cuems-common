@@ -7,12 +7,31 @@ set -e
 if [ -d /usr/lib/cuems/bin ]; then
     chmod +x /usr/lib/cuems/bin/*.sh 2>/dev/null || true
     chmod +x /usr/lib/cuems/bin/*.py 2>/dev/null || true
-    
+    # Scripts without standard extensions
+    for f in cuems-generate-display-conf; do
+        [ -f "/usr/lib/cuems/bin/$f" ] && chmod +x "/usr/lib/cuems/bin/$f"
+    done
+
     # Verify critical scripts
     if [ ! -x /usr/lib/cuems/bin/check-ip.sh ]; then
         echo "WARNING: check-ip.sh is not executable, fixing..." >&2
         chmod +x /usr/lib/cuems/bin/check-ip.sh
     fi
+fi
+
+if [ -f /usr/bin/cuems-hdmi-audio-map ]; then
+    chmod +x /usr/bin/cuems-hdmi-audio-map
+fi
+
+for script in cuems-i915-rebind.sh cuems-wake-monitors.sh; do
+    if [ -f "/usr/bin/$script" ]; then
+        chmod +x "/usr/bin/$script"
+    fi
+done
+
+# Apply GRUB kernel parameters if grub-common is present
+if [ -f /etc/default/grub.d/cuems-display.cfg ] && command -v update-grub >/dev/null 2>&1; then
+    update-grub 2>/dev/null || true
 fi
 
 # Verify Python wrapper exists (provided by cuems-utils package)
@@ -150,6 +169,14 @@ if command -v deb-systemd-helper >/dev/null 2>&1; then
     deb-systemd-helper update-state >/dev/null 2>&1 || true
 elif command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload
+fi
+
+# Enable linger for cuems user so systemd-logind does not clean up
+# IPC resources (semaphores, shared memory, sockets) when the last login
+# session ends. Without this, JACK server IPC gets destroyed on logout
+# even though jackd runs as a system service under this user.
+if command -v loginctl >/dev/null 2>&1; then
+    loginctl enable-linger cuems 2>/dev/null || true
 fi
 
 # Set proper permissions on sensitive files
@@ -299,6 +326,61 @@ if command -v systemctl >/dev/null 2>&1; then
     fi
     
     echo "Disabled unnecessary systemd services/timers for performance"
+fi
+
+# =========================================================================
+# OLA daemon configuration
+# =========================================================================
+# The stock OLA Debian package ships an init.d script whose postinst runs
+# "invoke-rc.d --skip-systemd-native olad restart", spawning a rogue olad
+# that bypasses our native systemd unit. We use dpkg-divert to prevent
+# the init.d script from being installed.
+#
+# Additionally, OLA's client library (libola) auto-starts olad when a
+# client can't connect. The auto-started olad reads config from ~/.ola/
+# instead of /etc/ola/. We create a symlink so both paths resolve to the
+# same system config managed by cuems-ola-profile.
+# =========================================================================
+
+# Divert OLA init.d script to prevent rogue olad spawning on install/upgrade
+if command -v dpkg-divert >/dev/null 2>&1; then
+    if [ ! -e /etc/init.d/olad.stock ]; then
+        dpkg-divert --local --divert /etc/init.d/olad.stock --rename /etc/init.d/olad 2>/dev/null || true
+    fi
+fi
+
+# Symlink ~/.ola -> /etc/ola for any user that might auto-start olad.
+# OLA's client library (libola) spawns "olad --daemon --syslog" without
+# --config-dir, so it reads ~/.ola/ for whichever user triggered it.
+# We symlink for:
+#   - olad: the systemd unit user (home /usr/lib/olad)
+#   - cuems: the CUEMS service user (runs dmxplayer via node-engine)
+#   - stagelab: login user — may still trigger OLA auto-start interactively
+if [ -d /etc/ola ]; then
+    for user in olad cuems stagelab; do
+        USER_HOME=$(getent passwd "$user" 2>/dev/null | cut -d: -f6)
+        [ -z "$USER_HOME" ] && continue
+        # Create home dir if needed (system users may not have one)
+        [ ! -d "$USER_HOME" ] && mkdir -p "$USER_HOME" 2>/dev/null
+        [ ! -d "$USER_HOME" ] && continue
+        # Replace .ola with symlink to /etc/ola
+        if [ -L "$USER_HOME/.ola" ]; then
+            # Already a symlink — update target
+            ln -sf /etc/ola "$USER_HOME/.ola"
+        elif [ -d "$USER_HOME/.ola" ]; then
+            # Existing config directory — back up and replace with symlink
+            mv "$USER_HOME/.ola" "$USER_HOME/.ola.bak.$(date +%s)"
+            ln -sf /etc/ola "$USER_HOME/.ola"
+        elif [ ! -e "$USER_HOME/.ola" ]; then
+            # Nothing there — create symlink
+            ln -sf /etc/ola "$USER_HOME/.ola"
+        fi
+    done
+fi
+
+# Ensure cuems-ola-profile script is executable
+if [ -f /usr/bin/cuems-ola-profile ]; then
+    chmod +x /usr/bin/cuems-ola-profile
 fi
 
 echo "CUEMS Common package installed successfully."

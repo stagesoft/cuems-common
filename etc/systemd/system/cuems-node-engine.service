@@ -1,21 +1,32 @@
 [Unit]
 Description=cuems-node-engine
-#PartOf=cuems-node.service
-Requires=avahi-daemon.service
-After=network-online.target avahi-daemon.service
-Wants=network-online.target
+PartOf=cuems-node.target
+Requires=avahi-daemon.service jackd-cuems.service
+After=network-online.target avahi-daemon.service jackd-cuems.service
 StartLimitBurst=5
 StartLimitIntervalSec=33
 
-
 [Service]
-#Environment="PYTHONPATH=/usr/lib/cuems/site-packages"
+User=cuems
+Group=cuems
 Type=simple
-#NotifyAccess=main
-#Restart=on-failure
+Environment="LD_LIBRARY_PATH=/usr/lib/cuems/lib/python3.11/site-packages/rtmidi"
+Restart=on-failure
 RestartSec=10
-ExecStart=/usr/lib/cuems/bin/node-engine --daemon
-TimeoutSec=900
+StandardOutput=journal
+StandardError=journal
+TimeoutStopSec=10
+TimeoutStartSec=60
+ExecStartPre=-/bin/sh -c '/usr/bin/pkill -u cuems -f "xjadeo.*--osc|cuems-audioplayer|cuems-dmxplayer|jack-volume" || true'
+ExecStartPre=-/bin/sleep 1
+ExecStart=/usr/lib/cuems/bin/node-engine
+ExecStopPost=-/bin/sh -c '/usr/bin/pkill -u cuems -f "xjadeo.*--osc|cuems-audioplayer|cuems-dmxplayer|jack-volume" || true'
+# PrivateTmp=no: CUEMS services share /tmp for NNG IPC sockets
+PrivateTmp=no
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/opt/cuems_library /tmp
 
 [Install]
-WantedBy=default.target
+WantedBy=cuems-node.target

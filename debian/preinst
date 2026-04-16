@@ -1,0 +1,56 @@
+#!/bin/bash
+set -e
+
+# CUEMS Common package pre-installation script
+# Creates the 'cuems' system user and group required by CUEMS services
+# (cuems-videocomposer, cuems-dmxplayer, sudoers, OLA symlinks, etc.)
+
+CUEMS_USER="cuems"
+CUEMS_HOME="/var/lib/cuems"
+
+case "$1" in
+    install|upgrade)
+        # Create cuems system group if it doesn't exist
+        if ! getent group "$CUEMS_USER" >/dev/null 2>&1; then
+            addgroup --system "$CUEMS_USER"
+        fi
+
+        # Create cuems system user if it doesn't exist
+        if ! getent passwd "$CUEMS_USER" >/dev/null 2>&1; then
+            adduser --system \
+                --home "$CUEMS_HOME" \
+                --no-create-home \
+                --shell /usr/sbin/nologin \
+                --ingroup "$CUEMS_USER" \
+                --gecos "CUEMS system user" \
+                "$CUEMS_USER"
+        fi
+
+        # Ensure home directory exists with correct ownership
+        if [ ! -d "$CUEMS_HOME" ]; then
+            mkdir -p "$CUEMS_HOME"
+        fi
+        chown "$CUEMS_USER:$CUEMS_USER" "$CUEMS_HOME"
+
+        # Add cuems to supplementary groups required by services:
+        #   video, render — GPU/DRI access (cuems-videocomposer)
+        #   audio         — ALSA MIDI /dev/snd/seq (cuems-videocomposer)
+        for grp in video render audio; do
+            if getent group "$grp" >/dev/null 2>&1; then
+                usermod -aG "$grp" "$CUEMS_USER" 2>/dev/null || true
+            fi
+        done
+        ;;
+
+    abort-upgrade)
+        ;;
+
+    *)
+        echo "preinst called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

@@ -1,0 +1,16 @@
+[Unit]
+Description=Detect HDMI/DP audio mapping and generate asound.conf
+Documentation=man:aplay(1)
+PartOf=cuems-node.target
+After=sound.target
+Before=jackd-cuems.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/cuems-hdmi-audio-map
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=cuems-node.target

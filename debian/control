@@ -7,11 +7,11 @@ Standards-Version: 4.6.0
 
 Package: cuems-common
 Architecture: all
+Pre-Depends: adduser
 Depends: ${misc:Depends},
          cuems-utils (>= 0.1.0rc4),
          systemd,
          python3,
-         kwin-wayland,
          apache2,
          libapache2-mod-dnssd,
          openssl,
@@ -23,7 +23,9 @@ Depends: ${misc:Depends},
          ifenslave,
          net-tools,
          iproute2,
-         cpufrequtils
+         cpufrequtils,
+         ddcutil,
+         zita-ajbridge
 Conflicts: network-manager
 Description: CUEMS common configuration and systemd services
  This package contains systemd service files, configuration files,
@@ -34,9 +36,6 @@ Description: CUEMS common configuration and systemd services
  .
  This package requires isc-dhcp-server and hostapd for WiFi access
  point functionality (cuems-wifi.service and hostapd.service).
- .
- This package uses Wayland (kwin-wayland) for display server
- functionality (cuems-wayland.service).
  .
  This package installs Apache2 site configuration files and enables
  required Apache2 modules and sites. Module files are provided by their

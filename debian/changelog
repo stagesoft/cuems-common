@@ -1,3 +1,20 @@
+cuems-common (1.1.0-1) bookworm; urgency=medium
+
+  * merge rc_1 into debian/bookworm (48 commits): brings in accumulated
+    rc_1 work onto the release branch
+    - cuems-node-engine.service: update pkill patterns for the player
+      binary rename (audioplayer-cuems -> cuems-audioplayer, and
+      dmxplayer-cuems -> cuems-dmxplayer)
+    - plus accumulated OLA daemon configuration, systemd dependency
+      hardening, user-facing script relocation to /usr/bin, and other
+      packaging fixes from rc_1
+  * debian/install: drop duplicate cuems-controller-engine.service and
+    duplicate hostapd.service.d/* entries (merge-conflict leftovers)
+  * debian/postinst: add missing fi closing the
+    "Disabled unnecessary systemd services/timers" block
+
+ -- Ion Reguera <ion@stagelab.coop>  Thu, 16 Apr 2026 20:45:00 +0200
+
 cuems-common (1.0.0-1) unstable; urgency=medium
 
   * Initial release

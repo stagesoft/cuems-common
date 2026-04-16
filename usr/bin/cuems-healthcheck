@@ -59,7 +59,7 @@ check_disk_space() {
 log "=== CUEMS Health Check ==="
 
 # Check CUEMS services
-services=("cuems-node.service" "cuems-engine.service" "cuems-xorg.service" "avahi-daemon.service")
+services=("cuems-controller-engine.service" "cuems-node-engine.service" "cuems-videocomposer.service" "jackd-cuems.service" "avahi-daemon.service")
 service_issues=0
 
 for service in "${services[@]}"; do
@@ -71,13 +71,7 @@ done
 # Check network connectivity
 network_issues=0
 
-if ! check_network "192.168.3.20" "Relay 1"; then
-    ((network_issues++))
-fi
-
-if ! check_network "192.168.3.21" "Relay 2"; then
-    ((network_issues++))
-fi
+# Network checks can be added per-installation as needed
 
 # Check disk space
 if ! check_disk_space; then

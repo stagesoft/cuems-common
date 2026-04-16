@@ -1,22 +1,23 @@
 [Unit]
-Description=cuems-editor
+Description=cuems-controller-engine
 PartOf=cuems-controller.target
-After=cuems-controller-engine.service apache2.service
-Requires=cuems-controller-engine.service apache2.service
+Requires=avahi-daemon.service
+After=network-online.target avahi-daemon.service
+Wants=network-online.target
+StartLimitBurst=5
+StartLimitIntervalSec=33
 
 [Service]
 User=cuems
 Group=cuems
 Type=simple
-Restart=always
-RestartSec=5
+Restart=on-failure
+RestartSec=10
 StandardOutput=journal
 StandardError=journal
 TimeoutStopSec=10
-TimeoutStartSec=30
-RuntimeDirectory=cuems-editor
-PIDFile=/run/cuems-editor/service.pid
-ExecStart=/usr/lib/cuems/bin/cuems-editor
+TimeoutStartSec=60
+ExecStart=/usr/lib/cuems/bin/controller-engine
 # PrivateTmp=no: CUEMS services share /tmp for NNG IPC sockets
 PrivateTmp=no
 NoNewPrivileges=yes
