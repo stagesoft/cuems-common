@@ -11,10 +11,10 @@ usr/lib/cuems/bin/cuems-generate-display-conf usr/lib/cuems/bin/
 scripts/config_mac_and_uuid.py usr/lib/cuems/bin/
 
 # System scripts
-usr/local/bin/cuems-hdmi-audio-map usr/local/bin/
-usr/local/bin/cuems-i915-rebind.sh usr/local/bin/
-usr/local/bin/cuems-wake-monitors.sh usr/local/bin/
-usr/local/bin/cuems-ola-profile usr/local/bin/
+usr/bin/cuems-hdmi-audio-map usr/bin/
+usr/bin/cuems-i915-rebind.sh usr/bin/
+usr/bin/cuems-wake-monitors.sh usr/bin/
+usr/bin/cuems-ola-profile usr/bin/
 
 # Systemd unit files
 # Package-provided services should be in /lib/systemd/system/ (not /etc/systemd/system/)
