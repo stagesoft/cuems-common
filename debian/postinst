@@ -19,13 +19,13 @@ if [ -d /usr/lib/cuems/bin ]; then
     fi
 fi
 
-if [ -f /usr/local/bin/cuems-hdmi-audio-map ]; then
-    chmod +x /usr/local/bin/cuems-hdmi-audio-map
+if [ -f /usr/bin/cuems-hdmi-audio-map ]; then
+    chmod +x /usr/bin/cuems-hdmi-audio-map
 fi
 
 for script in cuems-i915-rebind.sh cuems-wake-monitors.sh; do
-    if [ -f "/usr/local/bin/$script" ]; then
-        chmod +x "/usr/local/bin/$script"
+    if [ -f "/usr/bin/$script" ]; then
+        chmod +x "/usr/bin/$script"
     fi
 done
 
@@ -235,8 +235,8 @@ if [ -d /etc/ola ]; then
 fi
 
 # Ensure cuems-ola-profile script is executable
-if [ -f /usr/local/bin/cuems-ola-profile ]; then
-    chmod +x /usr/local/bin/cuems-ola-profile
+if [ -f /usr/bin/cuems-ola-profile ]; then
+    chmod +x /usr/bin/cuems-ola-profile
 fi
 
 echo "CUEMS Common package installed successfully."

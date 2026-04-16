@@ -109,10 +109,10 @@ check_package_file() {
                 return 0
             fi
             ;;
-        /usr/local/bin/*)
+        /usr/bin/cuems-*)
             # Check if exists in package structure
-            local rel_path="${file_path#/usr/local/bin/}"
-            if [ -f "$PROJECT_ROOT/scripts/$rel_path" ] || [ -f "$PROJECT_ROOT/usr/local/bin/$rel_path" ]; then
+            local rel_path="${file_path#/usr/bin/}"
+            if [ -f "$PROJECT_ROOT/scripts/$rel_path" ] || [ -f "$PROJECT_ROOT/usr/bin/$rel_path" ]; then
                 return 0
             fi
             ;;

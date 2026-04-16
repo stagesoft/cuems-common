@@ -7,7 +7,7 @@ Before=jackd-cuems.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/cuems-hdmi-audio-map
+ExecStart=/usr/bin/cuems-hdmi-audio-map
 RemainAfterExit=yes
 StandardOutput=journal
 StandardError=journal
