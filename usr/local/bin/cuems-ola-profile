@@ -131,7 +131,21 @@ echo "Enabled plugins:"
 for id in $(ola_plugin_info --list-plugin-ids 2>/dev/null); do
     info=$(ola_plugin_state -p "$id" 2>/dev/null)
     if echo "$info" | grep -q "Enabled: True"; then
-        echo "  $(echo "$info" | head -1)"
+        name=$(echo "$info" | head -1)
+        # Add supported hardware models for each plugin
+        case "$name" in
+            *"USB Serial"*|*"usbserial"*|*"Serial USB"*)
+                name="$name  (Enttec DMX USB Pro, DMXking USB DMX512-A/Ultra/Micro)" ;;
+            *"FTDI"*|*"ftdidmx"*)
+                name="$name  (Enttec Open DMX USB)" ;;
+            *"USB DMX"*|*"usbdmx"*)
+                name="$name  (Eurolite, Velleman, Nodle, Anyma uDMX)" ;;
+            *"ArtNet"*|*"Art-Net"*)
+                name="$name  (ArtNet network nodes)" ;;
+            *"E1.31"*|*"e131"*|*"sACN"*)
+                name="$name  (sACN / E1.31 network nodes)" ;;
+        esac
+        echo "  $name"
     fi
 done
 echo ""
