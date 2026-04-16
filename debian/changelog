@@ -1,3 +1,13 @@
+cuems-common (1.1.0-3) bookworm; urgency=medium
+
+  * cuems-controller-engine.service: add LD_LIBRARY_PATH pointing to the
+    python_rtmidi-bundled libjack. Without it, the controller-engine's
+    MtcListener fails to import rtmidi (libjack-<hash>.so.0.1.0 cannot
+    be opened) and no MTC timecode reaches the UI. The equivalent
+    Environment= line was already present on cuems-node-engine.service.
+
+ -- Ion Reguera <ion@stagelab.coop>  Thu, 16 Apr 2026 21:25:00 +0200
+
 cuems-common (1.1.0-2) bookworm; urgency=medium
 
   * debian/install: drop shipping of hostapd.service. That file is owned
