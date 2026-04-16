@@ -1,3 +1,13 @@
+cuems-common (1.1.0-2) bookworm; urgency=medium
+
+  * debian/install: drop shipping of hostapd.service. That file is owned
+    by the upstream hostapd package; shipping it here causes dpkg -i to
+    fail with "trying to overwrite '/lib/systemd/system/hostapd.service'".
+    CUEMS customisation of hostapd's behaviour happens via the
+    hostapd.service.d/* dropin directory, which is kept.
+
+ -- Ion Reguera <ion@stagelab.coop>  Thu, 16 Apr 2026 21:05:00 +0200
+
 cuems-common (1.1.0-1) bookworm; urgency=medium
 
   * merge rc_1 into debian/bookworm (48 commits): brings in accumulated

@@ -30,7 +30,6 @@ etc/systemd/system/cuems-node-engine.service lib/systemd/system/
 etc/systemd/system/cuems-node.target lib/systemd/system/
 etc/systemd/system/cuems-nodeconf.service lib/systemd/system/
 etc/systemd/system/cuems-wifi.service lib/systemd/system/
-etc/systemd/system/hostapd.service lib/systemd/system/
 etc/systemd/system/jack-alsa-bridges.service lib/systemd/system/
 etc/systemd/system/jackd-cuems.service lib/systemd/system/
 etc/systemd/system/olad.service lib/systemd/system/
