@@ -4,11 +4,11 @@
 # CUEMS binaries and scripts (must be executable)
 scripts/check-ip.sh usr/lib/cuems/bin/
 scripts/wifi-auto.sh usr/lib/cuems/bin/
-scripts/cuems-healthcheck.sh usr/lib/cuems/bin/
+usr/bin/cuems-healthcheck usr/bin/
 usr/lib/cuems/bin/cuems-generate-display-conf usr/lib/cuems/bin/
 
 # Python scripts (executable)
-scripts/config_mac_and_uuid.py usr/lib/cuems/bin/
+usr/bin/cuems-config-node usr/bin/
 
 # System scripts
 usr/bin/cuems-hdmi-audio-map usr/bin/
