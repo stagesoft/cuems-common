@@ -4,6 +4,11 @@
 %:
 	dh $@
 
+# The repo root ships a multi-package orchestration Makefile used for
+# release builds. dh_auto_build would pick it up as this package's own
+# build step and try to rebuild every CUEMS package — suppress that.
+override_dh_auto_build:
+
 override_dh_fixperms:
 	# Ensure all scripts in /usr/lib/cuems/bin/ are executable
 	dh_fixperms
