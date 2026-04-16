@@ -15,6 +15,7 @@ usr/bin/cuems-hdmi-audio-map usr/bin/
 usr/bin/cuems-i915-rebind.sh usr/bin/
 usr/bin/cuems-wake-monitors.sh usr/bin/
 usr/bin/cuems-ola-profile usr/bin/
+usr/bin/cuems-stop usr/bin/
 
 # Systemd unit files
 # Package-provided services should be in /lib/systemd/system/ (not /etc/systemd/system/)

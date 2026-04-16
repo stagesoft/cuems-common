@@ -7,7 +7,7 @@ LOGGER_BINARY=/usr/bin/logger
 LOGGER_OPTIONS="-p local0.info -t CUEMS_POWER -i"
 LOGGER_COMMAND="$LOGGER_BINARY $LOGGER_OPTIONS"
 
-sudo -H -u stagelab /usr/local/bin/stop.sh 
+sudo -H -u stagelab /usr/bin/cuems-stop
 
 pgrep -f cuems-power-button-waiter.sh > /dev/null
 retVal=$?
