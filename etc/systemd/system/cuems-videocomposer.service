@@ -19,6 +19,24 @@ Environment=HOME=/var/lib/cuems
 # Generate display config from default_mappings.xml before starting
 ExecStartPre=/usr/lib/cuems/bin/cuems-generate-display-conf
 ExecStart=/usr/bin/cuems-videocomposer
+# --- Tuning display-pipeline latency compensation ---
+# cuems-videocomposer accepts --output-latency-ms <int> to set the
+# display-pipeline latency compensation (default 33 ms, range 0-500).
+# This cannot be read from settings.xml because videocomposer is a
+# systemd service, not a subprocess of the engine. To tune per node
+# without editing this unit file, create a drop-in override:
+#
+#   sudo systemctl edit cuems-videocomposer
+#
+# and add:
+#
+#   [Service]
+#   ExecStart=
+#   ExecStart=/usr/bin/cuems-videocomposer --output-latency-ms 33
+#
+# Typical starting points: 16-33 ms for direct-scanout (DRM/KMS),
+# 40-66 ms for compositor-mediated (Wayland/X11). Measure with a
+# phone camera at 120 fps pointed at a frame-counter overlay.
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
