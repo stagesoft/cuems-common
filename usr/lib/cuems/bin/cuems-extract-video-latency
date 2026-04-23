@@ -5,6 +5,12 @@
 """Extract videoplayer output_latency_ms from settings.xml and write
 an EnvironmentFile that cuems-videocomposer.service can source.
 
+Settings file path follows the same precedence as
+cuemsutils.tools.ConfigManager: $CUEMS_CONF_PATH/settings.xml if the
+env var is set, otherwise /etc/cuems/settings.xml. Operators who need
+a non-default path should set the env var at the service level via
+`systemctl edit cuems-videocomposer`.
+
 Semantics:
   integer value  → OUTPUT_LATENCY_FLAG=--output-latency-ms <value>
   "auto"         → OUTPUT_LATENCY_FLAG=   (binary uses hard-coded default)
@@ -19,7 +25,10 @@ import os
 import sys
 import xml.etree.ElementTree as ET
 
-SETTINGS_XML = '/etc/cuems/settings.xml'
+# Matches cuemsutils.tools.ConfigManager path resolution: CUEMS_CONF_PATH
+# env var wins over the /etc/cuems/ default.
+CONF_PATH = os.environ.get('CUEMS_CONF_PATH', '/etc/cuems/')
+SETTINGS_XML = os.path.join(CONF_PATH, 'settings.xml')
 OUTPUT_DIR = '/run/cuems'
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, 'videocomposer.env')
 
