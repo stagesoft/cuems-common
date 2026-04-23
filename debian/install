@@ -60,6 +60,7 @@ etc/tmpfiles.d/jack-cuems.conf etc/tmpfiles.d/
 etc/logrotate.d/cuems etc/logrotate.d/
 etc/cuems/network_map.xml etc/cuems/
 etc/cuems/network_map.xsd etc/cuems/
+etc/cuems/videocomposer-flags.env.example etc/cuems/
 
 # Shared data files
 usr/share/cuems/* usr/share/cuems/

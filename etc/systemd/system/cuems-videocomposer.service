@@ -22,21 +22,33 @@ ExecStartPre=/usr/lib/cuems/bin/cuems-generate-display-conf
 # into /run/cuems/videocomposer.env. Graceful: integer → flag emitted,
 # "auto"/absent/missing → OUTPUT_LATENCY_FLAG empty.
 ExecStartPre=/usr/lib/cuems/bin/cuems-extract-video-latency
+# Machine-generated (by cuems-extract-video-latency) — OUTPUT_LATENCY_FLAG.
 EnvironmentFile=-/run/cuems/videocomposer.env
-ExecStart=/usr/bin/cuems-videocomposer $OUTPUT_LATENCY_FLAG
-# --- Per-node latency override without touching settings.xml ---
-# The canonical source is videoplayer/output_latency_ms in
-# /etc/cuems/settings.xml (0-500, or "auto" to defer to the binary's
-# 33 ms default). For one-off per-node tuning that bypasses the XML:
+# Operator-tunable — OPERATOR_FLAGS for extra CLI args (e.g. --verbose).
+# See /etc/cuems/videocomposer-flags.env.example for the supported keys.
+# Leading `-` on EnvironmentFile makes a missing file non-fatal.
+EnvironmentFile=-/etc/cuems/videocomposer-flags.env
+ExecStart=/usr/bin/cuems-videocomposer $OPERATOR_FLAGS $OUTPUT_LATENCY_FLAG
+# --- Tuning videocomposer flags per node ---
+# Preferred path (no systemd drop-in needed):
+#   1. Latency: edit /etc/cuems/settings.xml videoplayer/output_latency_ms
+#      (integer 0-500, or "auto" to use the binary's 33 ms default).
+#   2. Other flags (verbose, future CLI options): write them as
+#      OPERATOR_FLAGS="--verbose ..." in /etc/cuems/videocomposer-flags.env.
+#   3. systemctl restart cuems-videocomposer
 #
+# Fallback for one-offs that bypass the XML / env file:
 #   sudo systemctl edit cuems-videocomposer
 #   [Service]
 #   ExecStart=
 #   ExecStart=/usr/bin/cuems-videocomposer --output-latency-ms 33
+# Note: the drop-in pattern loses composition with OPERATOR_FLAGS and
+# OUTPUT_LATENCY_FLAG — you must re-list every flag you want.
 #
-# Typical starting points: 16-33 ms for direct-scanout (DRM/KMS),
-# 40-66 ms for compositor-mediated (Wayland/X11). Measure with a
-# phone camera at 120 fps pointed at a frame-counter overlay.
+# Latency measurement: typical starting points are 16-33 ms for
+# direct-scanout (DRM/KMS) and 40-66 ms for compositor-mediated
+# (Wayland/X11). Phone camera at 120 fps pointed at a frame-counter
+# overlay.
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
