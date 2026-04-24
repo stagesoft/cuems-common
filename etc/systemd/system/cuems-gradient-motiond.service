@@ -15,7 +15,7 @@ Environment=HOME=/var/lib/cuems
 # Use the controller.local avahi alias — always resolves to the current
 # controller IP regardless of node topology changes. The nng_hub_port
 # (9093) is a CUEMS-wide constant; override by editing the unit or
-# creating /etc/systemd/system/gradient-motiond.service.d/ drop-in.
+# creating /etc/systemd/system/cuems-gradient-motiond.service.d/ drop-in.
 ExecStart=/usr/bin/gradient-motiond --nng-url tcp://controller.local:9093
 Restart=on-failure
 RestartSec=5
