@@ -45,6 +45,18 @@ etc/systemd/system/hostapd.service.d/* lib/systemd/system/hostapd.service.d/
 etc/systemd/system/isc-dhcp-server.service.d/* lib/systemd/system/isc-dhcp-server.service.d/
 etc/systemd/system/rtpmidid.service.d/* lib/systemd/system/rtpmidid.service.d/
 
+# Mask pipewire/wireplumber per-user units system-wide (all users).
+# Why: wireplumber competes with zita-j2a for hw:HID (USB audio), causing
+# jack-alsa-bridges boot retries and ALSA glitches that trip
+# JackAudioDriver::ProcessGraphAsyncMaster errors. /etc/systemd/user/
+# overrides /usr/lib/systemd/user/ for every user's systemd --user instance.
+# Symlinks target /dev/null — the standard systemd mask convention.
+etc/systemd/user/pipewire.service etc/systemd/user/
+etc/systemd/user/pipewire.socket etc/systemd/user/
+etc/systemd/user/pipewire-pulse.service etc/systemd/user/
+etc/systemd/user/pipewire-pulse.socket etc/systemd/user/
+etc/systemd/user/wireplumber.service etc/systemd/user/
+
 # GRUB kernel parameter snippet
 etc/default/grub.d/cuems-display.cfg etc/default/grub.d/
 

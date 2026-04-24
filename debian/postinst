@@ -63,6 +63,25 @@ if command -v loginctl >/dev/null 2>&1; then
     loginctl enable-linger cuems 2>/dev/null || true
 fi
 
+# Stop any running pipewire/wireplumber for every logged-in user so the
+# /etc/systemd/user/ masks take effect immediately (masks prevent starts;
+# this handles instances already running from before the package install).
+# No-op when pipewire isn't installed — the stop commands fail silently.
+if command -v loginctl >/dev/null 2>&1 \
+   && command -v runuser >/dev/null 2>&1 \
+   && [ -f /usr/lib/systemd/user/pipewire.service ]; then
+    for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
+        uname=$(getent passwd "$uid" | cut -d: -f1)
+        [ -z "$uname" ] && continue
+        runtime="/run/user/$uid"
+        [ -d "$runtime" ] || continue
+        for unit in pipewire.socket pipewire.service pipewire-pulse.socket pipewire-pulse.service wireplumber.service; do
+            runuser -u "$uname" -- env XDG_RUNTIME_DIR="$runtime" systemctl --user stop "$unit" 2>/dev/null || true
+        done
+        runuser -u "$uname" -- env XDG_RUNTIME_DIR="$runtime" systemctl --user daemon-reload 2>/dev/null || true
+    done
+fi
+
 # Set proper permissions on sensitive files
 if [ -f /etc/rsyncd.secrets ]; then
     chmod 600 /etc/rsyncd.secrets
