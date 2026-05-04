@@ -8,7 +8,7 @@ if [ -d /usr/lib/cuems/bin ]; then
     chmod +x /usr/lib/cuems/bin/*.sh 2>/dev/null || true
     chmod +x /usr/lib/cuems/bin/*.py 2>/dev/null || true
     # Scripts without standard extensions
-    for f in cuems-generate-display-conf; do
+    for f in cuems-extract-video-latency; do
         [ -f "/usr/lib/cuems/bin/$f" ] && chmod +x "/usr/lib/cuems/bin/$f"
     done
 
@@ -21,17 +21,6 @@ fi
 
 if [ -f /usr/bin/cuems-hdmi-audio-map ]; then
     chmod +x /usr/bin/cuems-hdmi-audio-map
-fi
-
-for script in cuems-i915-rebind.sh cuems-wake-monitors.sh; do
-    if [ -f "/usr/bin/$script" ]; then
-        chmod +x "/usr/bin/$script"
-    fi
-done
-
-# Apply GRUB kernel parameters if grub-common is present
-if [ -f /etc/default/grub.d/cuems-display.cfg ] && command -v update-grub >/dev/null 2>&1; then
-    update-grub 2>/dev/null || true
 fi
 
 # Verify Python wrapper exists (provided by cuems-utils package)

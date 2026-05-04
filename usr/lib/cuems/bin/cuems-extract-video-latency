@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+"""Extract videoplayer output_latency_ms from settings.xml and write
+an EnvironmentFile that cuems-videocomposer.service can source.
+
+Settings file path follows the same precedence as
+cuemsutils.tools.ConfigManager: $CUEMS_CONF_PATH/settings.xml if the
+env var is set, otherwise /etc/cuems/settings.xml. Operators who need
+a non-default path should set the env var at the service level via
+`systemctl edit cuems-videocomposer`.
+
+Semantics:
+  integer value  → OUTPUT_LATENCY_FLAG=--output-latency-ms <value>
+  "auto"         → OUTPUT_LATENCY_FLAG=   (binary uses hard-coded default)
+  absent         → OUTPUT_LATENCY_FLAG=
+  missing/bad    → OUTPUT_LATENCY_FLAG=   (graceful degradation)
+
+Output path is under /run/cuems (tmpfs, populated by
+RuntimeDirectory=cuems on the consuming unit).
+"""
+
+import os
+import sys
+import xml.etree.ElementTree as ET
+
+# Matches cuemsutils.tools.ConfigManager path resolution: CUEMS_CONF_PATH
+# env var wins over the /etc/cuems/ default.
+CONF_PATH = os.environ.get('CUEMS_CONF_PATH', '/etc/cuems/')
+SETTINGS_XML = os.path.join(CONF_PATH, 'settings.xml')
+OUTPUT_DIR = '/run/cuems'
+OUTPUT_FILE = os.path.join(OUTPUT_DIR, 'videocomposer.env')
+
+
+def extract_latency(xml_path):
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
+    el = root.find('.//videoplayer/output_latency_ms')
+    if el is None or el.text is None:
+        return None
+    return el.text.strip()
+
+
+def format_flag(raw):
+    if raw is None or raw == '' or raw == 'auto':
+        return ''
+    try:
+        value = int(raw)
+    except ValueError:
+        print('Non-integer output_latency_ms={!r}, ignoring'.format(raw),
+              file=sys.stderr)
+        return ''
+    if value < 0 or value > 500:
+        print('output_latency_ms={} out of [0,500], ignoring'.format(value),
+              file=sys.stderr)
+        return ''
+    return '--output-latency-ms {}'.format(value)
+
+
+def write_env(flag, path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w') as f:
+        f.write('OUTPUT_LATENCY_FLAG={}\n'.format(flag))
+
+
+def main():
+    flag = ''
+    if not os.path.isfile(SETTINGS_XML):
+        print('No settings file at {}, flag empty'.format(SETTINGS_XML),
+              file=sys.stderr)
+    else:
+        try:
+            raw = extract_latency(SETTINGS_XML)
+            flag = format_flag(raw)
+        except ET.ParseError as e:
+            print('XML parse error: {}'.format(e), file=sys.stderr)
+    write_env(flag, OUTPUT_FILE)
+    print('Wrote {} (OUTPUT_LATENCY_FLAG={!r})'.format(OUTPUT_FILE, flag))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

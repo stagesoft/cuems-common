@@ -16,9 +16,37 @@ Group=cuems
 SupplementaryGroups=video render audio
 # Environment for GPU/display (adjust for your setup)
 Environment=HOME=/var/lib/cuems
-# Generate display config from default_mappings.xml before starting
-ExecStartPre=/usr/lib/cuems/bin/cuems-generate-display-conf
-ExecStart=/usr/bin/cuems-videocomposer
+# Extract videoplayer/output_latency_ms from /etc/cuems/settings.xml
+# into /run/cuems/videocomposer.env. Graceful: integer → flag emitted,
+# "auto"/absent/missing → OUTPUT_LATENCY_FLAG empty.
+ExecStartPre=/usr/lib/cuems/bin/cuems-extract-video-latency
+# Machine-generated (by cuems-extract-video-latency) — OUTPUT_LATENCY_FLAG.
+EnvironmentFile=-/run/cuems/videocomposer.env
+# Operator-tunable — OPERATOR_FLAGS for extra CLI args (e.g. --verbose).
+# See /etc/cuems/videocomposer-flags.env.example for the supported keys.
+# Leading `-` on EnvironmentFile makes a missing file non-fatal.
+EnvironmentFile=-/etc/cuems/videocomposer-flags.env
+ExecStart=/usr/bin/cuems-videocomposer $OPERATOR_FLAGS $OUTPUT_LATENCY_FLAG
+# --- Tuning videocomposer flags per node ---
+# Preferred path (no systemd drop-in needed):
+#   1. Latency: edit /etc/cuems/settings.xml videoplayer/output_latency_ms
+#      (integer 0-500, or "auto" to use the binary's 33 ms default).
+#   2. Other flags (verbose, future CLI options): write them as
+#      OPERATOR_FLAGS="--verbose ..." in /etc/cuems/videocomposer-flags.env.
+#   3. systemctl restart cuems-videocomposer
+#
+# Fallback for one-offs that bypass the XML / env file:
+#   sudo systemctl edit cuems-videocomposer
+#   [Service]
+#   ExecStart=
+#   ExecStart=/usr/bin/cuems-videocomposer --output-latency-ms 33
+# Note: the drop-in pattern loses composition with OPERATOR_FLAGS and
+# OUTPUT_LATENCY_FLAG — you must re-list every flag you want.
+#
+# Latency measurement: typical starting points are 16-33 ms for
+# direct-scanout (DRM/KMS) and 40-66 ms for compositor-mediated
+# (Wayland/X11). Phone camera at 120 fps pointed at a frame-counter
+# overlay.
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
