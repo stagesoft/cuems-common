@@ -1,10 +1,17 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+
 [Unit]
 Description=CUEMS Video Composer (multi-layer video compositor)
 Documentation=https://github.com/cuems/cuems-videocomposer
 PartOf=cuems-node.target
-# Start after display and GPU/DRI are available
-After=graphical.target
-Wants=graphical.target
+# No Wants/After=graphical.target: VC drives DRM/KMS directly. Adding
+# graphical.target closed a systemd ordering cycle
+#   cuems-node.target → cuems-videocomposer.service → graphical.target
+#     → multi-user.target → cuems-controller.target → cuems-node.target
+# that systemd broke non-deterministically, occasionally killing this
+# unit at boot.
 # Optional: wait for DRI device if udev tags it (dev-dri-card0.device)
 # After=dev-dri-card0.device
 
