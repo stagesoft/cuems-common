@@ -42,6 +42,7 @@ etc/systemd/system/apache2.service.d/* lib/systemd/system/apache2.service.d/
 etc/systemd/system/hostapd.service.d/* lib/systemd/system/hostapd.service.d/
 etc/systemd/system/isc-dhcp-server.service.d/* lib/systemd/system/isc-dhcp-server.service.d/
 etc/systemd/system/rtpmidid.service.d/* lib/systemd/system/rtpmidid.service.d/
+etc/systemd/system/cuems-videocomposer.service.d/* lib/systemd/system/cuems-videocomposer.service.d/
 
 # Mask pipewire/wireplumber per-user units system-wide (all users).
 # Why: wireplumber competes with zita-j2a for hw:HID (USB audio), causing
