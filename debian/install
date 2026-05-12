@@ -80,6 +80,10 @@ etc/cuems/network_map.xml etc/cuems/
 etc/cuems/network_map.xsd etc/cuems/
 etc/cuems/videocomposer-flags.env.example etc/cuems/
 
+# Multi-cluster identity example (not installed to /etc/cuems/ by default;
+# operator copies it manually when multi-cluster deployment is needed).
+etc/cuems/cluster.conf.example usr/share/doc/cuems-common/
+
 # Shared data files
 usr/share/cuems/* usr/share/cuems/
 
