@@ -1,0 +1,81 @@
+#!/usr/lib/cuems/bin/python3
+"""Generate /etc/chrony/sources.d/cuems-master.sources from network_map.xml.
+
+Designed to run as ExecStartPre on chrony.service (with `+` prefix so it
+runs as root, bypassing chrony's ProtectSystem=strict). Reads
+/etc/cuems/network_map.xml, finds the node with
+<node_type>NodeType.master</node_type>, extracts its <ip>, and writes
+one chrony directive:
+
+    server <master-ip> iburst minpoll 4 maxpoll 6
+
+ROLE GUARD: this helper is a no-op on the controller. It checks
+/etc/cuems/master.ip first; if present (controller marker, managed by
+cuems-nodeconf — operator-placed today), it exits 0 silently. The
+guard MUST live here in the helper, NOT in the drop-in's [Unit]
+section: ConditionPathExists in [Unit] would gate the whole chrony
+service start, preventing chrony from running on the controller (where
+it must serve slaves).
+
+Fails LOUDLY with a clear stderr message on parse / namespace / missing
+master errors so `systemctl status chrony` surfaces the root cause.
+Same defensive posture as scripts/cuems-log-collector-url.
+"""
+
+import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+MASTER_MARKER = Path("/etc/cuems/master.ip")
+NETWORK_MAP = Path("/etc/cuems/network_map.xml")
+SOURCES_FILE = Path("/etc/chrony/sources.d/cuems-master.sources")
+NTP_PORT = 123  # informational only — chrony assumes 123 for `server` directives
+
+
+def die(msg: str, *, code: int = 1) -> None:
+    print(f"cuems-write-chrony-source: ERROR: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def main() -> None:
+    # Role guard: controller has master.ip; serves time, doesn't pull from itself.
+    if MASTER_MARKER.exists():
+        sys.exit(0)
+
+    if not NETWORK_MAP.exists():
+        die(f"{NETWORK_MAP} not found — is /etc/cuems populated for this role?")
+
+    try:
+        tree = ET.parse(NETWORK_MAP)
+    except ET.ParseError as e:
+        die(f"failed to parse {NETWORK_MAP}: {e}")
+
+    root = tree.getroot()
+    master_ip_elem = root.find("./node_list/node[node_type='NodeType.master']/ip")
+    if master_ip_elem is None:
+        first_child = list(root)[0].tag if list(root) else "<none>"
+        die(
+            "could not find NodeType.master/ip in network_map.xml — "
+            f"root tag was {root.tag!r}, first child was {first_child!r}. "
+            "Search expression: ./node_list/node[node_type='NodeType.master']/ip. "
+            "If element names are now namespaced (e.g. {http://...}node), "
+            "the helper must be updated."
+        )
+
+    master_ip = (master_ip_elem.text or "").strip()
+    if not master_ip:
+        die("NodeType.master found but its <ip> tag is empty")
+
+    line = f"server {master_ip} iburst minpoll 4 maxpoll 6\n"
+
+    try:
+        SOURCES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SOURCES_FILE.write_text(line)
+    except OSError as e:
+        die(f"failed to write {SOURCES_FILE}: {e}")
+
+    print(f"cuems-write-chrony-source: {line.rstrip()}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
