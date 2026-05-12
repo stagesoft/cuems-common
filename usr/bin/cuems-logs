@@ -1,32 +1,26 @@
 #!/bin/bash
-# cuems-logs — cluster-wide journal viewer.
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 #
-# Wraps `journalctl --merge` so master can see local + remote (slaves')
-# journals as one timeline. Designed for the centralized-logs setup
-# (systemd-journal-remote on master, systemd-journal-upload on slaves).
+# cuems-logs — cluster-wide journal viewer with semantic filters.
 #
-# Default (no args): follow every cuems-* unit across the cluster with
-# short-iso timestamps. Useful as `cuems-logs` in a spare terminal during
-# a show.
-#
-# With args: pass them through to journalctl as-is, after --merge + -o
-# short-iso. So you can do:
-#
-#   cuems-logs --since "5 min ago"
-#   cuems-logs -u cuems-videocomposer -f
-#   cuems-logs _HOSTNAME=000000000005 --since today
-#   cuems-logs -p warning -f
-#
-# To bypass the merge (e.g. only see remote slaves' journals) pass
-# `-D /var/log/journal/remote/`.
+# Thin wrapper over `journalctl --merge` that adds ergonomic shortcuts
+# for CUEMS-specific filtering: log levels, node identity (resolved via
+# /etc/cuems/network_map.xml), and component groups. Default (no args):
+# follow every cuems-* unit across the cluster with short-iso timestamps.
 
-set -e
+set -euo pipefail
 
-# Default unit set: every cuems-* service plus the CUEMS-adjacent
-# infra that doesn't follow the cuems-* naming (jackd, jack-alsa-bridges,
-# rtpmidid, olad). Units that aren't installed on the host are silently
-# skipped by journalctl, so the same list works on master + slaves.
-CUEMS_UNITS=(
+NETWORK_MAP="/etc/cuems/network_map.xml"
+CLUSTER_CONF_EXAMPLE="/usr/share/doc/cuems-common/cluster.conf.example"
+
+# Default unit set: every cuems-* service plus CUEMS-adjacent infra that
+# does not follow the cuems-* naming (jackd, jack-alsa-bridges, rtpmidid,
+# olad). Units absent on a host are silently skipped by journalctl, so
+# the same list works on master + slaves. Glob 'cuems-*' is supported on
+# systemd >= 237.
+CUEMS_UNITS_DEFAULT=(
     -u 'cuems-*'
     -u jackd-cuems
     -u jack-alsa-bridges
@@ -34,8 +28,371 @@ CUEMS_UNITS=(
     -u olad
 )
 
-if [ $# -eq 0 ]; then
-    exec sudo journalctl --merge --follow -o short-iso "${CUEMS_UNITS[@]}"
+die() {
+    echo "cuems-logs: $*" >&2
+    exit 1
+}
+
+usage() {
+    cat <<'USAGE'
+cuems-logs — cluster-wide journal viewer with semantic filters.
+
+Usage:
+    cuems-logs [OPTIONS] [-- JOURNALCTL_ARGS...]
+
+Options:
+    -l, --level <lvl>      Log level. One of:
+                             debug, info, notice,
+                             warning (warn), err (error), crit
+                           Maps to journalctl -p.
+    -n, --node <name>      Node filter. Resolution order (case-insensitive):
+                             1. role_id in network_map.xml
+                             2. alias   in network_map.xml
+                             3. hostname (transitional) in XML
+                             4. uuid    in network_map.xml (exact, or
+                                prefix >=8 chars; accepts a3811d78 or
+                                a3811d78-099f forms)
+                             5. literal _HOSTNAME=<name>
+                           "local" omits --merge (local journal only).
+                           Allowed chars: [a-z0-9._:@/_-]
+    -c, --component <c>    Component shortcut. Repeatable, or comma-list:
+                             engine | editor | videocomposer | midi |
+                             jack   | rtpmidid | ola
+                           Note: audio/dmxplayer logs flow under
+                           cuems-node-engine (no separate systemd unit).
+    -e, --errors           Shortcut for --level warning.
+    -f, --follow           Follow mode (default when no args given).
+        --since <expr>     Passthrough to journalctl.
+        --grep <pattern>   Passthrough to journalctl --grep.
+        --cluster <name>   RESERVED — not implemented yet (single-cluster
+                           lookup only). Use without --cluster.
+        --list-nodes       Print _HOSTNAME values seen in the journal,
+                           plus the XML node table for context.
+        --list-units       Print cuems-* units registered in the journal.
+    -h, --help             Show this help.
+
+Anything after `--`, and any unrecognized flag, is forwarded verbatim
+to journalctl (after --merge -o short-iso unless --merge is suppressed
+by `-D <dir>` in the passthrough).
+
+Examples:
+    cuems-logs                                   # follow everything
+    cuems-logs -l warning                        # warnings+ from cluster
+    cuems-logs -c engine -n controller           # engine on the master
+    cuems-logs -c videocomposer -n node01        # videocomposer on node01
+    cuems-logs -e --since "10 min ago"           # recent errors
+    cuems-logs -n a3811d78 --since today         # by UUID prefix
+    cuems-logs --list-nodes                      # who's been logging?
+    cuems-logs -- -D /var/log/journal/remote/    # remote journals only
+
+Multi-cluster: see /usr/share/doc/cuems-common/cluster.conf.example.
+USAGE
+}
+
+# --- Level mapping ------------------------------------------------------
+
+level_to_priority() {
+    case "${1,,}" in
+        debug)   echo 7 ;;
+        info)    echo 6 ;;
+        notice)  echo 5 ;;
+        warning|warn) echo 4 ;;
+        err|error)    echo 3 ;;
+        crit)    echo 2 ;;
+        *) die "invalid log level '$1' (debug|info|notice|warning|err|crit)" ;;
+    esac
+}
+
+# --- Component mapping --------------------------------------------------
+
+component_units() {
+    case "${1,,}" in
+        engine)         echo "-u cuems-controller-engine -u cuems-node-engine" ;;
+        editor)         echo "-u cuems-editor" ;;
+        videocomposer)  echo "-u cuems-videocomposer" ;;
+        midi)           echo "-u cuems-midiconnector" ;;
+        jack)           echo "-u jackd-cuems -u jack-alsa-bridges" ;;
+        rtpmidid)       echo "-u rtpmidid" ;;
+        ola)            echo "-u olad" ;;
+        *) die "unknown component '$1' (engine|editor|videocomposer|midi|jack|rtpmidid|ola)" ;;
+    esac
+}
+
+# --- Node resolution ----------------------------------------------------
+#
+# resolve_node returns one of:
+#   __local__              — caller should drop --merge and not add _HOSTNAME=
+#   _HOSTNAME=<value>      — caller appends this to journalctl args
+#
+# Lookup order against network_map.xml (case-insensitive):
+#   role_id, alias, hostname, uuid (exact or >=8 char prefix).
+# If no XML or no match, passthrough literal _HOSTNAME=<name>.
+
+resolve_node() {
+    local name="${1,,}"
+    [[ "$name" == "local" ]] && { echo "__local__"; return; }
+
+    # Allowlist to avoid injection in the python heredoc below.
+    # Permits hostnames, UUIDs (with or without hyphens), and simple alias names.
+    if ! [[ "$name" =~ ^[a-z0-9._:@/_-]+$ ]]; then
+        die "invalid node name '$name' (allowed: [a-z0-9._:@/_-])"
+    fi
+
+    command -v python3 >/dev/null || die "python3 not found (required for node lookup)"
+
+    NETWORK_MAP="$NETWORK_MAP" CUEMS_TARGET="$name" python3 <<'PY'
+import os, sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+xml_path = Path(os.environ["NETWORK_MAP"])
+target = os.environ["CUEMS_TARGET"].lower()
+
+if not xml_path.exists():
+    print(f"_HOSTNAME={target}")
+    sys.exit(0)
+
+try:
+    root = ET.parse(xml_path).getroot()
+except ET.ParseError as e:
+    print(f"cuems-logs: WARNING: failed to parse {xml_path}: {e}", file=sys.stderr)
+    print(f"_HOSTNAME={target}")
+    sys.exit(0)
+
+matches = []
+incomplete_match = False
+for n in root.findall("./node_list/node"):
+    role  = (n.findtext("role_id")  or "").lower()
+    alias = (n.findtext("alias")    or "").lower()
+    host  = (n.findtext("hostname") or "").lower()
+    uuid  = (n.findtext("uuid")     or "").lower()
+    uuid_match = (
+        target == uuid or
+        (len(target) >= 8 and uuid.startswith(target))
+    )
+    if target in (role, alias, host) or uuid_match:
+        # Prefer hostname (legacy node with numeric OS hostname) if set,
+        # else role_id (new-style node whose OS hostname == role_id).
+        # If both are empty (XML pre-migration), we cannot produce a
+        # usable _HOSTNAME filter from this match; warn and fall through
+        # to literal passthrough.
+        chosen = n.findtext("hostname") or n.findtext("role_id")
+        if not chosen or not chosen.strip():
+            incomplete_match = True
+            continue
+        matches.append(chosen)
+
+if len(matches) > 1:
+    print(
+        f"cuems-logs: WARNING: '{target}' matches {len(matches)} nodes; "
+        f"using first ({matches[0]})",
+        file=sys.stderr,
+    )
+if matches:
+    print(f"_HOSTNAME={matches[0]}")
+else:
+    if incomplete_match:
+        print(
+            f"cuems-logs: WARNING: '{target}' matched a node in XML but it has "
+            f"no <hostname> or <role_id>; cannot resolve. Falling back to literal _HOSTNAME={target}.",
+            file=sys.stderr,
+        )
+    print(f"_HOSTNAME={target}")
+PY
+}
+
+# --- Early-exit subcommands --------------------------------------------
+
+list_nodes() {
+    echo "## Hostnames seen in the journal (last 24h):"
+    sudo journalctl --merge --output=cat --output-fields=_HOSTNAME \
+        --since "24 hours ago" --no-pager 2>/dev/null \
+        | sort -u | sed 's/^/  /' || true
+    echo
+    if [[ -f "$NETWORK_MAP" ]]; then
+        echo "## Nodes in $NETWORK_MAP:"
+        NETWORK_MAP="$NETWORK_MAP" python3 <<'PY'
+import os
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+xml_path = Path(os.environ["NETWORK_MAP"])
+try:
+    root = ET.parse(xml_path).getroot()
+except ET.ParseError as e:
+    print(f"  ERROR parsing XML: {e}")
+    raise SystemExit
+
+rows = []
+masters = 0
+for n in root.findall("./node_list/node"):
+    role_id  = n.findtext("role_id")  or "-"
+    alias    = n.findtext("alias")    or "-"
+    hostname = n.findtext("hostname") or "-"
+    node_type = n.findtext("node_type") or "-"
+    ip       = n.findtext("ip")       or "-"
+    adopted  = n.findtext("adopted")  or "-"
+    role_simple = node_type.replace("NodeType.", "")
+    if role_simple == "master":
+        masters += 1
+    legacy = " [legacy]" if hostname != "-" and hostname != role_id else ""
+    rows.append((role_id, alias, hostname, role_simple, ip, adopted, legacy))
+
+if not rows:
+    print("  (no nodes)")
+else:
+    header = ("role_id", "alias", "hostname OS", "role", "ip", "adopted")
+    widths = [max(len(str(r[i])) for r in [header] + rows) for i in range(6)]
+    fmt = "  " + "  ".join(f"{{:<{w}}}" for w in widths) + "{}"
+    print(fmt.format(*header, ""))
+    print("  " + "  ".join("-" * w for w in widths))
+    for r in rows:
+        print(fmt.format(*r[:6], r[6]))
+
+if masters > 1:
+    print(f"\n  WARNING: {masters} nodes declared as master; expected exactly 1.")
+PY
+    else
+        echo "## $NETWORK_MAP not found (no XML context available)."
+    fi
+}
+
+list_units() {
+    sudo journalctl --merge --list-boots >/dev/null 2>&1 || true
+    sudo journalctl --merge --field _SYSTEMD_UNIT 2>/dev/null \
+        | grep -E '^(cuems-|jackd-cuems|jack-alsa-bridges|rtpmidid|olad)' \
+        | sort -u \
+        || echo "(no matching units found in the merged journal)"
+}
+
+# --- Argument parsing ---------------------------------------------------
+
+JOURNAL_ARGS=()
+UNITS=()
+follow_set=false
+merge_disabled=false
+do_list_nodes=false
+do_list_units=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -l|--level)
+            [[ $# -ge 2 ]] || die "$1 requires a value"
+            JOURNAL_ARGS+=(-p "$(level_to_priority "$2")")
+            shift 2
+            ;;
+        -e|--errors)
+            JOURNAL_ARGS+=(-p 4)
+            shift
+            ;;
+        -n|--node)
+            [[ $# -ge 2 ]] || die "$1 requires a value"
+            resolved="$(resolve_node "$2")"
+            if [[ "$resolved" == "__local__" ]]; then
+                merge_disabled=true
+            else
+                JOURNAL_ARGS+=("$resolved")
+            fi
+            shift 2
+            ;;
+        -c|--component)
+            [[ $# -ge 2 ]] || die "$1 requires a value"
+            IFS=',' read -ra comps <<<"$2"
+            for c in "${comps[@]}"; do
+                # shellcheck disable=SC2046  # intentional word-splitting of -u pairs
+                UNITS+=($(component_units "$c"))
+            done
+            shift 2
+            ;;
+        -f|--follow)
+            if ! $follow_set; then
+                JOURNAL_ARGS+=(--follow)
+                follow_set=true
+            fi
+            shift
+            ;;
+        --since)
+            [[ $# -ge 2 ]] || die "$1 requires a value"
+            JOURNAL_ARGS+=(--since "$2")
+            shift 2
+            ;;
+        --grep)
+            [[ $# -ge 2 ]] || die "$1 requires a value"
+            JOURNAL_ARGS+=(--grep "$2")
+            shift 2
+            ;;
+        --cluster)
+            die "--cluster is not implemented yet. Run without --cluster for single-cluster mode (see /usr/share/doc/cuems-common/cluster.conf.example)."
+            ;;
+        --list-nodes)
+            do_list_nodes=true
+            shift
+            ;;
+        --list-units)
+            do_list_units=true
+            shift
+            ;;
+        --)
+            shift
+            # Anything after `--` is verbatim. Detect -D / --directory so we
+            # do not inject --merge (preserves the documented bypass).
+            for arg in "$@"; do
+                if [[ "$arg" == "-D" || "$arg" == "--directory" || "$arg" == --directory=* ]]; then
+                    merge_disabled=true
+                fi
+            done
+            JOURNAL_ARGS+=("$@")
+            break
+            ;;
+        *)
+            # Unknown flag: forward to journalctl. Same -D detection.
+            if [[ "$1" == "-D" || "$1" == "--directory" || "$1" == --directory=* ]]; then
+                merge_disabled=true
+            fi
+            JOURNAL_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# --- Early-exit subcommands run before sudo journalctl ------------------
+
+if $do_list_nodes; then
+    list_nodes
+    exit 0
 fi
 
-exec sudo journalctl --merge -o short-iso "$@"
+if $do_list_units; then
+    list_units
+    exit 0
+fi
+
+# --- Defaults -----------------------------------------------------------
+
+# If no component selected, fall back to the default unit set so that
+# the no-args case (and any plain filter) covers all CUEMS infra.
+if [[ ${#UNITS[@]} -eq 0 ]]; then
+    UNITS=("${CUEMS_UNITS_DEFAULT[@]}")
+fi
+
+# Default to --follow if no args produced anything else (preserves
+# original cuems-logs no-args behavior).
+no_filter_provided=true
+for arg in "${JOURNAL_ARGS[@]}"; do
+    case "$arg" in
+        --follow|--since|--grep|-p|_HOSTNAME=*|-D|--directory|--directory=*) no_filter_provided=false; break ;;
+    esac
+done
+if $no_filter_provided && ! $follow_set; then
+    JOURNAL_ARGS+=(--follow)
+fi
+
+# Compose final argv.
+MERGE=(--merge)
+$merge_disabled && MERGE=()
+
+exec sudo journalctl "${MERGE[@]}" -o short-iso "${UNITS[@]}" "${JOURNAL_ARGS[@]}"
