@@ -13,6 +13,7 @@ usr/bin/cuems-config-node usr/bin/
 
 # System scripts
 usr/bin/cuems-hdmi-audio-map usr/bin/
+usr/bin/cuems-logs usr/bin/
 usr/bin/cuems-ola-profile usr/bin/
 usr/bin/cuems-stop usr/bin/
 

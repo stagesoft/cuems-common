@@ -1,0 +1,29 @@
+#!/bin/bash
+# cuems-logs — cluster-wide journal viewer.
+#
+# Wraps `journalctl --merge` so master can see local + remote (slaves')
+# journals as one timeline. Designed for the centralized-logs setup
+# (systemd-journal-remote on master, systemd-journal-upload on slaves).
+#
+# Default (no args): follow every cuems-* unit across the cluster with
+# short-iso timestamps. Useful as `cuems-logs` in a spare terminal during
+# a show.
+#
+# With args: pass them through to journalctl as-is, after --merge + -o
+# short-iso. So you can do:
+#
+#   cuems-logs --since "5 min ago"
+#   cuems-logs -u cuems-videocomposer -f
+#   cuems-logs _HOSTNAME=000000000005 --since today
+#   cuems-logs -p warning -f
+#
+# To bypass the merge (e.g. only see remote slaves' journals) pass
+# `-D /var/log/journal/remote/`.
+
+set -e
+
+if [ $# -eq 0 ]; then
+    exec sudo journalctl --merge --follow -o short-iso -u 'cuems-*'
+fi
+
+exec sudo journalctl --merge -o short-iso "$@"
