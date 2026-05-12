@@ -250,26 +250,17 @@ fi
 # =========================================================================
 # CUEMS cluster time sync via chrony
 # =========================================================================
-# Role-aware NTP setup:
-#   - Controller (/etc/cuems/master.ip present): install server extras
-#     into /etc/chrony/conf.d/cuems.conf (allow link-local + local
-#     stratum 8 offline fallback). chrony.conf's confdir directive
-#     loads it automatically.
-#   - Slave (no master.ip): generate /etc/chrony/sources.d/cuems-master.sources
-#     pointing at master's IP from /etc/cuems/network_map.xml. chrony.conf's
-#     sourcedir directive picks it up. Failure here is non-fatal —
-#     ExecStartPre on chrony.service retries on every start.
+# Role-aware NTP setup applied by /usr/lib/cuems/bin/cuems-write-chrony-source
+# (also runs as ExecStartPre on every chrony start). One helper, one source
+# of truth: detects role from /etc/cuems/master.ip on every invocation, so
+# role flips (slave -> master and back) propagate to chrony config on next
+# `systemctl restart chrony` without re-running postinst.
 #
 # Intentionally NO `systemctl restart chrony` here: a wall-clock disturbance
 # during a production show is worse than waiting for the next natural
-# restart to pick up sources changes. Postinst only enables.
+# restart to pick up config changes. Postinst only enables.
 # =========================================================================
-if [ -f /etc/cuems/master.ip ]; then
-    install -m 0644 /usr/share/cuems/chrony-server.conf.template \
-        /etc/chrony/conf.d/cuems.conf 2>/dev/null || true
-else
-    /usr/lib/cuems/bin/cuems-write-chrony-source 2>/dev/null || true
-fi
+/usr/lib/cuems/bin/cuems-write-chrony-source 2>/dev/null || true
 
 if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload 2>/dev/null || true
