@@ -22,8 +22,20 @@
 
 set -e
 
+# Default unit set: every cuems-* service plus the CUEMS-adjacent
+# infra that doesn't follow the cuems-* naming (jackd, jack-alsa-bridges,
+# rtpmidid, olad). Units that aren't installed on the host are silently
+# skipped by journalctl, so the same list works on master + slaves.
+CUEMS_UNITS=(
+    -u 'cuems-*'
+    -u jackd-cuems
+    -u jack-alsa-bridges
+    -u rtpmidid
+    -u olad
+)
+
 if [ $# -eq 0 ]; then
-    exec sudo journalctl --merge --follow -o short-iso -u 'cuems-*'
+    exec sudo journalctl --merge --follow -o short-iso "${CUEMS_UNITS[@]}"
 fi
 
 exec sudo journalctl --merge -o short-iso "$@"
