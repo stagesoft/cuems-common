@@ -21,6 +21,21 @@ videocomposer starts modeset. Use on hosts whose attached monitors
 do not wake reliably from the HDMI signal alone (typically LG
 UltraFine 4K when paired with the controller's TC-port path).
 
+> **Controller-only helper.** Both `i915-rebind` and `wake-monitors`
+> exist to work around hardware peculiarities of the dev-lab
+> controller `000000000002` (Alder Lake-N TC-port DP/HDMI silent
+> failure + LG UltraFine that doesn't wake on signal alone).
+> **Node hosts do not need either of these** — they boot cleanly
+> from the always-on `display-conf-gen.conf` and the videocomposer
+> initialises their HDMI outputs normally. The `cuems-wake-monitors.sh`
+> shipped here also hardcodes the controller's i2c bus numbers
+> (`bus 4`, `bus 11`), which do not even map to the same connectors
+> on differently-wired hosts. Do not opt in on a node.
+>
+> TODO (future refactor): make the script discover bus numbers
+> dynamically via `/sys/class/drm/<connector>/ddc/i2c-N` so it
+> stops being hardware-specific.
+
 ## How to install on a host
 
 ```sh

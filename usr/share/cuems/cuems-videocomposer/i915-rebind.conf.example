@@ -9,6 +9,10 @@
 # combination (Alder Lake-N + kernel 6.1 VBT child-device size
 # mismatch). Adds ~2 s to each videocomposer service start.
 #
+# CONTROLLER-ONLY HELPER. Node hosts (slave/clone) do NOT need the
+# i915 rebind — their HDMI outputs initialise normally via the
+# always-on display-conf-gen drop-in. Do not opt in on a node.
+#
 # Install on a host that needs it:
 #   sudo cp /usr/share/cuems/cuems-videocomposer/i915-rebind.conf.example \
 #           /etc/systemd/system/cuems-videocomposer.service.d/i915-rebind.conf
