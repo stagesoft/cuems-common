@@ -44,6 +44,14 @@ elif command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload
 fi
 
+# Migration: cuems-midiconnector.service moved from cuems-controller.target
+# to cuems-node.target. deb-systemd-helper recreates the symlink at the new
+# location but does not clean up the old one. Without this, the unit would
+# be wanted by BOTH targets on upgraded hosts and start twice.
+if [ -L /etc/systemd/system/cuems-controller.target.wants/cuems-midiconnector.service ]; then
+    rm -f /etc/systemd/system/cuems-controller.target.wants/cuems-midiconnector.service
+fi
+
 # Enable linger for cuems user so systemd-logind does not clean up
 # IPC resources (semaphores, shared memory, sockets) when the last login
 # session ends. Without this, JACK server IPC gets destroyed on logout

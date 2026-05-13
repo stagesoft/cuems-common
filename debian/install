@@ -7,6 +7,11 @@ scripts/wifi-auto.sh usr/lib/cuems/bin/
 scripts/cuems-write-chrony-source usr/lib/cuems/bin/
 usr/bin/cuems-healthcheck usr/bin/
 usr/lib/cuems/bin/cuems-extract-video-latency usr/lib/cuems/bin/
+usr/lib/cuems/bin/cuems-write-rtpmidid-config usr/lib/cuems/bin/
+
+# rtpmidid role-aware INI templates (read by cuems-write-rtpmidid-config)
+usr/share/cuems/rtpmidid/default.ini.controller usr/share/cuems/rtpmidid/
+usr/share/cuems/rtpmidid/default.ini.node usr/share/cuems/rtpmidid/
 
 # Python scripts (executable)
 usr/bin/cuems-config-node usr/bin/
