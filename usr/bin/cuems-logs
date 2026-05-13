@@ -373,9 +373,23 @@ fi
 
 # --- Defaults -----------------------------------------------------------
 
-# If no component selected, fall back to the default unit set so that
-# the no-args case (and any plain filter) covers all CUEMS infra.
-if [[ ${#UNITS[@]} -eq 0 ]]; then
+# If the operator passed a unit filter through passthrough (-u, --unit,
+# _SYSTEMD_UNIT=...), suppress our default unit set so we don't widen
+# the filter back to cuems-* and friends. -c/--component already populates
+# UNITS, which short-circuits this too.
+units_in_passthrough=false
+prev=""
+for arg in "${JOURNAL_ARGS[@]}"; do
+    case "$arg" in
+        -u|--unit) units_in_passthrough=true; break ;;
+        --unit=*|_SYSTEMD_UNIT=*) units_in_passthrough=true; break ;;
+    esac
+    # Support `-u <value>` split across two tokens already handled above
+    # (-u appears as its own token). --unit=value handled above too.
+    prev="$arg"
+done
+
+if [[ ${#UNITS[@]} -eq 0 ]] && ! $units_in_passthrough; then
     UNITS=("${CUEMS_UNITS_DEFAULT[@]}")
 fi
 
@@ -384,7 +398,7 @@ fi
 no_filter_provided=true
 for arg in "${JOURNAL_ARGS[@]}"; do
     case "$arg" in
-        --follow|--since|--grep|-p|_HOSTNAME=*|-D|--directory|--directory=*) no_filter_provided=false; break ;;
+        --follow|--since|--grep|-p|-u|--unit|--unit=*|_HOSTNAME=*|_SYSTEMD_UNIT=*|-D|--directory|--directory=*) no_filter_provided=false; break ;;
     esac
 done
 if $no_filter_provided && ! $follow_set; then
