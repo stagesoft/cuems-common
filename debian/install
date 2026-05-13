@@ -41,9 +41,7 @@ etc/systemd/system/hostapd.service lib/systemd/system/
 etc/systemd/system/jack-alsa-bridges.service lib/systemd/system/
 etc/systemd/system/jackd-cuems.service lib/systemd/system/
 etc/systemd/system/olad.service lib/systemd/system/
-etc/systemd/system/rsync@.service lib/systemd/system/
 etc/systemd/system/*.path lib/systemd/system/
-etc/systemd/system/*.socket lib/systemd/system/
 # Systemd drop-in directories (package-provided overrides)
 etc/systemd/system/avahi-daemon.d/* lib/systemd/system/avahi-daemon.service.d/
 etc/systemd/system/apache2.service.d/* lib/systemd/system/apache2.service.d/
