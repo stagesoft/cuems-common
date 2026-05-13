@@ -8,7 +8,7 @@ if [ -d /usr/lib/cuems/bin ]; then
     chmod +x /usr/lib/cuems/bin/*.sh 2>/dev/null || true
     chmod +x /usr/lib/cuems/bin/*.py 2>/dev/null || true
     # Scripts without standard extensions
-    for f in cuems-extract-video-latency cuems-write-chrony-source; do
+    for f in cuems-extract-video-latency cuems-log-collector-url cuems-log-collector-url; do
         [ -f "/usr/lib/cuems/bin/$f" ] && chmod +x "/usr/lib/cuems/bin/$f"
     done
 
@@ -256,6 +256,28 @@ if [ -f /usr/bin/cuems-ola-profile ]; then
 fi
 
 # =========================================================================
+# CUEMS centralized journal log collection
+# =========================================================================
+# Master = systemd-journal-remote (collector), every slave = systemd-journal-upload.
+# Apply tmpfiles immediately so /var/log/journal/remote exists without a
+# reboot. Role-aware enable based on /etc/cuems/master.ip presence (managed
+# by cuems-nodeconf; currently operator-placed while nodeconf is disabled
+# cluster-wide). ConditionPathExists in the upload drop-in is belt-and-braces
+# so even a misconfigured enable on the controller is a no-op at runtime.
+# =========================================================================
+if command -v systemd-tmpfiles >/dev/null 2>&1; then
+    systemd-tmpfiles --create /usr/lib/tmpfiles.d/cuems-journal-remote.conf 2>/dev/null \
+        || systemd-tmpfiles --create /etc/tmpfiles.d/cuems-journal-remote.conf 2>/dev/null \
+        || true
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+    if [ -f /etc/cuems/master.ip ]; then
+        systemctl enable systemd-journal-remote.service 2>/dev/null || true
+    else
+        systemctl enable systemd-journal-upload.service 2>/dev/null || true
+    fi
+fi
 # CUEMS cluster time sync via chrony
 # =========================================================================
 # Role-aware NTP setup applied by /usr/lib/cuems/bin/cuems-write-chrony-source

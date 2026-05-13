@@ -1,0 +1,68 @@
+#!/usr/lib/cuems/bin/python3
+"""Resolve the CUEMS log collector URL for systemd-journal-upload.
+
+Reads /etc/cuems/network_map.xml, finds the node with
+<node_type>NodeType.master</node_type>, extracts its <ip>, and
+writes URL=http://<ip>:19532 to /run/cuems-journal-upload/url.env so
+the upload service can pick it up via EnvironmentFile=.
+
+Designed to run as ExecStartPre for systemd-journal-upload.service.
+Fails LOUDLY (non-zero exit + stderr) so systemctl status surfaces
+the root cause when something's off — never silently produces an
+empty/stale env file.
+
+Same role-detection source of truth as cuems-engine's NNG dial
+(BaseEngine.get_controller_ip): network_map.xml is authoritative.
+"""
+
+import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+NETWORK_MAP = Path("/etc/cuems/network_map.xml")
+ENV_FILE = Path("/run/cuems-journal-upload/url.env")
+COLLECTOR_PORT = 19532
+
+
+def die(msg: str, *, code: int = 1) -> None:
+    print(f"cuems-log-collector-url: ERROR: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def main() -> None:
+    if not NETWORK_MAP.exists():
+        die(f"{NETWORK_MAP} not found — is /etc/cuems populated for this role?")
+
+    try:
+        tree = ET.parse(NETWORK_MAP)
+    except ET.ParseError as e:
+        die(f"failed to parse {NETWORK_MAP}: {e}")
+
+    root = tree.getroot()
+    # Inner elements are unprefixed in the live schema (only the root
+    # carries xmlns:cms). If that changes, find() returns None — print
+    # the actual root tag and first child so the operator can see why.
+    master_ip_elem = root.find("./node_list/node[node_type='NodeType.master']/ip")
+    if master_ip_elem is None:
+        first_child = list(root)[0].tag if list(root) else "<none>"
+        die(
+            "could not find NodeType.master/ip in network_map.xml — "
+            f"root tag was {root.tag!r}, first child was {first_child!r}. "
+            "Search expression: ./node_list/node[node_type='NodeType.master']/ip. "
+            "If element names are now namespaced (e.g. {http://...}node), "
+            "the helper must be updated."
+        )
+
+    master_ip = (master_ip_elem.text or "").strip()
+    if not master_ip:
+        die("NodeType.master found but its <ip> tag is empty")
+
+    url = f"http://{master_ip}:{COLLECTOR_PORT}"
+
+    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ENV_FILE.write_text(f"URL={url}\n")
+    print(f"cuems-log-collector-url: URL={url}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

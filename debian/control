@@ -11,6 +11,7 @@ Pre-Depends: adduser
 Depends: ${misc:Depends},
          cuems-utils (>= 1.0.0),
          systemd,
+         systemd-journal-remote (>= 247),
          python3,
          apache2,
          openssl,
