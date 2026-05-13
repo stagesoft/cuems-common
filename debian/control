@@ -22,6 +22,7 @@ Depends: ${misc:Depends},
          iproute2,
          zita-ajbridge,
          chrony (>= 4.0)
+Recommends: ddcutil
 Description: CUEMS common configuration and systemd services
  This package contains systemd service files, configuration files,
  and scripts required for CUEMS operation.

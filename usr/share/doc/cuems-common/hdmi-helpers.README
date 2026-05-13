@@ -1,0 +1,51 @@
+# HDMI helpers — opt-in drop-ins
+
+cuems-common ships two helper drop-ins for hosts that need them, but
+DOES NOT install them in `/etc/systemd/system/` by default. The
+operator decides per host.
+
+## When to use which
+
+### `i915-rebind.conf.example`
+
+Forces a PCI rebind of the Intel `i915` driver as `ExecStartPre` of
+`cuems-videocomposer.service`. Use on hosts where the HDMI/DP output
+goes dark on warm restart due to the i915 TC-port PHY silent-failure
+mode (Alder Lake-N + kernel 6.1 VBT 256 mismatch). In the dev lab,
+the controller (`000000000002`) needs this; the node clones do not.
+
+### `wake-monitors.conf.example`
+
+Sends DDC/CI power-on commands to known i2c buses 10 s after the
+videocomposer starts modeset. Use on hosts whose attached monitors
+do not wake reliably from the HDMI signal alone (typically LG
+UltraFine 4K when paired with the controller's TC-port path).
+
+## How to install on a host
+
+```sh
+sudo cp /usr/share/cuems/cuems-videocomposer/i915-rebind.conf.example \
+        /etc/systemd/system/cuems-videocomposer.service.d/i915-rebind.conf
+
+# (and/or)
+sudo cp /usr/share/cuems/cuems-videocomposer/wake-monitors.conf.example \
+        /etc/systemd/system/cuems-videocomposer.service.d/wake-monitors.conf
+
+sudo systemctl daemon-reload
+sudo systemctl restart cuems-videocomposer.service
+```
+
+## How to remove
+
+```sh
+sudo rm /etc/systemd/system/cuems-videocomposer.service.d/i915-rebind.conf
+sudo rm /etc/systemd/system/cuems-videocomposer.service.d/wake-monitors.conf
+sudo systemctl daemon-reload
+sudo systemctl restart cuems-videocomposer.service
+```
+
+## Default behaviour (without these drop-ins)
+
+`display-conf-gen.conf` always runs and regenerates
+`/run/cuems/display.conf` from `/etc/cuems/default_mappings.xml`. The
+videocomposer reads that file at startup. No rebind, no monitor wake.
