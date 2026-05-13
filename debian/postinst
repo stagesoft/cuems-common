@@ -8,7 +8,7 @@ if [ -d /usr/lib/cuems/bin ]; then
     chmod +x /usr/lib/cuems/bin/*.sh 2>/dev/null || true
     chmod +x /usr/lib/cuems/bin/*.py 2>/dev/null || true
     # Scripts without standard extensions
-    for f in cuems-extract-video-latency; do
+    for f in cuems-extract-video-latency cuems-write-chrony-source; do
         [ -f "/usr/lib/cuems/bin/$f" ] && chmod +x "/usr/lib/cuems/bin/$f"
     done
 
@@ -245,6 +245,26 @@ fi
 # Ensure cuems-ola-profile script is executable
 if [ -f /usr/bin/cuems-ola-profile ]; then
     chmod +x /usr/bin/cuems-ola-profile
+fi
+
+# =========================================================================
+# CUEMS cluster time sync via chrony
+# =========================================================================
+# Role-aware NTP setup applied by /usr/lib/cuems/bin/cuems-write-chrony-source
+# (also runs as ExecStartPre on every chrony start). One helper, one source
+# of truth: detects role from /etc/cuems/master.ip on every invocation, so
+# role flips (slave -> master and back) propagate to chrony config on next
+# `systemctl restart chrony` without re-running postinst.
+#
+# Intentionally NO `systemctl restart chrony` here: a wall-clock disturbance
+# during a production show is worse than waiting for the next natural
+# restart to pick up config changes. Postinst only enables.
+# =========================================================================
+/usr/lib/cuems/bin/cuems-write-chrony-source 2>/dev/null || true
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable chrony.service 2>/dev/null || true
 fi
 
 echo "CUEMS Common package installed successfully."

@@ -4,6 +4,7 @@
 # CUEMS binaries and scripts (must be executable)
 scripts/check-ip.sh usr/lib/cuems/bin/
 scripts/wifi-auto.sh usr/lib/cuems/bin/
+scripts/cuems-write-chrony-source usr/lib/cuems/bin/
 usr/bin/cuems-healthcheck usr/bin/
 usr/lib/cuems/bin/cuems-extract-video-latency usr/lib/cuems/bin/
 
@@ -43,6 +44,7 @@ etc/systemd/system/hostapd.service.d/* lib/systemd/system/hostapd.service.d/
 etc/systemd/system/isc-dhcp-server.service.d/* lib/systemd/system/isc-dhcp-server.service.d/
 etc/systemd/system/rtpmidid.service.d/* lib/systemd/system/rtpmidid.service.d/
 etc/systemd/system/cuems-videocomposer.service.d/* lib/systemd/system/cuems-videocomposer.service.d/
+etc/systemd/system/chrony.service.d/* lib/systemd/system/chrony.service.d/
 
 # Mask pipewire/wireplumber per-user units system-wide (all users).
 # Why: wireplumber competes with zita-j2a for hw:HID (USB audio), causing
