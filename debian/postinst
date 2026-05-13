@@ -297,5 +297,25 @@ if command -v systemctl >/dev/null 2>&1; then
     systemctl enable chrony.service 2>/dev/null || true
 fi
 
+# =========================================================================
+# CUEMS file deploy via rsync (controller-only)
+# =========================================================================
+# rsync.service is pulled by cuems-controller.target via Wants=, gated by
+# the drop-in's ConditionPathExists=/etc/cuems/master.ip so nodes skip it.
+# Intentionally NO `deb-systemd-helper enable rsync.service` — that would
+# create /etc/systemd/system/multi-user.target.wants/rsync.service and run
+# the daemon on every host at boot (Condition would no-op it, but the log
+# noise is misleading). The target's Wants= is the only activation path.
+#
+# On a host that is currently controller with the target active, start the
+# daemon now so node-engine deploys work without waiting for the next
+# target restart. Best-effort: failure must not abort postinst.
+# =========================================================================
+if command -v systemctl >/dev/null 2>&1; then
+    if [ -f /etc/cuems/master.ip ] && systemctl is-active --quiet cuems-controller.target 2>/dev/null; then
+        systemctl start rsync.service 2>/dev/null || true
+    fi
+fi
+
 echo "CUEMS Common package installed successfully."
 

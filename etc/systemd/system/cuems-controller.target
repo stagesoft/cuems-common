@@ -4,6 +4,11 @@ Documentation=man:systemd.special(7)
 Requires=cuems-node.target
 After=cuems-node.target
 Wants=cuems-wifi.target
+# rsync.service serves /opt/cuems_library to nodes via :873.
+# The drop-in rsync.service.d/cuems-controller-group.conf adds
+# ConditionPathExists=/etc/cuems/master.ip so the dependency is a
+# silent no-op on hosts that aren't currently controller.
+Wants=rsync.service
 
 [Install]
 WantedBy=multi-user.target

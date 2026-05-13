@@ -48,6 +48,7 @@ etc/systemd/system/apache2.service.d/* lib/systemd/system/apache2.service.d/
 etc/systemd/system/hostapd.service.d/* lib/systemd/system/hostapd.service.d/
 etc/systemd/system/isc-dhcp-server.service.d/* lib/systemd/system/isc-dhcp-server.service.d/
 etc/systemd/system/rtpmidid.service.d/* lib/systemd/system/rtpmidid.service.d/
+etc/systemd/system/rsync.service.d/* lib/systemd/system/rsync.service.d/
 etc/systemd/system/systemd-journal-remote.service.d/* lib/systemd/system/systemd-journal-remote.service.d/
 etc/systemd/system/systemd-journal-upload.service.d/* lib/systemd/system/systemd-journal-upload.service.d/
 etc/systemd/system/cuems-videocomposer.service.d/* lib/systemd/system/cuems-videocomposer.service.d/
