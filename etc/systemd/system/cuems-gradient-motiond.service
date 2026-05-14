@@ -1,9 +1,8 @@
 [Unit]
-Description=CUEMS Gradient Motion Engine (fade-engine)
+Description=CUEMS Gradient Motion Engine daemon
 Documentation=https://github.com/stagesoft/gradient-motion-engine
 PartOf=cuems-node.target
-After=network.target avahi-daemon.service
-Wants=avahi-daemon.service
+After=network.target
 
 [Service]
 Type=simple
@@ -12,13 +11,17 @@ Group=cuems
 # ALSA MIDI for MTC reception (/dev/snd/seq)
 SupplementaryGroups=audio
 Environment=HOME=/var/lib/cuems
-# Use the controller.local avahi alias — always resolves to the current
-# controller IP regardless of node topology changes. The nng_hub_port
-# (9093) is a CUEMS-wide constant; override by editing the unit or
-# creating /etc/systemd/system/cuems-gradient-motiond.service.d/ drop-in.
-ExecStart=/usr/bin/gradient-motiond --nng-url tcp://controller.local:9093
+# UDP OSC command port (v0.3.0+). Default 7100; per-node overrides in
+# /etc/cuems/gradient-motiond.env (optional — see gradient-motiond.env.example).
+EnvironmentFile=-/etc/cuems/gradient-motiond.env
+ExecStart=/usr/bin/gradient-motiond \
+    --midi-port "Midi Through Port-0" \
+    --log-level info
 Restart=on-failure
 RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=Cuems:GradientEngine
 
 [Install]
 WantedBy=cuems-node.target
