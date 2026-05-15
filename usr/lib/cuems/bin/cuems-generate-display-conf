@@ -23,6 +23,7 @@ SETTINGS_XML = '/etc/cuems/settings.xml'
 MAPPINGS_XML = '/etc/cuems/default_mappings.xml'
 OUTPUT_DIR = '/run/cuems'
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, 'display.conf')
+OPERATOR_OVERRIDE = '/etc/cuems/display.conf'
 
 
 def read_local_uuid(path):
@@ -108,7 +109,27 @@ def write_display_conf(outputs, path):
             f.write('\n')
 
 
+def copy_operator_override():
+    """If /etc/cuems/display.conf exists, copy it verbatim to /run/cuems/.
+
+    /etc/cuems/display.conf is the operator-authored override (written by
+    cuems-display-setup or hand-edited). When present it takes precedence
+    over the XML-derived generation path so a VC restart doesn't clobber
+    the operator's layout. Atomic write via temp + rename.
+    """
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    tmp = OUTPUT_FILE + '.tmp.{}'.format(os.getpid())
+    with open(OPERATOR_OVERRIDE, 'rb') as src, open(tmp, 'wb') as dst:
+        dst.write(src.read())
+    os.rename(tmp, OUTPUT_FILE)
+
+
 def main():
+    if os.path.isfile(OPERATOR_OVERRIDE):
+        copy_operator_override()
+        print('Copied operator override {} to {}'.format(
+            OPERATOR_OVERRIDE, OUTPUT_FILE))
+        return 0
     if not os.path.isfile(MAPPINGS_XML):
         print('No mappings file at {}, skipping'.format(MAPPINGS_XML), file=sys.stderr)
         return 0
