@@ -21,7 +21,8 @@ Depends: ${misc:Depends},
          rsync,
          iproute2,
          zita-ajbridge,
-         chrony (>= 4.0)
+         chrony (>= 4.0),
+         edid-decode
 Description: CUEMS common configuration and systemd services
  This package contains systemd service files, configuration files,
  and scripts required for CUEMS operation.
