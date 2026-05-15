@@ -102,25 +102,36 @@ def _read_modes(modes_path):
 
 
 def _read_edid_name(edid_path):
-    """Best-effort monitor name via edid-decode. Returns None if absent."""
-    if not os.path.isfile(edid_path) or os.path.getsize(edid_path) == 0:
+    """Best-effort monitor name via edid-decode. Returns None if absent.
+
+    Note: /sys/class/drm/.../edid is a synthesized sysfs file — stat
+    reports size 0 even when the read returns valid EDID bytes. We can't
+    short-circuit on size; read the bytes and decide based on content.
+    """
+    if not os.path.isfile(edid_path):
         return None
     try:
-        with open(edid_path, 'rb') as edid_file:
-            result = subprocess.run(
-                ['edid-decode'],
-                stdin=edid_file,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
+        with open(edid_path, 'rb') as f:
+            edid_bytes = f.read()
+    except OSError:
+        return None
+    if not edid_bytes:
+        return None
+    try:
+        result = subprocess.run(
+            ['edid-decode'],
+            input=edid_bytes,
+            capture_output=True,
+            timeout=5,
+        )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
     if result.returncode != 0:
         return None
+    stdout = result.stdout.decode('utf-8', errors='replace')
     mfr = None
     model = None
-    for line in result.stdout.splitlines():
+    for line in stdout.splitlines():
         line = line.strip()
         if line.startswith('Manufacturer:'):
             mfr = line.split(':', 1)[1].strip()
