@@ -20,6 +20,7 @@ StartLimitIntervalSec=33
 User=cuems
 Group=cuems
 Type=simple
+Environment="LD_LIBRARY_PATH=/usr/lib/cuems/lib/python3.11/site-packages/rtmidi"
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
