@@ -1,8 +1,16 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+
 [Unit]
 Description=cuems-node-engine
 PartOf=cuems-node.target
 Requires=avahi-daemon.service jackd-cuems.service jack-alsa-bridges.service
-After=network-online.target avahi-daemon.service jackd-cuems.service jack-alsa-bridges.service
+# After cuems-videocomposer.service so /run/cuems/display.conf (written by
+# its ExecStartPre cuems-generate-display-conf) is present when the engine
+# reads it in NodeEngine.set_video_outputs.
+After=network-online.target avahi-daemon.service jackd-cuems.service jack-alsa-bridges.service cuems-videocomposer.service
+Wants=cuems-videocomposer.service
 StartLimitBurst=5
 StartLimitIntervalSec=33
 

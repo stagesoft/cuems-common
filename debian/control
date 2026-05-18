@@ -21,6 +21,8 @@ Depends: ${misc:Depends},
          rsync,
          iproute2,
          zita-ajbridge,
+         chrony (>= 4.0),
+         edid-decode
          chrony (>= 4.0)
 Recommends: ddcutil
 Description: CUEMS common configuration and systemd services
