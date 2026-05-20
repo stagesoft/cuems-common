@@ -3,8 +3,9 @@
 # SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 #
 # Template rendered by /usr/lib/cuems/bin/cuems-write-hostapd-config
-# into /run/cuems/hostapd.conf at every hostapd start. Placeholders
-# @@SSID@@ and @@WPA_PASSPHRASE@@ are substituted at render time.
+# into /run/cuems/hostapd.conf at every hostapd start. The SSID and
+# WPA passphrase tokens further down get substituted at render time
+# (literal string replace, so they MUST be unique within this file).
 #
 # To customise the runtime AP, edit this template (it's a dpkg conffile
 # so operator changes survive upgrades subject to the usual conffile
