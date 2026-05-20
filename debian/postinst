@@ -56,6 +56,21 @@ if [ -L /etc/systemd/system/cuems-controller.target.wants/cuems-midiconnector.se
     rm -f /etc/systemd/system/cuems-controller.target.wants/cuems-midiconnector.service
 fi
 
+# Migration: prior cuems-common versions shipped an /lib/systemd/system/hostapd.service
+# that overrode the upstream hostapd package's unit file (dpkg file-conflict footgun
+# during downgrade). Now that hostapd plumbing lives entirely in drop-ins under
+# hostapd.service.d/, the symlink upstream's postinst writes to enable hostapd at
+# boot via multi-user.target.wants/ becomes stale: on nodes it triggers a "Dependency
+# failed for hostapd.service" at every boot (Requisite=cuems-wifi.service is never
+# satisfied off a controller). Clean it up — `systemctl reenable` then writes the
+# correct cuems-wifi.target.wants/ symlink based on the drop-in's [Install] section.
+if [ -L /etc/systemd/system/multi-user.target.wants/hostapd.service ]; then
+    rm -f /etc/systemd/system/multi-user.target.wants/hostapd.service
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl reenable hostapd.service 2>/dev/null || true
+    fi
+fi
+
 # Enable linger for cuems user so systemd-logind does not clean up
 # IPC resources (semaphores, shared memory, sockets) when the last login
 # session ends. Without this, JACK server IPC gets destroyed on logout
@@ -111,8 +126,12 @@ fi
 ADMIN_MARKER=/var/lib/cuems/.admin-bootstrapped
 
 if ! getent passwd cuems-admin >/dev/null 2>&1; then
-    adduser --disabled-password --ingroup sudo \
-        --gecos "CUEMS Operator" cuems-admin >/dev/null
+    # Default adduser behaviour: per-user primary group (cuems-admin),
+    # then add to `sudo` as a supplementary group. Going via --ingroup
+    # sudo instead would leave no `cuems-admin` group for the .ssh
+    # ownership chmod below.
+    adduser --disabled-password --gecos "CUEMS Operator" cuems-admin >/dev/null
+    adduser cuems-admin sudo >/dev/null
 fi
 
 if [ ! -e "$ADMIN_MARKER" ]; then

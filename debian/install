@@ -63,7 +63,10 @@ etc/systemd/system/cuems-node-engine.service lib/systemd/system/
 etc/systemd/system/cuems-node.target lib/systemd/system/
 etc/systemd/system/cuems-nodeconf.service lib/systemd/system/
 etc/systemd/system/cuems-wifi.service lib/systemd/system/
-etc/systemd/system/hostapd.service lib/systemd/system/
+# hostapd.service itself is owned by the upstream `hostapd` Debian package.
+# cuems-common adds cuems-wifi.target / cuems-wifi.service plumbing and the
+# /run/cuems/hostapd.conf redirect via drop-ins under hostapd.service.d/
+# only — never overriding the unit file (was a dpkg file-conflict footgun).
 etc/systemd/system/jack-alsa-bridges.service lib/systemd/system/
 etc/systemd/system/jackd-cuems.service lib/systemd/system/
 etc/systemd/system/olad.service lib/systemd/system/
