@@ -62,13 +62,17 @@ fi
 # hostapd.service.d/, the symlink upstream's postinst writes to enable hostapd at
 # boot via multi-user.target.wants/ becomes stale: on nodes it triggers a "Dependency
 # failed for hostapd.service" at every boot (Requisite=cuems-wifi.service is never
-# satisfied off a controller). Clean it up — `systemctl reenable` then writes the
-# correct cuems-wifi.target.wants/ symlink based on the drop-in's [Install] section.
-if [ -L /etc/systemd/system/multi-user.target.wants/hostapd.service ]; then
-    rm -f /etc/systemd/system/multi-user.target.wants/hostapd.service
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl reenable hostapd.service 2>/dev/null || true
-    fi
+# satisfied off a controller).
+#
+# Always-run rm + reenable: idempotent. The rm covers any leftover multi-user
+# symlink. The reenable re-evaluates the current [Install] sections (upstream +
+# cuems-wifi-group.conf drop-in with its WantedBy= empty-clear) and writes
+# /etc/systemd/system/cuems-wifi.target.wants/hostapd.service. Controllers then
+# get hostapd via cuems-controller.target -> cuems-wifi.target; nodes never
+# activate cuems-wifi.target so hostapd stays inert (no boot-time failures).
+rm -f /etc/systemd/system/multi-user.target.wants/hostapd.service
+if command -v systemctl >/dev/null 2>&1 && [ -e /lib/systemd/system/hostapd.service ]; then
+    systemctl reenable hostapd.service 2>/dev/null || true
 fi
 
 # Enable linger for cuems user so systemd-logind does not clean up
