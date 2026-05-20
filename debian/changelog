@@ -1,3 +1,11 @@
+cuems-common (1.2.0-1) unstable; urgency=medium
+
+  * System hardening: pubkey-only sshd, cuems-admin operator account,
+    WPA2-protected AP, opt-in nftables WiFi fence, hostapd unit-override
+    removal.
+
+ -- Ion Reguera <ion@stagelab.coop>  Wed, 20 May 2026 19:36:05 +0200
+
 cuems-common (1.0.0-1) unstable; urgency=medium
 
   * Initial release
