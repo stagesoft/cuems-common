@@ -123,6 +123,9 @@ etc/tmpfiles.d/cuems-journal-remote.conf etc/tmpfiles.d/
 etc/logrotate.d/cuems etc/logrotate.d/
 etc/cuems/network_map.xml etc/cuems/
 etc/cuems/network_map.xsd etc/cuems/
+# AP-network constants — single source of truth, sourced by check-ip.sh.
+# /etc/dhcp/dhcpd.conf cross-references it via header comment.
+etc/cuems/ap.conf etc/cuems/
 etc/cuems/videocomposer-flags.env.example etc/cuems/
 
 # Multi-cluster identity example (not installed to /etc/cuems/ by default;
