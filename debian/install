@@ -21,6 +21,11 @@ usr/share/cuems/cuems-videocomposer/i915-rebind.conf.example usr/share/cuems/cue
 usr/share/cuems/cuems-videocomposer/wake-monitors.conf.example usr/share/cuems/cuems-videocomposer/
 usr/share/doc/cuems-common/hdmi-helpers.README usr/share/doc/cuems-common/
 
+# Opt-in WiFi-AP firewall fence (nftables). Not enabled by default —
+# see /usr/share/doc/cuems-common/firewall.README for the procedure.
+usr/share/cuems/firewall/cuems-wifi-fence.nft usr/share/cuems/firewall/
+usr/share/doc/cuems-common/firewall.README usr/share/doc/cuems-common/
+
 # rtpmidid role-aware INI templates (read by cuems-write-rtpmidid-config)
 usr/share/cuems/rtpmidid/default.ini.controller usr/share/cuems/rtpmidid/
 usr/share/cuems/rtpmidid/default.ini.node usr/share/cuems/rtpmidid/
