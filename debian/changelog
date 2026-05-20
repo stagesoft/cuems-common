@@ -1,3 +1,12 @@
+cuems-common (1.3.0-1) unstable; urgency=medium
+
+  * Network logic fixes: check-ip.sh exit code, ExecStop teardown,
+    hostapd wifi0 bond detach, wifi-auto.sh dynamic-interface rewrite,
+    central /etc/cuems/ap.conf, WoL re-enabled on ethernet .link files
+    (regression fix).
+
+ -- Ion Reguera <ion@stagelab.coop>  Wed, 20 May 2026 20:50:00 +0200
+
 cuems-common (1.2.0-1) unstable; urgency=medium
 
   * System hardening: pubkey-only sshd, cuems-admin operator account,
