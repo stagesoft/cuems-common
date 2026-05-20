@@ -23,6 +23,7 @@ Depends: ${misc:Depends},
          nftables,
          rsync,
          iproute2,
+         ethtool,
          zita-ajbridge,
          chrony (>= 4.0),
          edid-decode
