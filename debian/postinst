@@ -12,7 +12,7 @@ if [ -d /usr/lib/cuems/bin ]; then
     chmod +x /usr/lib/cuems/bin/*.sh 2>/dev/null || true
     chmod +x /usr/lib/cuems/bin/*.py 2>/dev/null || true
     # Scripts without standard extensions
-    for f in cuems-extract-video-latency cuems-log-collector-url cuems-write-rtpmidid-config cuems-write-hostapd-config; do
+    for f in cuems-extract-video-latency cuems-log-collector-url cuems-write-rtpmidid-config cuems-write-hostapd-config cuems-arm-wol; do
         [ -f "/usr/lib/cuems/bin/$f" ] && chmod +x "/usr/lib/cuems/bin/$f"
     done
 
@@ -403,6 +403,18 @@ if command -v invoke-rc.d >/dev/null 2>&1; then
     invoke-rc.d ssh reload >/dev/null 2>&1 || true
 elif command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet ssh.service 2>/dev/null; then
     systemctl reload ssh.service >/dev/null 2>&1 || true
+fi
+
+# =========================================================================
+# Wake-on-LAN: enable + arm immediately so operators can wake the box
+# right after install without waiting for a reboot. The oneshot service
+# walks /sys/class/net and runs ethtool -s wol g on every physical
+# ethernet NIC that supports magic-packet wake. Idempotent.
+# =========================================================================
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl enable cuems-arm-wol.service 2>/dev/null || true
+    # Arm now (best-effort; ethtool may not be runnable inside a chroot/build).
+    /usr/lib/cuems/bin/cuems-arm-wol 2>/dev/null || true
 fi
 
 echo "CUEMS Common package installed successfully."

@@ -6,6 +6,7 @@ scripts/check-ip.sh usr/lib/cuems/bin/
 scripts/wifi-auto.sh usr/lib/cuems/bin/
 scripts/cuems-log-collector-url usr/lib/cuems/bin/
 scripts/cuems-write-chrony-source usr/lib/cuems/bin/
+scripts/cuems-arm-wol usr/lib/cuems/bin/
 usr/bin/cuems-healthcheck usr/bin/
 usr/lib/cuems/bin/cuems-extract-video-latency usr/lib/cuems/bin/
 usr/lib/cuems/bin/cuems-write-rtpmidid-config usr/lib/cuems/bin/
@@ -69,6 +70,11 @@ etc/systemd/system/cuems-wifi.service lib/systemd/system/
 # only — never overriding the unit file (was a dpkg file-conflict footgun).
 etc/systemd/system/jack-alsa-bridges.service lib/systemd/system/
 etc/systemd/system/jackd-cuems.service lib/systemd/system/
+# Topology-independent WoL arm-er (alternative to per-host .link files which
+# pin Match=Path= to a specific PCI topology; ours don't match across the N97
+# cluster). Walks /sys/class/net and runs ethtool -s wol g on every physical
+# ethernet NIC that hardware-supports magic-packet wake.
+etc/systemd/system/cuems-arm-wol.service lib/systemd/system/
 etc/systemd/system/olad.service lib/systemd/system/
 etc/systemd/system/*.path lib/systemd/system/
 # Systemd drop-in directories (package-provided overrides)

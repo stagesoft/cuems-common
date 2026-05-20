@@ -3,4 +3,3 @@ Path=pci-0000:02:00.0
 
 [Link]
 Name=ethernet1
-WakeOnLan=magic

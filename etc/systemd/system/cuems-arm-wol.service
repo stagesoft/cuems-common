@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+
+[Unit]
+Description=CUEMS arm Wake-on-LAN on physical ethernet NICs
+Documentation=man:ethtool(8)
+After=systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+Before=network-pre.target
+DefaultDependencies=no
+ConditionVirtualization=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/cuems/bin/cuems-arm-wol
+
+[Install]
+WantedBy=multi-user.target
