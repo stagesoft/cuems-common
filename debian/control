@@ -15,15 +15,17 @@ Depends: ${misc:Depends},
          python3,
          apache2,
          openssl,
+         openssh-server,
+         sudo,
          avahi-daemon,
          isc-dhcp-server,
          hostapd,
+         nftables,
          rsync,
          iproute2,
          zita-ajbridge,
          chrony (>= 4.0),
          edid-decode
-         chrony (>= 4.0)
 Recommends: ddcutil
 Description: CUEMS common configuration and systemd services
  This package contains systemd service files, configuration files,
