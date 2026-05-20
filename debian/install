@@ -118,6 +118,19 @@ etc/ssh/sshd_config.d/50-cuems.conf etc/ssh/sshd_config.d/
 etc/cuems/ssh/cuems-org.pub etc/cuems/ssh/
 etc/sysctl.d/99-cuems-performance.conf etc/sysctl.d/
 etc/modules-load.d/cuems-midi.conf etc/modules-load.d/
+
+# systemd-udev .link files — rename Intel/Realtek NICs to stable
+# ethernet0 / ethernet1 / wifi0 (Path= matches the PCI slot, so
+# names survive USB MAC churn). Also enable WakeOnLan=magic on the
+# ethernet NICs so remote-wake survives clean reboots without depending
+# on NIC NVRAM persistence (which was the historical bug: an earlier
+# cuems-common upgrade overwrote these files without the directive and
+# WoL silently stopped persisting at OS level). udev's net_setup_link
+# builtin applies these on every interface bring-up regardless of
+# whether systemd-networkd itself is enabled.
+etc/systemd/network/10-ethernet0.link etc/systemd/network/
+etc/systemd/network/10-ethernet1.link etc/systemd/network/
+etc/systemd/network/10-wifi0.link etc/systemd/network/
 etc/tmpfiles.d/jack-cuems.conf etc/tmpfiles.d/
 etc/tmpfiles.d/cuems-journal-remote.conf etc/tmpfiles.d/
 etc/logrotate.d/cuems etc/logrotate.d/
