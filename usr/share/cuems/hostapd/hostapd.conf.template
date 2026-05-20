@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# Template rendered by /usr/lib/cuems/bin/cuems-write-hostapd-config
+# into /run/cuems/hostapd.conf at every hostapd start. Placeholders
+# @@SSID@@ and @@WPA_PASSPHRASE@@ are substituted at render time.
+#
+# To customise the runtime AP, edit this template (it's a dpkg conffile
+# so operator changes survive upgrades subject to the usual conffile
+# prompt) and `systemctl restart hostapd.service`.
+
+interface=wifi0
+driver=nl80211
+
+ssid=@@SSID@@
+hw_mode=g
+channel=1
+ieee80211n=1
+wmm_enabled=1
+
+auth_algs=1
+ignore_broadcast_ssid=0
+
+wpa=2
+wpa_passphrase=@@WPA_PASSPHRASE@@
+wpa_key_mgmt=WPA-PSK
+wpa_pairwise=CCMP
+rsn_pairwise=CCMP

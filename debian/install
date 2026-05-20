@@ -9,6 +9,7 @@ scripts/cuems-write-chrony-source usr/lib/cuems/bin/
 usr/bin/cuems-healthcheck usr/bin/
 usr/lib/cuems/bin/cuems-extract-video-latency usr/lib/cuems/bin/
 usr/lib/cuems/bin/cuems-write-rtpmidid-config usr/lib/cuems/bin/
+usr/lib/cuems/bin/cuems-write-hostapd-config usr/lib/cuems/bin/
 usr/lib/cuems/bin/cuems-generate-display-conf usr/lib/cuems/bin/
 
 # Opt-in HDMI helpers (cuems-videocomposer pre/post-start drop-ins
@@ -23,6 +24,11 @@ usr/share/doc/cuems-common/hdmi-helpers.README usr/share/doc/cuems-common/
 # rtpmidid role-aware INI templates (read by cuems-write-rtpmidid-config)
 usr/share/cuems/rtpmidid/default.ini.controller usr/share/cuems/rtpmidid/
 usr/share/cuems/rtpmidid/default.ini.node usr/share/cuems/rtpmidid/
+
+# hostapd template (read by cuems-write-hostapd-config). SSID and WPA
+# passphrase placeholders @@SSID@@ / @@WPA_PASSPHRASE@@ get substituted
+# at hostapd ExecStartPre time into /run/cuems/hostapd.conf.
+usr/share/cuems/hostapd/hostapd.conf.template usr/share/cuems/hostapd/
 
 # Python scripts (executable)
 usr/bin/cuems-config-node usr/bin/

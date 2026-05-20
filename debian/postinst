@@ -12,7 +12,7 @@ if [ -d /usr/lib/cuems/bin ]; then
     chmod +x /usr/lib/cuems/bin/*.sh 2>/dev/null || true
     chmod +x /usr/lib/cuems/bin/*.py 2>/dev/null || true
     # Scripts without standard extensions
-    for f in cuems-extract-video-latency cuems-log-collector-url cuems-log-collector-url; do
+    for f in cuems-extract-video-latency cuems-log-collector-url cuems-write-rtpmidid-config cuems-write-hostapd-config; do
         [ -f "/usr/lib/cuems/bin/$f" ] && chmod +x "/usr/lib/cuems/bin/$f"
     done
 
