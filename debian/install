@@ -137,6 +137,12 @@ etc/modules-load.d/cuems-midi.conf etc/modules-load.d/
 etc/systemd/network/10-ethernet0.link etc/systemd/network/
 etc/systemd/network/10-ethernet1.link etc/systemd/network/
 etc/systemd/network/10-wifi0.link etc/systemd/network/
+
+# Hardware-mismatch recovery guide for the .link files above. Operators
+# whose NICs sit at different PCI paths than the N97 defaults MUST edit
+# /etc/systemd/network/10-*.link to match — and pick "keep my version"
+# on dpkg conffile prompts during upgrades.
+usr/share/doc/cuems-common/link-files.README usr/share/doc/cuems-common/
 etc/tmpfiles.d/jack-cuems.conf etc/tmpfiles.d/
 etc/tmpfiles.d/cuems-journal-remote.conf etc/tmpfiles.d/
 etc/logrotate.d/cuems etc/logrotate.d/
