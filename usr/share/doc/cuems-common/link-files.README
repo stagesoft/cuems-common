@@ -8,11 +8,11 @@ hostapd, etc) can reference them.
 The default values in the shipped package match the **N97 cluster
 node** hardware:
 
-| Logical name | PCI path             | Notes                                    |
-|--------------|----------------------|------------------------------------------|
-| `ethernet0`  | `pci-0000:01:00.0`   | Primary NIC, bond0 primary on controllers |
-| `ethernet1`  | `pci-0000:02:00.0`   | Cluster ipv4ll segment                    |
-| `wifi0`      | `pci-0000:03:00.0`   | Controllers only; nodes have no wifi NIC |
+| Logical name | PCI path             | Notes                                                                |
+|--------------|----------------------|----------------------------------------------------------------------|
+| `ethernet0`  | `pci-0000:01:00.0`   | Primary NIC, bond0 primary on controllers                            |
+| `ethernet1`  | `pci-0000:02:00.0`   | Cluster ipv4ll segment                                               |
+| `wifi0`      | `pci-0000:03:00.0`   | Realtek RTL8852BE on N97 + controller; needs `rtw89_8852be` driver   |
 
 ## If your hardware has different PCI paths
 
