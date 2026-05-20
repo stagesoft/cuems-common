@@ -88,10 +88,15 @@ etc/rsyslog.conf etc/
 etc/hostapd/hostapd.conf etc/hostapd/
 etc/dhcp/dhcpd.conf etc/dhcp/
 etc/sudoers.d/99-cuems etc/sudoers.d/
+etc/sudoers.d/50-cuems-admin etc/sudoers.d/
 
 # SSH server hardening (drop-in; main /etc/ssh/sshd_config left untouched
 # so upstream conffile-prompt machinery handles any operator edits there)
 etc/ssh/sshd_config.d/50-cuems.conf etc/ssh/sshd_config.d/
+
+# Organization SSH public key — planted in cuems-admin's authorized_keys
+# on first install (see debian/postinst). Private half is held by Stagelab.
+etc/cuems/ssh/cuems-org.pub etc/cuems/ssh/
 etc/sysctl.d/99-cuems-performance.conf etc/sysctl.d/
 etc/modules-load.d/cuems-midi.conf etc/modules-load.d/
 etc/tmpfiles.d/jack-cuems.conf etc/tmpfiles.d/

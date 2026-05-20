@@ -3,6 +3,10 @@ set -e
 
 # CUEMS Common package post-installation script
 
+# Published default credentials. See docs/default-credentials.md.
+# Single source of truth at code level; doc cites the same literals.
+DEFAULT_OPERATOR_PASSWORD="cuems-admin-default"
+
 # Ensure all scripts are executable
 if [ -d /usr/lib/cuems/bin ]; then
     chmod +x /usr/lib/cuems/bin/*.sh 2>/dev/null || true
@@ -86,6 +90,56 @@ fi
 
 if [ -f /etc/sudoers.d/99-cuems ]; then
     chmod 440 /etc/sudoers.d/99-cuems
+fi
+
+if [ -f /etc/sudoers.d/50-cuems-admin ]; then
+    chmod 440 /etc/sudoers.d/50-cuems-admin
+fi
+
+# =========================================================================
+# Operator account (cuems-admin) — first-install bootstrap
+# =========================================================================
+# First install: create user, set the published default password, plant the
+# org SSH key, lock root. Marker file gates the destructive bits so package
+# upgrades NEVER clobber operator-rotated passwords / added per-engineer
+# keys / a deliberately-unlocked root account.
+#
+# Lockout safety: sshd reload happens at the very end of postinst. If any
+# step here fails, postinst exits non-zero and the old (password-permitting)
+# sshd config stays active until the next install attempt.
+# =========================================================================
+ADMIN_MARKER=/var/lib/cuems/.admin-bootstrapped
+
+if ! getent passwd cuems-admin >/dev/null 2>&1; then
+    adduser --disabled-password --ingroup sudo \
+        --gecos "CUEMS Operator" cuems-admin >/dev/null
+fi
+
+if [ ! -e "$ADMIN_MARKER" ]; then
+    # First-install only path. DO NOT repeat on upgrade.
+    echo "cuems-admin:${DEFAULT_OPERATOR_PASSWORD}" | chpasswd
+
+    install -d -m 0700 -o cuems-admin -g cuems-admin /home/cuems-admin/.ssh
+    if [ -f /etc/cuems/ssh/cuems-org.pub ]; then
+        install -m 0600 -o cuems-admin -g cuems-admin \
+            /etc/cuems/ssh/cuems-org.pub \
+            /home/cuems-admin/.ssh/authorized_keys
+    else
+        echo "WARNING: /etc/cuems/ssh/cuems-org.pub missing; cuems-admin has no SSH key" >&2
+    fi
+
+    # Root stays locked. sudo -i from cuems-admin is the escalation path.
+    passwd -l root >/dev/null 2>&1 || true
+
+    # Cloned-node SSH host-key rotation: cloned disk images carry the
+    # source host's keys; first SSH to a fresh clone otherwise trips a
+    # TOFU warning. First install only — preserves trusted fingerprints
+    # on subsequent upgrades.
+    rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
+    ssh-keygen -A >/dev/null 2>&1 || true
+
+    install -d -m 0755 /var/lib/cuems
+    touch "$ADMIN_MARKER"
 fi
 
 # Generate SSL certificates for Apache2 if they don't exist
@@ -315,6 +369,17 @@ if command -v systemctl >/dev/null 2>&1; then
     if [ -f /etc/cuems/master.ip ] && systemctl is-active --quiet cuems-controller.target 2>/dev/null; then
         systemctl start rsync.service 2>/dev/null || true
     fi
+fi
+
+# =========================================================================
+# Reload sshd LAST — after the org pubkey is in cuems-admin's authorized_keys.
+# Ordering matters: if sshd picks up `PasswordAuthentication no` before the
+# key is in place, remote installs over SSH self-strand the operator.
+# =========================================================================
+if command -v invoke-rc.d >/dev/null 2>&1; then
+    invoke-rc.d ssh reload >/dev/null 2>&1 || true
+elif command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet ssh.service 2>/dev/null; then
+    systemctl reload ssh.service >/dev/null 2>&1 || true
 fi
 
 echo "CUEMS Common package installed successfully."
