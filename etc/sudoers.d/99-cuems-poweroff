@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Allow the cuems service user to power off the local host without a
+# password prompt. Used by:
+#   - cuems-power-bridge (controller): local poweroff after arming Shelly
+#     hardware safety timer.
+#   - cuems-power-bridge SSH targets (nodes): each node-side cuems user
+#     runs `sudo /sbin/poweroff` when the controller's bridge SSHes in
+#     via the power-bridge.key keypair.
+#
+# Shipped on EVERY CUEMS host (controllers + nodes) by policy; harmless
+# on a host whose role doesn't actually invoke it.
+cuems ALL=(root) NOPASSWD: /sbin/poweroff
+cuems ALL=(root) NOPASSWD: /sbin/systemctl poweroff
+cuems ALL=(root) NOPASSWD: /sbin/systemctl poweroff --no-block
