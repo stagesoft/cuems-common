@@ -20,6 +20,7 @@ Depends: ${misc:Depends},
          hostapd,
          rsync,
          iproute2,
+         ethtool,
          zita-ajbridge,
          chrony (>= 4.0)
 Description: CUEMS common configuration and systemd services
