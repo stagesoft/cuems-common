@@ -11,9 +11,13 @@ cuems-common (1.3.0-3) unstable; urgency=medium
   * network: persist Wake-on-LAN via post-up ethtool in interfaces.
   * link files: correct 10-wifi0.link Path= to N97 default; document the
     RTL8852BE driver gap on stock bookworm.
-  * Built from pre_release_1 on the debian/bookworm-pre_release_1 packaging
-    branch; bookworm packaging refinements (control deps, controller-engine
-    LD_LIBRARY_PATH, xinitrc conffile) reconcile in the later rc_1 merge.
+  * Incorporate the debian/bookworm packaging line (merge): controller-engine
+    LD_LIBRARY_PATH for python_rtmidi's bundled libjack; CPU governor set to
+    performance + self-signed SSL cert provisioning in postinst; control
+    dependency refresh (add cpufrequtils, avahi-autoipd, libapache2-mod-dnssd,
+    ifenslave, net-tools; Conflicts network-manager; ddcutil promoted to
+    Depends); xinitrc.cuems conffile override. Built on the
+    debian/bookworm-pre_release_1 integration branch.
 
  -- Ion Reguera <ion@stagelab.coop>  Mon, 01 Jun 2026 12:15:52 +0200
 
