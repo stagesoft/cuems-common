@@ -1,3 +1,25 @@
+cuems-common (1.3.0-5) unstable; urgency=medium
+
+  * Retire the legacy per-conffile dpkg-divert + .cuems mechanism for eight
+    config files (it diverted several other packages' conffiles -- systemd,
+    isc-dhcp-server, isc-dhcp-client, avahi, xserver -- and the .cuems copy
+    sources are obsolete, so the copies were dead). postinst now migrates:
+    - journald/rsyslog policy moves to drop-ins (journald.conf.d/cuems.conf,
+      rsyslog.d/cuems.conf); their main conffiles are un-diverted and handed
+      back to systemd/rsyslog.
+    - dhclient.conf, isc-dhcp-server default, Xwrapper.config, hostapd.conf
+      (unused; cuems uses /run/cuems/hostapd.conf) are un-diverted + restored
+      to their owning package; cuems no longer ships them.
+    - avahi-daemon.conf + dhcpd.conf have no drop-in, so they stay a divert but
+      ship as /usr/share/cuems/ templates installed by postinst on FIRST
+      install only (operator edits survive upgrades). The avahi template no
+      longer hardcodes host-name -- avahi falls back to the OS hostname, fixing
+      the cloned-node mDNS collision.
+  * Stop shipping rsyslog.conf, avahi-daemon.conf, dhcpd.conf, hostapd.conf as
+    conffiles.
+
+ -- Ion Reguera <ion@stagelab.coop>  Mon, 01 Jun 2026 19:28:49 +0200
+
 cuems-common (1.3.0-4) unstable; urgency=medium
 
   * Network interfaces: stop shipping /etc/network/interfaces as a conffile (it

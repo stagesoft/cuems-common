@@ -106,7 +106,10 @@ etc/systemd/user/wireplumber.service etc/systemd/user/
 etc/profile.d/cuems.sh etc/profile.d/
 
 # Configuration files
-etc/avahi/avahi-daemon.conf etc/avahi/
+# avahi-daemon.conf and dhcpd.conf are NOT shipped as conffiles — they have no
+# drop-in mechanism and must override another package's single file, so they
+# ship as usr/share/cuems/ templates (via the glob below) that postinst installs
+# through a dpkg-divert. See debian/postinst.
 # NOTE: /etc/network/interfaces is intentionally NOT shipped — it is host- and
 # role-specific. Operators deploy from the role templates under usr/share/cuems/
 # (interfaces.master / interfaces.node; a future cuems-write-network-interfaces
@@ -115,9 +118,14 @@ etc/avahi/avahi-daemon.conf etc/avahi/
 # on every upgrade.
 etc/rsyncd.conf etc/
 etc/rsyncd.secrets etc/
-etc/rsyslog.conf etc/
-etc/hostapd/hostapd.conf etc/hostapd/
-etc/dhcp/dhcpd.conf etc/dhcp/
+# hostapd.conf is NOT shipped: cuems drives hostapd from /run/cuems/hostapd.conf
+# (generated from usr/share/cuems/hostapd/hostapd.conf.template at ExecStartPre),
+# so the /etc/hostapd/hostapd.conf conffile was unused.
+# journald + rsyslog CUEMS policy ship as drop-ins (so we never divert
+# systemd's or rsyslog's own conffile): the stock files keep ownership and
+# these are pulled in via journald.conf.d/ and rsyslog.d/*.conf includes.
+etc/systemd/journald.conf.d/cuems.conf etc/systemd/journald.conf.d/
+etc/rsyslog.d/cuems.conf etc/rsyslog.d/
 etc/sudoers.d/99-cuems etc/sudoers.d/
 etc/sudoers.d/50-cuems-admin etc/sudoers.d/
 

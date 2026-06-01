@@ -40,60 +40,52 @@ if [ ! -x /usr/lib/cuems/bin/python3 ]; then
     chmod +x /usr/lib/cuems/bin/python3
 fi
 
-# Divert avahi-daemon.conf to allow custom configuration
+# --- Retire the legacy per-conffile dpkg-divert + .cuems mechanism ----------
+# Older versions diverted a set of conffiles to <file>.dpkg-old and copied a
+# now-obsolete <file>.cuems over them. The .cuems sources are gone (so those
+# copies were dead) and several of the diverted files belong to OTHER packages
+# (systemd, isc-dhcp-server, isc-dhcp-client, avahi, xserver). Migrate cleanly.
+# (/etc/network/interfaces is handled in its own block below.)
 if command -v dpkg-divert >/dev/null 2>&1; then
-    # Divert the original file if not already diverted
-    if ! dpkg-divert --list | grep -q "avahi-daemon.conf"; then
-        dpkg-divert --add --rename --divert /etc/avahi/avahi-daemon.conf.dpkg-old /etc/avahi/avahi-daemon.conf
-    fi
-    # Copy our custom configuration to the correct location
-    if [ -f /etc/avahi/avahi-daemon.conf.cuems ]; then
-        cp /etc/avahi/avahi-daemon.conf.cuems /etc/avahi/avahi-daemon.conf
-        # Restart avahi-daemon to apply new configuration
-        if command -v systemctl >/dev/null 2>&1 && systemctl is-active avahi-daemon.service >/dev/null 2>&1; then
-            systemctl restart avahi-daemon.service >/dev/null 2>&1 || true
+
+    # (1) Files cuems no longer overrides: drop the diversion and hand each back
+    #     to its owning package (restore the diverted original), then remove the
+    #     dead .cuems. CUEMS journald/rsyslog policy now ships as drop-ins
+    #     (journald.conf.d/cuems.conf, rsyslog.d/cuems.conf); the rest were never
+    #     actually customised, and hostapd is driven from /run/cuems/hostapd.conf.
+    for f in /etc/systemd/journald.conf /etc/rsyslog.conf \
+             /etc/dhcp/dhclient.conf /etc/default/isc-dhcp-server \
+             /etc/X11/Xwrapper.config /etc/hostapd/hostapd.conf ; do
+        if dpkg-divert --list "$f" 2>/dev/null | grep -q 'by cuems-common'; then
+            dpkg-divert --remove "$f" >/dev/null 2>&1 || true
+            [ -e "${f}.dpkg-old" ] && mv -f "${f}.dpkg-old" "$f"
         fi
-    fi
-fi
+        rm -f "${f}.cuems"
+    done
 
-# Divert dhclient.conf to allow custom configuration
-if command -v dpkg-divert >/dev/null 2>&1; then
-    # Divert the original file if not already diverted
-    if ! dpkg-divert --list | grep -q "dhclient.conf"; then
-        dpkg-divert --add --rename --divert /etc/dhcp/dhclient.conf.dpkg-old /etc/dhcp/dhclient.conf
-    fi
-    # Copy our custom configuration to the correct location
-    if [ -f /etc/dhcp/dhclient.conf.cuems ]; then
-        cp /etc/dhcp/dhclient.conf.cuems /etc/dhcp/dhclient.conf
-    fi
-fi
-
-# Divert dhcpd.conf to allow custom configuration
-if command -v dpkg-divert >/dev/null 2>&1; then
-    # Divert the original file if not already diverted
-    if ! dpkg-divert --list | grep -q "dhcpd.conf"; then
-        dpkg-divert --add --rename --divert /etc/dhcp/dhcpd.conf.dpkg-old /etc/dhcp/dhcpd.conf
-    fi
-    # Copy our custom configuration to the correct location
-    if [ -f /etc/dhcp/dhcpd.conf.cuems ]; then
-        cp /etc/dhcp/dhcpd.conf.cuems /etc/dhcp/dhcpd.conf
-        # Restart isc-dhcp-server to apply new configuration
-        if command -v systemctl >/dev/null 2>&1 && systemctl is-active isc-dhcp-server.service >/dev/null 2>&1; then
-            systemctl restart isc-dhcp-server.service >/dev/null 2>&1 || true
+    # (2) Files cuems must override but which have NO drop-in mechanism
+    #     (avahi-daemon.conf, dhcpd.conf): keep diverting the owning package's
+    #     file aside and install the cuems version from a /usr/share/cuems
+    #     template -- but only on FIRST install, so operator edits survive
+    #     upgrades. The avahi template leaves host-name unset (-> OS hostname).
+    for f in /etc/avahi/avahi-daemon.conf /etc/dhcp/dhcpd.conf ; do
+        tmpl="/usr/share/cuems/$(basename "$f")"
+        if ! dpkg-divert --list "$f" 2>/dev/null | grep -q 'by cuems-common'; then
+            dpkg-divert --add --rename --divert "${f}.dpkg-old" "$f" >/dev/null 2>&1 || true
         fi
-    fi
-fi
+        if [ "$1" = "configure" ] && [ -z "$2" ] && [ -f "$tmpl" ]; then
+            cp "$tmpl" "$f"
+        fi
+        rm -f "${f}.cuems"
+    done
 
-# Divert journald.conf to allow custom configuration
-if command -v dpkg-divert >/dev/null 2>&1; then
-    if ! dpkg-divert --list | grep -q "journald.conf"; then
-        dpkg-divert --add --rename --divert /etc/systemd/journald.conf.dpkg-old /etc/systemd/journald.conf
-    fi
-    if [ -f /etc/systemd/journald.conf.cuems ]; then
-        cp /etc/systemd/journald.conf.cuems /etc/systemd/journald.conf
-        # Restart systemd-journald to apply new configuration
-        if command -v systemctl >/dev/null 2>&1 && systemctl is-active systemd-journald.service >/dev/null 2>&1; then
+    # The journald/rsyslog drop-ins just changed effective config; apply them.
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl is-active systemd-journald.service >/dev/null 2>&1; then
             systemctl restart systemd-journald.service >/dev/null 2>&1 || true
+        fi
+        if systemctl is-active rsyslog.service >/dev/null 2>&1; then
+            systemctl restart rsyslog.service >/dev/null 2>&1 || true
         fi
     fi
 fi
@@ -123,54 +115,6 @@ if command -v dpkg-divert >/dev/null 2>&1 \
    && dpkg-divert --list /etc/network/interfaces 2>/dev/null | grep -q .; then
     dpkg-divert --remove /etc/network/interfaces >/dev/null 2>&1 || true
     rm -f /etc/network/interfaces.dpkg-old
-fi
-
-# Divert rsyslog.conf to allow custom configuration
-if command -v dpkg-divert >/dev/null 2>&1; then
-    if ! dpkg-divert --list | grep -q "rsyslog.conf"; then
-        dpkg-divert --add --rename --divert /etc/rsyslog.conf.dpkg-old /etc/rsyslog.conf
-    fi
-    if [ -f /etc/rsyslog.conf.cuems ]; then
-        cp /etc/rsyslog.conf.cuems /etc/rsyslog.conf
-        # Restart rsyslog to apply new configuration
-        if command -v systemctl >/dev/null 2>&1 && systemctl is-active rsyslog.service >/dev/null 2>&1; then
-            systemctl restart rsyslog.service >/dev/null 2>&1 || true
-        fi
-    fi
-fi
-
-# Divert hostapd.conf to allow custom configuration
-if command -v dpkg-divert >/dev/null 2>&1; then
-    if ! dpkg-divert --list | grep -q "hostapd.conf"; then
-        dpkg-divert --add --rename --divert /etc/hostapd/hostapd.conf.dpkg-old /etc/hostapd/hostapd.conf
-    fi
-    if [ -f /etc/hostapd/hostapd.conf.cuems ]; then
-        cp /etc/hostapd/hostapd.conf.cuems /etc/hostapd/hostapd.conf
-        # Restart hostapd to apply new configuration
-        if command -v systemctl >/dev/null 2>&1 && systemctl is-active hostapd.service >/dev/null 2>&1; then
-            systemctl restart hostapd.service >/dev/null 2>&1 || true
-        fi
-    fi
-fi
-
-# Divert Xwrapper.config to allow custom configuration
-if command -v dpkg-divert >/dev/null 2>&1; then
-    if ! dpkg-divert --list | grep -q "Xwrapper.config"; then
-        dpkg-divert --add --rename --divert /etc/X11/Xwrapper.config.dpkg-old /etc/X11/Xwrapper.config
-    fi
-    if [ -f /etc/X11/Xwrapper.config.cuems ]; then
-        cp /etc/X11/Xwrapper.config.cuems /etc/X11/Xwrapper.config
-    fi
-fi
-
-# Divert isc-dhcp-server default config to allow custom configuration
-if command -v dpkg-divert >/dev/null 2>&1; then
-    if ! dpkg-divert --list | grep -q "isc-dhcp-server"; then
-        dpkg-divert --add --rename --divert /etc/default/isc-dhcp-server.dpkg-old /etc/default/isc-dhcp-server
-    fi
-    if [ -f /etc/default/isc-dhcp-server.cuems ]; then
-        cp /etc/default/isc-dhcp-server.cuems /etc/default/isc-dhcp-server
-    fi
 fi
 
 # Reload systemd to pick up new unit files
