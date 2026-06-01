@@ -1,0 +1,61 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# Block rtpmidid startup on a node until the controller is actually
+# reachable, then return. Invoked from rtpmidid.service ExecStartPre.
+#
+# Why this exists: at cold boot the link-local route to the controller
+# (169.254.0.0/16, brought up asynchronously by ifupdown/avahi) can still
+# be absent when rtpmidid starts. Its first RTP-MIDI discover/connect then
+# fails with "Network is unreachable"; the internal 30s retry later
+# re-establishes only the *control* channel, leaving a half-open "zombie"
+# session -- CK latency pings flow but no MTC data ever crosses, so nodes
+# stay timecode-dead until rtpmidid is restarted by hand on BOTH ends.
+# Gating the first connect on reachability lets that first discover/connect
+# succeed, so MTC flows from boot with no manual intervention.
+#
+# Role detection follows the same convention as every other CUEMS
+# role-aware hook: presence of /etc/cuems/master.ip means this host is the
+# controller. Controllers accept inbound connections from nodes and have
+# nothing to wait for, so this is a no-op there.
+
+set -eu
+
+MASTER_IP_FILE=/etc/cuems/master.ip
+# Resolved via avahi (nss-mdns). Overridable for non-default topologies.
+CONTROLLER_HOST="${CUEMS_CONTROLLER_HOST:-controller.local}"
+# Upper bound on the wait. On timeout we start rtpmidid anyway and let its
+# own retry be the last-resort fallback -- never block boot indefinitely.
+# Kept below the unit's TimeoutStartSec (raised to 120 in the drop-in).
+TIMEOUT="${CUEMS_WAIT_CONTROLLER_TIMEOUT:-60}"
+
+if [ -f "${MASTER_IP_FILE}" ]; then
+    echo "cuems-wait-controller: controller role, nothing to wait for"
+    exit 0
+fi
+
+# Deadline-based so the wall-clock bound holds even when name resolution
+# itself blocks: an unresolvable .local name makes nss-mdns stall for
+# ~12s per lookup (NXDOMAIN timeout), which is exactly the transient state
+# at cold boot before avahi/the controller are up. `timeout 2 getent` caps
+# each lookup so the loop honors TIMEOUT instead of running many times over.
+start="$(date +%s)"
+deadline=$((start + TIMEOUT))
+while [ "$(date +%s)" -lt "${deadline}" ]; do
+    # ahostsv4 forces an IPv4 answer (avoids the fe80:: link-local that
+    # avahi also publishes for controller.local, which is not what the
+    # rtpmidid IPv4 session uses).
+    addr="$(timeout 2 getent ahostsv4 "${CONTROLLER_HOST}" 2>/dev/null | awk '{print $1; exit}')"
+    if [ -n "${addr}" ] && ping -c1 -W1 "${addr}" >/dev/null 2>&1; then
+        echo "cuems-wait-controller: ${CONTROLLER_HOST} reachable at ${addr}" \
+             "after $(( $(date +%s) - start ))s"
+        exit 0
+    fi
+    sleep 1
+done
+
+echo "cuems-wait-controller: ${CONTROLLER_HOST} unreachable after ${TIMEOUT}s;" \
+     "starting rtpmidid anyway (internal retry is the fallback)" >&2
+exit 0
