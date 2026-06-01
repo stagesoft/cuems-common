@@ -1,3 +1,21 @@
+cuems-common (1.3.0-4) unstable; urgency=medium
+
+  * Network interfaces: stop shipping /etc/network/interfaces as a conffile (it
+    is host- and role-specific) and replace the obsolete dpkg-divert +
+    interfaces.cuems mechanism. On FIRST install only, postinst takes over
+    /etc/network/interfaces with a reachable baseline
+    (/usr/share/cuems/interfaces.master), preserving any pre-existing file (e.g.
+    the debian-installer default) at .dpkg-old; on upgrades it is never touched
+    (operator / clone / role-template config wins). This is necessary because a
+    stock Debian interfaces names the original NICs, which our .link files
+    rename to ethernet0/ethernet1/wifi0 -- the stock file would otherwise go
+    stale and drop the network. Role templates (interfaces.master /
+    interfaces.node) still ship under /usr/share/cuems/. The old diversion is
+    removed cleanly (without --rename, leaving the live file as-is) and the
+    stale .dpkg-old dropped.
+
+ -- Ion Reguera <ion@stagelab.coop>  Mon, 01 Jun 2026 12:58:58 +0200
+
 cuems-common (1.3.0-3) unstable; urgency=medium
 
   * rtpmidid: gate node startup on controller reachability via the

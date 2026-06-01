@@ -107,7 +107,12 @@ etc/profile.d/cuems.sh etc/profile.d/
 
 # Configuration files
 etc/avahi/avahi-daemon.conf etc/avahi/
-etc/network/interfaces etc/network/
+# NOTE: /etc/network/interfaces is intentionally NOT shipped — it is host- and
+# role-specific. Operators deploy from the role templates under usr/share/cuems/
+# (interfaces.master / interfaces.node; a future cuems-write-network-interfaces
+# helper will pick the right one per role). Shipping a single live conffile here
+# pushed the *master* variant onto nodes and risked clobbering host networking
+# on every upgrade.
 etc/rsyncd.conf etc/
 etc/rsyncd.secrets etc/
 etc/rsyslog.conf etc/

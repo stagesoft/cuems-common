@@ -98,14 +98,31 @@ if command -v dpkg-divert >/dev/null 2>&1; then
     fi
 fi
 
-# Divert network/interfaces to allow custom configuration
-if command -v dpkg-divert >/dev/null 2>&1; then
-    if ! dpkg-divert --list | grep -q "interfaces"; then
-        dpkg-divert --add --rename --divert /etc/network/interfaces.dpkg-old /etc/network/interfaces
+# Network interfaces.
+# Not shipped as a conffile (host- and role-specific). On FIRST install only,
+# take over /etc/network/interfaces with a reachable baseline (the controller
+# "master" template: bond0 DHCP + ethernet1 link-local), preserving any
+# pre-existing file -- e.g. the debian-installer default -- at .dpkg-old. This
+# is necessary because a stock Debian interfaces references the original NIC
+# names, which cuems-common's .link files rename to ethernet0/ethernet1/wifi0,
+# so the stock file would go stale and drop the network. On UPGRADES interfaces
+# is never touched (operator / clone / role-template config wins). Role
+# specialisation (interfaces.node, static IPs, ...) is applied later by the
+# operator or a future cuems-write-network-interfaces helper / nodeconf.
+if [ "$1" = "configure" ] && [ -z "$2" ]; then
+    if [ -e /etc/network/interfaces ] && [ ! -e /etc/network/interfaces.dpkg-old ]; then
+        mv /etc/network/interfaces /etc/network/interfaces.dpkg-old
     fi
-    if [ -f /etc/network/interfaces.cuems ]; then
-        cp /etc/network/interfaces.cuems /etc/network/interfaces
-    fi
+    cp /usr/share/cuems/interfaces.master /etc/network/interfaces
+fi
+# Retire the obsolete legacy mechanism: older versions diverted
+# /etc/network/interfaces to .dpkg-old and copied a now-unshipped
+# interfaces.cuems over it. Remove the diversion WITHOUT --rename (so the live
+# file is left exactly as-is) and clean up the stale diverted copy.
+if command -v dpkg-divert >/dev/null 2>&1 \
+   && dpkg-divert --list /etc/network/interfaces 2>/dev/null | grep -q .; then
+    dpkg-divert --remove /etc/network/interfaces >/dev/null 2>&1 || true
+    rm -f /etc/network/interfaces.dpkg-old
 fi
 
 # Divert rsyslog.conf to allow custom configuration
