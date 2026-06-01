@@ -31,6 +31,7 @@ usr/share/doc/cuems-common/firewall.README usr/share/doc/cuems-common/
 # /etc/ssh/sshd_config.d/50-cuems.conf so a locked-out operator at
 # the TTY console can find the recovery account.
 docs/default-credentials.md usr/share/doc/cuems-common/
+usr/lib/cuems/bin/cuems-wait-controller usr/lib/cuems/bin/
 
 # rtpmidid role-aware INI templates (read by cuems-write-rtpmidid-config)
 usr/share/cuems/rtpmidid/default.ini.controller usr/share/cuems/rtpmidid/
