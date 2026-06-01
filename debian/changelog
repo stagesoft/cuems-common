@@ -1,3 +1,22 @@
+cuems-common (1.3.0-3) unstable; urgency=medium
+
+  * rtpmidid: gate node startup on controller reachability via the
+    cuems-wait-controller ExecStartPre, fixing the cold-boot MTC zombie
+    where rtpmidid raced an unconfigured link-local route (control channel
+    up, no MTC data). No-op on controllers.
+  * videocomposer: wait for Plymouth to release DRM master before start,
+    fixing black panels (modeset "Permission denied") after boot.
+  * rtpmidid: set explicit port=5004 in the node [connect_to].
+  * Ship cuems-power-bridge poweroff sudoers; Shelly power-bridge support.
+  * network: persist Wake-on-LAN via post-up ethtool in interfaces.
+  * link files: correct 10-wifi0.link Path= to N97 default; document the
+    RTL8852BE driver gap on stock bookworm.
+  * Built from pre_release_1 on the debian/bookworm-pre_release_1 packaging
+    branch; bookworm packaging refinements (control deps, controller-engine
+    LD_LIBRARY_PATH, xinitrc conffile) reconcile in the later rc_1 merge.
+
+ -- Ion Reguera <ion@stagelab.coop>  Mon, 01 Jun 2026 12:15:52 +0200
+
 cuems-common (1.3.0-2) unstable; urgency=medium
 
   * Fix 10-ethernet0.link Path= to N97 default (pci-0000:01:00.0; was
