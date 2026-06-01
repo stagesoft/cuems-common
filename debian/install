@@ -122,6 +122,7 @@ etc/ssh/sshd_config.d/50-cuems.conf etc/ssh/sshd_config.d/
 # Organization SSH public key — planted in cuems-admin's authorized_keys
 # on first install (see debian/postinst). Private half is held by Stagelab.
 etc/cuems/ssh/cuems-org.pub etc/cuems/ssh/
+etc/sudoers.d/99-cuems-poweroff etc/sudoers.d/
 etc/sysctl.d/99-cuems-performance.conf etc/sysctl.d/
 etc/modules-load.d/cuems-midi.conf etc/modules-load.d/
 
