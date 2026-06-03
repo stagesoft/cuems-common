@@ -192,6 +192,10 @@ if [ -f /etc/sudoers.d/50-cuems-admin ]; then
     chmod 440 /etc/sudoers.d/50-cuems-admin
 fi
 
+if [ -f /etc/sudoers.d/99-cuems-admin-poweroff ]; then
+    chmod 440 /etc/sudoers.d/99-cuems-admin-poweroff
+fi
+
 # =========================================================================
 # Operator account (cuems-admin) — first-install bootstrap
 # =========================================================================

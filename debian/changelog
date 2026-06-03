@@ -1,3 +1,16 @@
+cuems-common (1.3.0-7) unstable; urgency=medium
+
+  * sudoers: add 99-cuems-admin-poweroff granting cuems-admin passwordless
+    /sbin/poweroff. cuems-power-bridge now SSHes nodes as cuems-admin (which
+    has a login shell) instead of the nologin cuems service user; this lets
+    the unattended, no-TTY poweroff complete. Scoped to poweroff only — full
+    cuems-admin sudo still requires a password. New file (not an edit of
+    99-cuems-poweroff) to avoid a conffile prompt on upgrade. The bridge key
+    is additionally locked to this one command via a forced-command entry in
+    cuems-admin's authorized_keys (shipped by cuems-power-bridge deploy-keys).
+
+ -- Ion Reguera <ion@stagelab.coop>  Wed, 03 Jun 2026 19:11:53 +0200
+
 cuems-common (1.3.0-6) unstable; urgency=medium
 
   * videocomposer: order VC after plymouth-quit-wait.service for the DRM-
