@@ -12,5 +12,8 @@
 # Shipped on EVERY CUEMS host (controllers + nodes) by policy; harmless
 # on a host whose role doesn't actually invoke it.
 cuems ALL=(root) NOPASSWD: /sbin/poweroff
-cuems ALL=(root) NOPASSWD: /sbin/systemctl poweroff
-cuems ALL=(root) NOPASSWD: /sbin/systemctl poweroff --no-block
+# systemctl path is /usr/bin/systemctl on bookworm (usr-merge); /sbin/systemctl
+# does NOT exist. Used only if controller_poweroff_cmd is set to a systemctl
+# invocation (systemctl accepts --no-block, which the /sbin/poweroff applet rejects).
+cuems ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff
+cuems ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff --no-block

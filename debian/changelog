@@ -1,3 +1,14 @@
+cuems-common (1.3.0-8) unstable; urgency=medium
+
+  * sudoers/99-cuems-poweroff: fix the systemctl path /sbin/systemctl ->
+    /usr/bin/systemctl. /sbin/systemctl does not exist on bookworm (usr-merge),
+    so the two `cuems ... /sbin/systemctl poweroff[ --no-block]` entries never
+    matched and were dead. The working /sbin/poweroff entry (what the bridge
+    actually uses) was unaffected; this only matters if controller_poweroff_cmd
+    is set to a systemctl invocation.
+
+ -- Ion Reguera <ion@stagelab.coop>  Thu, 04 Jun 2026 13:41:10 +0200
+
 cuems-common (1.3.0-7) unstable; urgency=medium
 
   * sudoers: add 99-cuems-admin-poweroff granting cuems-admin passwordless
