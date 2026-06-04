@@ -1,3 +1,16 @@
+cuems-common (1.3.0-9) unstable; urgency=medium
+
+  * rtpmidid.service.d/cuems-node-group.conf: order rtpmidid after avahi-daemon
+    (Wants=+After=avahi-daemon.service) so its libavahi-client connects to a
+    ready daemon and publishes its _apple-midi services. On cold boot rtpmidid
+    was starting ~170ms before avahi-daemon, deferring its registration and
+    (pre rtpmidid 26.06~1stagelab1) never committing it -> controller invisible
+    over mDNS, nodes never discover its MTC export, nodes get no MTC. Pairs with
+    the rtpmidid announce_all()-on-S_RUNNING fix. Deliberately avoids
+    network-online.target (documented ordering-cycle trap above the new lines).
+
+ -- Ion Reguera <ion@stagelab.coop>  Thu, 04 Jun 2026 18:40:00 +0200
+
 cuems-common (1.3.0-8) unstable; urgency=medium
 
   * sudoers/99-cuems-poweroff: fix the systemctl path /sbin/systemctl ->
