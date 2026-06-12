@@ -1,3 +1,14 @@
+cuems-common (1.3.0-10) unstable; urgency=medium
+
+  * cuems-nodeconf.service: drop RemainAfterExit=yes. cuems-nodeconf is now a
+    long-running daemon (resident avahi discovery loop + interface-scoped alias
+    supervision), not a one-shot. With Type=notify, RemainAfterExit=yes would
+    leave the unit 'active (exited)' when the daemon dies, masking the failure
+    from dependents and from Restart= monitoring. Pairs with the cuems-nodeconf
+    Phase-1 re-enable.
+
+ -- Ion Reguera <ion@stagelab.coop>  Fri, 12 Jun 2026 13:10:00 +0200
+
 cuems-common (1.3.0-9) unstable; urgency=medium
 
   * rtpmidid.service.d/cuems-node-group.conf: order rtpmidid after avahi-daemon
