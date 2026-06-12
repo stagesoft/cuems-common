@@ -1,3 +1,14 @@
+cuems-common (1.3.0-11) unstable; urgency=medium
+
+  * Depend on libnss-mdns so every node can resolve `.local` names (notably
+    `controller.local`) via NSS. Its postinst patches /etc/nsswitch.conf with
+    the `mdns4_minimal [NOTFOUND=return]` hosts entry. Required by the engine's
+    Phase-2 controller late-binding (cuems-engine get_controller_ip resolves
+    controller.local first, falling back to the network_map <ip>). The rig
+    already had it installed; this guarantees it on fresh provisioning.
+
+ -- Ion Reguera <ion@stagelab.coop>  Fri, 12 Jun 2026 18:45:00 +0200
+
 cuems-common (1.3.0-10) unstable; urgency=medium
 
   * cuems-nodeconf.service: drop RemainAfterExit=yes. cuems-nodeconf is now a
