@@ -4,6 +4,12 @@
 %:
 	dh $@
 
+# The repo root ships a multi-package orchestration Makefile used for
+# release builds. dh_auto_build would pick it up as this package's own
+# build step and try to rebuild every CUEMS package — suppress that.
+# (Mirrors the same fix already present on the debian/bookworm branch.)
+override_dh_auto_build:
+
 override_dh_fixperms:
 	# Ensure all scripts in /usr/lib/cuems/bin/ are executable
 	dh_fixperms
@@ -15,4 +21,11 @@ override_dh_install:
 	# Ensure scripts are executable after installation
 	find debian/cuems-common/usr/lib/cuems/bin/ -type f -name "*.sh" -exec chmod +x {} \;
 	find debian/cuems-common/usr/lib/cuems/bin/ -type f -name "*.py" -exec chmod +x {} \;
+
+override_dh_installdeb:
+	dh_installdeb
+	# Remove xinitrc.cuems from conffiles - we want to always overwrite it
+	@if [ -f debian/cuems-common/DEBIAN/conffiles ]; then \
+		sed -i '/\/etc\/X11\/xinit\/xinitrc\.cuems/d' debian/cuems-common/DEBIAN/conffiles; \
+	fi
 

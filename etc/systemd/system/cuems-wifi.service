@@ -13,6 +13,14 @@ ExecCondition=/usr/lib/cuems/bin/check-ip.sh
 RemainAfterExit=yes
 ExecStart=/bin/true
 ExecStartPost=/usr/sbin/ip link set ethernet0 down
+# ExecStop fires only when the unit transitioned through active. If
+# ExecCondition (check-ip.sh) returned 1, the unit never entered active
+# and this never runs — which is what we want (ethernet0 was never
+# brought down, so no restore needed). systemd.service(5) semantics.
+# When this DOES fire, ethernet0 is still a bond0 slave: admin-up
+# (not re-enslave) is what we want — the bond driver re-evaluates via
+# MII at the next 100ms tick and promotes it back to active if carrier.
+ExecStop=/usr/sbin/ip link set ethernet0 up
 #ExecCondition=systemctl show cuems-nodeconf.service --property=ExecMainStatus
 
 [Install]

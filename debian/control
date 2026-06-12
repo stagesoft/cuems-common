@@ -9,17 +9,31 @@ Package: cuems-common
 Architecture: all
 Pre-Depends: adduser
 Depends: ${misc:Depends},
-         cuems-utils (>= 1.0.0),
+         cuems-utils (>= 0.1.0),
          systemd,
+         systemd-journal-remote (>= 247),
          python3,
          apache2,
+         libapache2-mod-dnssd,
          openssl,
+         openssh-server,
+         sudo,
          avahi-daemon,
+         avahi-autoipd,
          isc-dhcp-server,
          hostapd,
+         nftables,
          rsync,
+         ifenslave,
+         net-tools,
          iproute2,
+         ethtool,
+         chrony (>= 4.0),
+         edid-decode,
+         cpufrequtils,
+         ddcutil,
          zita-ajbridge
+Conflicts: network-manager
 Description: CUEMS common configuration and systemd services
  This package contains systemd service files, configuration files,
  and scripts required for CUEMS operation.
@@ -33,4 +47,6 @@ Description: CUEMS common configuration and systemd services
  This package installs Apache2 site configuration files and enables
  required Apache2 modules and sites. Module files are provided by their
  respective Debian packages (libapache2-mod-*).
-
+ .
+ This package conflicts with network-manager and, as the whole cuems ecosystem,
+ it is not intended to be used on desktop environments.

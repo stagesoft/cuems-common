@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# cuems-admin is the SSH target for the controller's cuems-power-bridge
+# (ssh_user=cuems-admin). Allow it passwordless poweroff so the unattended,
+# no-TTY SSH session can complete without a password prompt.
+#
+# Scoped to poweroff ONLY: cuems-admin's full sudo (50-cuems-admin) still
+# requires a password, so a compromised/forced-command-stripped bridge key
+# is bounded to poweroff + a non-root shell, never root. The bridge key is
+# further locked to this single command by a forced-command entry in
+# cuems-admin's ~/.ssh/authorized_keys.
+#
+# Shipped on EVERY CUEMS host by policy; harmless where unused. /sbin/poweroff
+# is the canonical symlink (a no-arg-spec sudoers command permits any args).
+cuems-admin ALL=(root) NOPASSWD: /sbin/poweroff

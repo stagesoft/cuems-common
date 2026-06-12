@@ -1,0 +1,71 @@
+# CUEMS firewall — opt-in nftables ruleset
+
+The cuems-common package ships an example nftables ruleset that fences the
+controller's WiFi AP (wifi0) away from cluster-internal services (NNG bus,
+OSC, rsync, journal-remote). Operators joining the AP can still reach the
+management UI (Apache 80/443) and SSH, but cannot poke at the cluster bus.
+
+It is **not enabled by default**: lockout risk from interface-name drift
+between deployments outweighs the autopilot value of pre-enabling.
+
+## When to enable
+
+On any controller that broadcasts the WiFi AP and where you want to keep
+operator laptops (or their guests) off the cluster bus.
+
+## How to enable
+
+```sh
+# Sanity-check the rules parse on this host
+sudo nft -c -f /usr/share/cuems/firewall/cuems-wifi-fence.nft
+
+# Drop into place
+sudo install -m 0644 \
+    /usr/share/cuems/firewall/cuems-wifi-fence.nft \
+    /etc/nftables.d/
+
+# Wire it into the main nftables config
+echo 'include "/etc/nftables.d/cuems-wifi-fence.nft"' \
+    | sudo tee -a /etc/nftables.conf
+
+# Activate
+sudo systemctl enable --now nftables.service
+
+# Verify the table is live
+sudo nft list table inet cuems_wifi_fence
+```
+
+## What the rules allow on wifi0
+
+| Protocol | Port(s) | Why                                      |
+|----------|---------|------------------------------------------|
+| TCP      | 22      | SSH (operator login with org SSH key)    |
+| TCP      | 80      | HTTP redirect to HTTPS                   |
+| TCP      | 443     | cuems-editor UI                          |
+| UDP      | 67-68   | DHCP for AP clients                      |
+| UDP      | 5353    | mDNS / avahi name resolution             |
+| ICMP/v6  | any     | Ping, neighbor discovery                 |
+
+Everything else on wifi0 is dropped. Cluster ethernet interfaces are
+untouched — they fall through to the kernel default (accept).
+
+## If your AP interface is not "wifi0"
+
+Edit the `iifname != "wifi0"` line in cuems-wifi-fence.nft to match the
+actual AP interface (`iw dev` or `nmcli device status` to confirm).
+
+## Rolling back
+
+```sh
+# Flush the table without disabling nftables wholesale
+sudo nft delete table inet cuems_wifi_fence
+
+# Permanent rollback
+sudo sed -i '/cuems-wifi-fence.nft/d' /etc/nftables.conf
+sudo rm /etc/nftables.d/cuems-wifi-fence.nft
+sudo systemctl reload nftables.service
+```
+
+If you lock yourself out: log in at the physical TTY console with the
+operator account, then run the rollback. Console TTY login is unaffected
+by SSH / nftables config.

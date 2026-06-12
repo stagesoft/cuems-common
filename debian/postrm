@@ -1,0 +1,15 @@
+#!/bin/bash
+set -e
+
+# CUEMS Common package post-removal script.
+#
+# On `apt purge cuems-common`, clean up files that postinst generates
+# but dpkg doesn't track (they're created by `install -m` inside
+# postinst, not declared in debian/install — dpkg's manifest doesn't
+# know about them).
+if [ "$1" = "purge" ]; then
+    rm -f /etc/chrony/conf.d/cuems.conf \
+          /etc/chrony/sources.d/cuems-master.sources
+fi
+
+exit 0

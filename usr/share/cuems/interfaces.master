@@ -19,11 +19,13 @@ iface bond0 inet dhcp
 
 allow-bond0 ethernet0
 iface ethernet0 inet manual
+	post-up /usr/sbin/ethtool -s ethernet0 wol g || true
 
 allow-bond0 wifi0
 iface wifi0 inet manual
 	bond-master bond0
-	bond-primary eth0
+	bond-primary ethernet0
 #	wpa-bridge bond0
 auto ethernet1
 iface ethernet1 inet ipv4ll
+	post-up /usr/sbin/ethtool -s ethernet1 wol g || true

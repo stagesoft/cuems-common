@@ -1,10 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+
 [Unit]
 Description=CUEMS Video Composer (multi-layer video compositor)
 Documentation=https://github.com/cuems/cuems-videocomposer
 PartOf=cuems-node.target
-# Start after display and GPU/DRI are available
-After=graphical.target
-Wants=graphical.target
+# No Wants/After=graphical.target: VC drives DRM/KMS directly. Adding
+# graphical.target closes a systemd ordering cycle
+#   cuems-node.target → cuems-videocomposer.service → graphical.target
+#     → multi-user.target → cuems-controller.target → cuems-node.target
+# that systemd breaks non-deterministically, occasionally killing this
+# unit at boot. graphical.target therefore stays FORBIDDEN here.
+# The DRM-master handoff wait (hold VC until the Plymouth splash quits and
+# releases DRM master) lives in the 40-wait-for-plymouth.conf drop-in, via
+# After=plymouth-quit-wait.service. That is SAFE: plymouth-quit-wait is ordered
+# Before=graphical.target (NOT Before=multi-user.target), so it sits parallel to
+# multi-user.target and OUTSIDE the loop above — see that drop-in for details.
 # Optional: wait for DRI device if udev tags it (dev-dri-card0.device)
 # After=dev-dri-card0.device
 

@@ -3,12 +3,16 @@ set -e
 
 # CUEMS Common package post-installation script
 
+# Published default credentials. See docs/default-credentials.md.
+# Single source of truth at code level; doc cites the same literals.
+DEFAULT_OPERATOR_PASSWORD="cuems-admin-default"
+
 # Ensure all scripts are executable
 if [ -d /usr/lib/cuems/bin ]; then
     chmod +x /usr/lib/cuems/bin/*.sh 2>/dev/null || true
     chmod +x /usr/lib/cuems/bin/*.py 2>/dev/null || true
     # Scripts without standard extensions
-    for f in cuems-extract-video-latency; do
+    for f in cuems-extract-video-latency cuems-log-collector-url cuems-write-rtpmidid-config cuems-write-hostapd-config cuems-arm-wol; do
         [ -f "/usr/lib/cuems/bin/$f" ] && chmod +x "/usr/lib/cuems/bin/$f"
     done
 
@@ -36,12 +40,116 @@ if [ ! -x /usr/lib/cuems/bin/python3 ]; then
     chmod +x /usr/lib/cuems/bin/python3
 fi
 
+# --- Retire the legacy per-conffile dpkg-divert + .cuems mechanism ----------
+# Older versions diverted a set of conffiles to <file>.dpkg-old and copied a
+# now-obsolete <file>.cuems over them. The .cuems sources are gone (so those
+# copies were dead) and several of the diverted files belong to OTHER packages
+# (systemd, isc-dhcp-server, isc-dhcp-client, avahi, xserver). Migrate cleanly.
+# (/etc/network/interfaces is handled in its own block below.)
+if command -v dpkg-divert >/dev/null 2>&1; then
+
+    # (1) Files cuems no longer overrides: drop the diversion and hand each back
+    #     to its owning package (restore the diverted original), then remove the
+    #     dead .cuems. CUEMS journald/rsyslog policy now ships as drop-ins
+    #     (journald.conf.d/cuems.conf, rsyslog.d/cuems.conf); the rest were never
+    #     actually customised, and hostapd is driven from /run/cuems/hostapd.conf.
+    for f in /etc/systemd/journald.conf /etc/rsyslog.conf \
+             /etc/dhcp/dhclient.conf /etc/default/isc-dhcp-server \
+             /etc/X11/Xwrapper.config /etc/hostapd/hostapd.conf ; do
+        if dpkg-divert --list "$f" 2>/dev/null | grep -q 'by cuems-common'; then
+            dpkg-divert --remove "$f" >/dev/null 2>&1 || true
+            [ -e "${f}.dpkg-old" ] && mv -f "${f}.dpkg-old" "$f"
+        fi
+        rm -f "${f}.cuems"
+    done
+
+    # (2) Files cuems must override but which have NO drop-in mechanism
+    #     (avahi-daemon.conf, dhcpd.conf): keep diverting the owning package's
+    #     file aside and install the cuems version from a /usr/share/cuems
+    #     template -- but only on FIRST install, so operator edits survive
+    #     upgrades. The avahi template leaves host-name unset (-> OS hostname).
+    for f in /etc/avahi/avahi-daemon.conf /etc/dhcp/dhcpd.conf ; do
+        tmpl="/usr/share/cuems/$(basename "$f")"
+        if ! dpkg-divert --list "$f" 2>/dev/null | grep -q 'by cuems-common'; then
+            dpkg-divert --add --rename --divert "${f}.dpkg-old" "$f" >/dev/null 2>&1 || true
+        fi
+        if [ "$1" = "configure" ] && [ -z "$2" ] && [ -f "$tmpl" ]; then
+            cp "$tmpl" "$f"
+        fi
+        rm -f "${f}.cuems"
+    done
+
+    # The journald/rsyslog drop-ins just changed effective config; apply them.
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl is-active systemd-journald.service >/dev/null 2>&1; then
+            systemctl restart systemd-journald.service >/dev/null 2>&1 || true
+        fi
+        if systemctl is-active rsyslog.service >/dev/null 2>&1; then
+            systemctl restart rsyslog.service >/dev/null 2>&1 || true
+        fi
+    fi
+fi
+
+# Network interfaces.
+# Not shipped as a conffile (host- and role-specific). On FIRST install only,
+# take over /etc/network/interfaces with a reachable baseline (the controller
+# "master" template: bond0 DHCP + ethernet1 link-local), preserving any
+# pre-existing file -- e.g. the debian-installer default -- at .dpkg-old. This
+# is necessary because a stock Debian interfaces references the original NIC
+# names, which cuems-common's .link files rename to ethernet0/ethernet1/wifi0,
+# so the stock file would go stale and drop the network. On UPGRADES interfaces
+# is never touched (operator / clone / role-template config wins). Role
+# specialisation (interfaces.node, static IPs, ...) is applied later by the
+# operator or a future cuems-write-network-interfaces helper / nodeconf.
+if [ "$1" = "configure" ] && [ -z "$2" ]; then
+    if [ -e /etc/network/interfaces ] && [ ! -e /etc/network/interfaces.dpkg-old ]; then
+        mv /etc/network/interfaces /etc/network/interfaces.dpkg-old
+    fi
+    cp /usr/share/cuems/interfaces.master /etc/network/interfaces
+fi
+# Retire the obsolete legacy mechanism: older versions diverted
+# /etc/network/interfaces to .dpkg-old and copied a now-unshipped
+# interfaces.cuems over it. Remove the diversion WITHOUT --rename (so the live
+# file is left exactly as-is) and clean up the stale diverted copy.
+if command -v dpkg-divert >/dev/null 2>&1 \
+   && dpkg-divert --list /etc/network/interfaces 2>/dev/null | grep -q .; then
+    dpkg-divert --remove /etc/network/interfaces >/dev/null 2>&1 || true
+    rm -f /etc/network/interfaces.dpkg-old
+fi
+
 # Reload systemd to pick up new unit files
 # Use deb-systemd-helper instead of direct systemctl call
 if command -v deb-systemd-helper >/dev/null 2>&1; then
     deb-systemd-helper update-state >/dev/null 2>&1 || true
 elif command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload
+fi
+
+# Migration: cuems-midiconnector.service moved from cuems-controller.target
+# to cuems-node.target. deb-systemd-helper recreates the symlink at the new
+# location but does not clean up the old one. Without this, the unit would
+# be wanted by BOTH targets on upgraded hosts and start twice.
+if [ -L /etc/systemd/system/cuems-controller.target.wants/cuems-midiconnector.service ]; then
+    rm -f /etc/systemd/system/cuems-controller.target.wants/cuems-midiconnector.service
+fi
+
+# Migration: prior cuems-common versions shipped an /lib/systemd/system/hostapd.service
+# that overrode the upstream hostapd package's unit file (dpkg file-conflict footgun
+# during downgrade). Now that hostapd plumbing lives entirely in drop-ins under
+# hostapd.service.d/, the symlink upstream's postinst writes to enable hostapd at
+# boot via multi-user.target.wants/ becomes stale: on nodes it triggers a "Dependency
+# failed for hostapd.service" at every boot (Requisite=cuems-wifi.service is never
+# satisfied off a controller).
+#
+# Always-run rm + reenable: idempotent. The rm covers any leftover multi-user
+# symlink. The reenable re-evaluates the current [Install] sections (upstream +
+# cuems-wifi-group.conf drop-in with its WantedBy= empty-clear) and writes
+# /etc/systemd/system/cuems-wifi.target.wants/hostapd.service. Controllers then
+# get hostapd via cuems-controller.target -> cuems-wifi.target; nodes never
+# activate cuems-wifi.target so hostapd stays inert (no boot-time failures).
+rm -f /etc/systemd/system/multi-user.target.wants/hostapd.service
+if command -v systemctl >/dev/null 2>&1 && [ -e /lib/systemd/system/hostapd.service ]; then
+    systemctl reenable hostapd.service 2>/dev/null || true
 fi
 
 # Enable linger for cuems user so systemd-logind does not clean up
@@ -78,6 +186,64 @@ fi
 
 if [ -f /etc/sudoers.d/99-cuems ]; then
     chmod 440 /etc/sudoers.d/99-cuems
+fi
+
+if [ -f /etc/sudoers.d/50-cuems-admin ]; then
+    chmod 440 /etc/sudoers.d/50-cuems-admin
+fi
+
+if [ -f /etc/sudoers.d/99-cuems-admin-poweroff ]; then
+    chmod 440 /etc/sudoers.d/99-cuems-admin-poweroff
+fi
+
+# =========================================================================
+# Operator account (cuems-admin) — first-install bootstrap
+# =========================================================================
+# First install: create user, set the published default password, plant the
+# org SSH key, lock root. Marker file gates the destructive bits so package
+# upgrades NEVER clobber operator-rotated passwords / added per-engineer
+# keys / a deliberately-unlocked root account.
+#
+# Lockout safety: sshd reload happens at the very end of postinst. If any
+# step here fails, postinst exits non-zero and the old (password-permitting)
+# sshd config stays active until the next install attempt.
+# =========================================================================
+ADMIN_MARKER=/var/lib/cuems/.admin-bootstrapped
+
+if ! getent passwd cuems-admin >/dev/null 2>&1; then
+    # Default adduser behaviour: per-user primary group (cuems-admin),
+    # then add to `sudo` as a supplementary group. Going via --ingroup
+    # sudo instead would leave no `cuems-admin` group for the .ssh
+    # ownership chmod below.
+    adduser --disabled-password --gecos "CUEMS Operator" cuems-admin >/dev/null
+    adduser cuems-admin sudo >/dev/null
+fi
+
+if [ ! -e "$ADMIN_MARKER" ]; then
+    # First-install only path. DO NOT repeat on upgrade.
+    echo "cuems-admin:${DEFAULT_OPERATOR_PASSWORD}" | chpasswd
+
+    install -d -m 0700 -o cuems-admin -g cuems-admin /home/cuems-admin/.ssh
+    if [ -f /etc/cuems/ssh/cuems-org.pub ]; then
+        install -m 0600 -o cuems-admin -g cuems-admin \
+            /etc/cuems/ssh/cuems-org.pub \
+            /home/cuems-admin/.ssh/authorized_keys
+    else
+        echo "WARNING: /etc/cuems/ssh/cuems-org.pub missing; cuems-admin has no SSH key" >&2
+    fi
+
+    # Root stays locked. sudo -i from cuems-admin is the escalation path.
+    passwd -l root >/dev/null 2>&1 || true
+
+    # Cloned-node SSH host-key rotation: cloned disk images carry the
+    # source host's keys; first SSH to a fresh clone otherwise trips a
+    # TOFU warning. First install only — preserves trusted fingerprints
+    # on subsequent upgrades.
+    rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
+    ssh-keygen -A >/dev/null 2>&1 || true
+
+    install -d -m 0755 /var/lib/cuems
+    touch "$ADMIN_MARKER"
 fi
 
 # Generate SSL certificates for Apache2 if they don't exist
@@ -192,6 +358,34 @@ if command -v a2dissite >/dev/null 2>&1 && command -v a2ensite >/dev/null 2>&1; 
     fi
 fi
 
+# Configure CPU governor to performance mode
+if [ ! -f /etc/default/cpufrequtils ] || ! grep -q 'GOVERNOR="performance"' /etc/default/cpufrequtils 2>/dev/null; then
+    echo 'GOVERNOR="performance"' >> /etc/default/cpufrequtils
+    echo "Configured CPU governor to performance mode"
+fi
+
+# Stop and disable unnecessary systemd services/timers for performance
+if command -v systemctl >/dev/null 2>&1; then
+    # Stop man-db.timer
+    if systemctl list-unit-files man-db.timer >/dev/null 2>&1; then
+        systemctl stop man-db.timer >/dev/null 2>&1 || true
+    fi
+    
+    # Disable apt-daily services and timers
+    for unit in apt-daily.service apt-daily.timer apt-daily-upgrade.timer apt-daily-upgrade.service; do
+        if systemctl list-unit-files "$unit" >/dev/null 2>&1; then
+            systemctl disable "$unit" >/dev/null 2>&1 || true
+        fi
+    done
+    
+    # Disable pppd-dns.service
+    if systemctl list-unit-files pppd-dns.service >/dev/null 2>&1; then
+        systemctl disable pppd-dns.service >/dev/null 2>&1 || true
+    fi
+    
+    echo "Disabled unnecessary systemd services/timers for performance"
+fi
+
 # =========================================================================
 # OLA daemon configuration
 # =========================================================================
@@ -245,6 +439,91 @@ fi
 # Ensure cuems-ola-profile script is executable
 if [ -f /usr/bin/cuems-ola-profile ]; then
     chmod +x /usr/bin/cuems-ola-profile
+fi
+
+# =========================================================================
+# CUEMS centralized journal log collection
+# =========================================================================
+# Master = systemd-journal-remote (collector), every slave = systemd-journal-upload.
+# Apply tmpfiles immediately so /var/log/journal/remote exists without a
+# reboot. Role-aware enable based on /etc/cuems/master.ip presence (managed
+# by cuems-nodeconf; currently operator-placed while nodeconf is disabled
+# cluster-wide). ConditionPathExists in the upload drop-in is belt-and-braces
+# so even a misconfigured enable on the controller is a no-op at runtime.
+# =========================================================================
+if command -v systemd-tmpfiles >/dev/null 2>&1; then
+    systemd-tmpfiles --create /usr/lib/tmpfiles.d/cuems-journal-remote.conf 2>/dev/null \
+        || systemd-tmpfiles --create /etc/tmpfiles.d/cuems-journal-remote.conf 2>/dev/null \
+        || true
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+    if [ -f /etc/cuems/master.ip ]; then
+        systemctl enable systemd-journal-remote.service 2>/dev/null || true
+    else
+        systemctl enable systemd-journal-upload.service 2>/dev/null || true
+    fi
+fi
+# CUEMS cluster time sync via chrony
+# =========================================================================
+# Role-aware NTP setup applied by /usr/lib/cuems/bin/cuems-write-chrony-source
+# (also runs as ExecStartPre on every chrony start). One helper, one source
+# of truth: detects role from /etc/cuems/master.ip on every invocation, so
+# role flips (slave -> master and back) propagate to chrony config on next
+# `systemctl restart chrony` without re-running postinst.
+#
+# Intentionally NO `systemctl restart chrony` here: a wall-clock disturbance
+# during a production show is worse than waiting for the next natural
+# restart to pick up config changes. Postinst only enables.
+# =========================================================================
+/usr/lib/cuems/bin/cuems-write-chrony-source 2>/dev/null || true
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable chrony.service 2>/dev/null || true
+fi
+
+# =========================================================================
+# CUEMS file deploy via rsync (controller-only)
+# =========================================================================
+# rsync.service is pulled by cuems-controller.target via Wants=, gated by
+# the drop-in's ConditionPathExists=/etc/cuems/master.ip so nodes skip it.
+# Intentionally NO `deb-systemd-helper enable rsync.service` — that would
+# create /etc/systemd/system/multi-user.target.wants/rsync.service and run
+# the daemon on every host at boot (Condition would no-op it, but the log
+# noise is misleading). The target's Wants= is the only activation path.
+#
+# On a host that is currently controller with the target active, start the
+# daemon now so node-engine deploys work without waiting for the next
+# target restart. Best-effort: failure must not abort postinst.
+# =========================================================================
+if command -v systemctl >/dev/null 2>&1; then
+    if [ -f /etc/cuems/master.ip ] && systemctl is-active --quiet cuems-controller.target 2>/dev/null; then
+        systemctl start rsync.service 2>/dev/null || true
+    fi
+fi
+
+# =========================================================================
+# Reload sshd LAST — after the org pubkey is in cuems-admin's authorized_keys.
+# Ordering matters: if sshd picks up `PasswordAuthentication no` before the
+# key is in place, remote installs over SSH self-strand the operator.
+# =========================================================================
+if command -v invoke-rc.d >/dev/null 2>&1; then
+    invoke-rc.d ssh reload >/dev/null 2>&1 || true
+elif command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet ssh.service 2>/dev/null; then
+    systemctl reload ssh.service >/dev/null 2>&1 || true
+fi
+
+# =========================================================================
+# Wake-on-LAN: enable + arm immediately so operators can wake the box
+# right after install without waiting for a reboot. The oneshot service
+# walks /sys/class/net and runs ethtool -s wol g on every physical
+# ethernet NIC that supports magic-packet wake. Idempotent.
+# =========================================================================
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl enable cuems-arm-wol.service 2>/dev/null || true
+    # Arm now (best-effort; ethtool may not be runnable inside a chroot/build).
+    /usr/lib/cuems/bin/cuems-arm-wol 2>/dev/null || true
 fi
 
 echo "CUEMS Common package installed successfully."

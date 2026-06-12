@@ -11,7 +11,10 @@ StartLimitIntervalSec=33
 # Runs as root: writes to /etc/network/interfaces, /etc/avahi/services/,
 # controls systemd services via DBus. Cannot be demoted to unprivileged user.
 Type=notify
-RemainAfterExit=yes
+# NB: no RemainAfterExit. nodeconf is now a long-running daemon (resident avahi
+# discovery loop + alias supervision). RemainAfterExit=yes would leave the unit
+# showing "active (exited)" if the process died, masking the failure from
+# dependents and from Restart= monitoring.
 NotifyAccess=main
 Restart=on-failure
 RestartSec=10

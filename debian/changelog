@@ -1,3 +1,138 @@
+cuems-common (1.3.0-9) unstable; urgency=medium
+
+  * rtpmidid.service.d/cuems-node-group.conf: order rtpmidid after avahi-daemon
+    (Wants=+After=avahi-daemon.service) so its libavahi-client connects to a
+    ready daemon and publishes its _apple-midi services. On cold boot rtpmidid
+    was starting ~170ms before avahi-daemon, deferring its registration and
+    (pre rtpmidid 26.06~1stagelab1) never committing it -> controller invisible
+    over mDNS, nodes never discover its MTC export, nodes get no MTC. Pairs with
+    the rtpmidid announce_all()-on-S_RUNNING fix. Deliberately avoids
+    network-online.target (documented ordering-cycle trap above the new lines).
+
+ -- Ion Reguera <ion@stagelab.coop>  Thu, 04 Jun 2026 18:40:00 +0200
+
+cuems-common (1.3.0-8) unstable; urgency=medium
+
+  * sudoers/99-cuems-poweroff: fix the systemctl path /sbin/systemctl ->
+    /usr/bin/systemctl. /sbin/systemctl does not exist on bookworm (usr-merge),
+    so the two `cuems ... /sbin/systemctl poweroff[ --no-block]` entries never
+    matched and were dead. The working /sbin/poweroff entry (what the bridge
+    actually uses) was unaffected; this only matters if controller_poweroff_cmd
+    is set to a systemctl invocation.
+
+ -- Ion Reguera <ion@stagelab.coop>  Thu, 04 Jun 2026 13:41:10 +0200
+
+cuems-common (1.3.0-7) unstable; urgency=medium
+
+  * sudoers: add 99-cuems-admin-poweroff granting cuems-admin passwordless
+    /sbin/poweroff. cuems-power-bridge now SSHes nodes as cuems-admin (which
+    has a login shell) instead of the nologin cuems service user; this lets
+    the unattended, no-TTY poweroff complete. Scoped to poweroff only — full
+    cuems-admin sudo still requires a password. New file (not an edit of
+    99-cuems-poweroff) to avoid a conffile prompt on upgrade. The bridge key
+    is additionally locked to this one command via a forced-command entry in
+    cuems-admin's authorized_keys (shipped by cuems-power-bridge deploy-keys).
+
+ -- Ion Reguera <ion@stagelab.coop>  Wed, 03 Jun 2026 19:11:53 +0200
+
+cuems-common (1.3.0-6) unstable; urgency=medium
+
+  * videocomposer: order VC after plymouth-quit-wait.service for the DRM-
+    master handoff (canonical [Unit] After=, replacing the runtime
+    ExecStartPre=plymouth --wait).
+  * jack-alsa-bridges: move StartLimit IntervalSec/Burst to [Unit] so
+    systemd honours them (they were silently ignored in [Service]).
+
+ -- Ion Reguera <ion@stagelab.coop>  Mon, 01 Jun 2026 21:25:32 +0200
+
+cuems-common (1.3.0-5) unstable; urgency=medium
+
+  * Retire the legacy per-conffile dpkg-divert + .cuems mechanism for eight
+    config files (it diverted several other packages' conffiles -- systemd,
+    isc-dhcp-server, isc-dhcp-client, avahi, xserver -- and the .cuems copy
+    sources are obsolete, so the copies were dead). postinst now migrates:
+    - journald/rsyslog policy moves to drop-ins (journald.conf.d/cuems.conf,
+      rsyslog.d/cuems.conf); their main conffiles are un-diverted and handed
+      back to systemd/rsyslog.
+    - dhclient.conf, isc-dhcp-server default, Xwrapper.config, hostapd.conf
+      (unused; cuems uses /run/cuems/hostapd.conf) are un-diverted + restored
+      to their owning package; cuems no longer ships them.
+    - avahi-daemon.conf + dhcpd.conf have no drop-in, so they stay a divert but
+      ship as /usr/share/cuems/ templates installed by postinst on FIRST
+      install only (operator edits survive upgrades). The avahi template no
+      longer hardcodes host-name -- avahi falls back to the OS hostname, fixing
+      the cloned-node mDNS collision.
+  * Stop shipping rsyslog.conf, avahi-daemon.conf, dhcpd.conf, hostapd.conf as
+    conffiles.
+
+ -- Ion Reguera <ion@stagelab.coop>  Mon, 01 Jun 2026 19:28:49 +0200
+
+cuems-common (1.3.0-4) unstable; urgency=medium
+
+  * Network interfaces: stop shipping /etc/network/interfaces as a conffile (it
+    is host- and role-specific) and replace the obsolete dpkg-divert +
+    interfaces.cuems mechanism. On FIRST install only, postinst takes over
+    /etc/network/interfaces with a reachable baseline
+    (/usr/share/cuems/interfaces.master), preserving any pre-existing file (e.g.
+    the debian-installer default) at .dpkg-old; on upgrades it is never touched
+    (operator / clone / role-template config wins). This is necessary because a
+    stock Debian interfaces names the original NICs, which our .link files
+    rename to ethernet0/ethernet1/wifi0 -- the stock file would otherwise go
+    stale and drop the network. Role templates (interfaces.master /
+    interfaces.node) still ship under /usr/share/cuems/. The old diversion is
+    removed cleanly (without --rename, leaving the live file as-is) and the
+    stale .dpkg-old dropped.
+
+ -- Ion Reguera <ion@stagelab.coop>  Mon, 01 Jun 2026 12:58:58 +0200
+
+cuems-common (1.3.0-3) unstable; urgency=medium
+
+  * rtpmidid: gate node startup on controller reachability via the
+    cuems-wait-controller ExecStartPre, fixing the cold-boot MTC zombie
+    where rtpmidid raced an unconfigured link-local route (control channel
+    up, no MTC data). No-op on controllers.
+  * videocomposer: wait for Plymouth to release DRM master before start,
+    fixing black panels (modeset "Permission denied") after boot.
+  * rtpmidid: set explicit port=5004 in the node [connect_to].
+  * Ship cuems-power-bridge poweroff sudoers; Shelly power-bridge support.
+  * network: persist Wake-on-LAN via post-up ethtool in interfaces.
+  * link files: correct 10-wifi0.link Path= to N97 default; document the
+    RTL8852BE driver gap on stock bookworm.
+  * Incorporate the debian/bookworm packaging line (merge): controller-engine
+    LD_LIBRARY_PATH for python_rtmidi's bundled libjack; CPU governor set to
+    performance + self-signed SSL cert provisioning in postinst; control
+    dependency refresh (add cpufrequtils, avahi-autoipd, libapache2-mod-dnssd,
+    ifenslave, net-tools; Conflicts network-manager; ddcutil promoted to
+    Depends); xinitrc.cuems conffile override. Built on the
+    debian/bookworm-pre_release_1 integration branch.
+
+ -- Ion Reguera <ion@stagelab.coop>  Mon, 01 Jun 2026 12:15:52 +0200
+
+cuems-common (1.3.0-2) unstable; urgency=medium
+
+  * Fix 10-ethernet0.link Path= to N97 default (pci-0000:01:00.0; was
+    pci-0000:03:00.0 which is the wifi slot on controller hardware).
+    Adds link-files.README documenting the hardware-mismatch hazard.
+
+ -- Ion Reguera <ion@stagelab.coop>  Wed, 20 May 2026 21:04:42 +0200
+
+cuems-common (1.3.0-1) unstable; urgency=medium
+
+  * Network logic fixes: check-ip.sh exit code, ExecStop teardown,
+    hostapd wifi0 bond detach, wifi-auto.sh dynamic-interface rewrite,
+    central /etc/cuems/ap.conf, WoL re-enabled on ethernet .link files
+    (regression fix).
+
+ -- Ion Reguera <ion@stagelab.coop>  Wed, 20 May 2026 20:50:00 +0200
+
+cuems-common (1.2.0-1) unstable; urgency=medium
+
+  * System hardening: pubkey-only sshd, cuems-admin operator account,
+    WPA2-protected AP, opt-in nftables WiFi fence, hostapd unit-override
+    removal.
+
+ -- Ion Reguera <ion@stagelab.coop>  Wed, 20 May 2026 19:36:05 +0200
+
 cuems-common (1.0.0-1) unstable; urgency=medium
 
   * Initial release

@@ -7,7 +7,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 # cuems-common
 
-**Current release: v1.0.0-1** — see [CHANGELOG.md](./CHANGELOG.md).
+**Current release: v1.3.0-10** — see [`debian/changelog`](./debian/changelog) for the authoritative Debian release history.
 
 **System-level Debian package delivering all shared configuration, systemd services, and operator tools for a CUEMS installation.**
 
@@ -34,6 +34,7 @@ It is composed of:
 
 ## Table of Contents
 
+- [Operator Quick Reference](#operator-quick-reference)
 - [Overview](#overview)
 - [Architecture](#architecture)
   - [systemd Targets and Role Model](#systemd-targets-and-role-model)
@@ -67,6 +68,29 @@ It is composed of:
   - [Target Badge Set](#target-badge-set)
 - [Copyright Notice](#copyright-notice)
 - [License](#license)
+
+---
+
+## Operator Quick Reference
+
+[↑ Back to Table of Contents](#table-of-contents)
+
+Start here for the day-to-day operator docs shipped with the package. (Some of the
+deeper reference sections below predate the 1.3.x feature set — the items here track
+the current node/controller tooling.)
+
+- **Default credentials (operator user, WiFi PSK, org SSH key):**
+  [`docs/default-credentials.md`](docs/default-credentials.md) — shipped as known
+  defaults on every fresh node and **must be rotated during deployment hardening**.
+- **Node identity model (uuid / role_id / alias / hostname):**
+  [`docs/node-identity-contract.md`](docs/node-identity-contract.md).
+- **WiFi-AP firewall fence (opt-in nftables):**
+  [`usr/share/doc/cuems-common/firewall.README`](usr/share/doc/cuems-common/firewall.README)
+  (`/usr/share/doc/cuems-common/firewall.README` on an installed host).
+- **OLA / DMX install procedure:** [`docs/ola-install.md`](docs/ola-install.md).
+- **Latency tuning:** [`docs/latency-tuning.md`](docs/latency-tuning.md).
+- **Cluster journal access:** `cuems-logs` — semantic node/level/component filters
+  over the merged cluster journal (run `cuems-logs --help`).
 
 ---
 

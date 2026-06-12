@@ -1,0 +1,40 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# Pick the rtpmidid INI matching this host's role and install it to the
+# runtime path consumed by rtpmidid.service (--ini=/run/cuems/rtpmidid.ini).
+# Invoked from rtpmidid.service ExecStartPre on every (re)start, so role
+# flips take effect at the next `systemctl restart rtpmidid.service`.
+#
+# Role detection follows the same convention as every other CUEMS
+# role-aware hook: presence of /etc/cuems/master.ip means this host is
+# the controller; absence means node.
+
+set -eu
+
+TEMPLATE_DIR=/usr/share/cuems/rtpmidid
+RUNTIME_DIR=/run/cuems
+TARGET="${RUNTIME_DIR}/rtpmidid.ini"
+MASTER_IP_FILE=/etc/cuems/master.ip
+
+if [ -f "${MASTER_IP_FILE}" ]; then
+    SRC="${TEMPLATE_DIR}/default.ini.controller"
+    ROLE=controller
+else
+    SRC="${TEMPLATE_DIR}/default.ini.node"
+    ROLE=node
+fi
+
+if [ ! -f "${SRC}" ]; then
+    echo "cuems-write-rtpmidid-config: missing template ${SRC}" >&2
+    exit 1
+fi
+
+mkdir -p "${RUNTIME_DIR}"
+# rtpmidid runs as user `rtpmidid`; world-readable is fine and matches the
+# upstream conffile mode. install(1) handles atomic replace.
+install -m 0644 "${SRC}" "${TARGET}"
+
+echo "cuems-write-rtpmidid-config: wrote ${TARGET} (role=${ROLE})"

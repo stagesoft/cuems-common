@@ -4,14 +4,50 @@
 # CUEMS binaries and scripts (must be executable)
 scripts/check-ip.sh usr/lib/cuems/bin/
 scripts/wifi-auto.sh usr/lib/cuems/bin/
+scripts/cuems-log-collector-url usr/lib/cuems/bin/
+scripts/cuems-write-chrony-source usr/lib/cuems/bin/
+scripts/cuems-arm-wol usr/lib/cuems/bin/
 usr/bin/cuems-healthcheck usr/bin/
 usr/lib/cuems/bin/cuems-extract-video-latency usr/lib/cuems/bin/
+usr/lib/cuems/bin/cuems-write-rtpmidid-config usr/lib/cuems/bin/
+usr/lib/cuems/bin/cuems-write-hostapd-config usr/lib/cuems/bin/
+usr/lib/cuems/bin/cuems-generate-display-conf usr/lib/cuems/bin/
+
+# Opt-in HDMI helpers (cuems-videocomposer pre/post-start drop-ins
+# ship as examples under /usr/share/; operator copies to /etc/ on
+# hosts that need them — see usr/share/doc/cuems-common/hdmi-helpers.README).
+usr/bin/cuems-i915-rebind.sh usr/bin/
+usr/bin/cuems-wake-monitors.sh usr/bin/
+usr/share/cuems/cuems-videocomposer/i915-rebind.conf.example usr/share/cuems/cuems-videocomposer/
+usr/share/cuems/cuems-videocomposer/wake-monitors.conf.example usr/share/cuems/cuems-videocomposer/
+usr/share/doc/cuems-common/hdmi-helpers.README usr/share/doc/cuems-common/
+
+# Opt-in WiFi-AP firewall fence (nftables). Not enabled by default —
+# see /usr/share/doc/cuems-common/firewall.README for the procedure.
+usr/share/cuems/firewall/cuems-wifi-fence.nft usr/share/cuems/firewall/
+usr/share/doc/cuems-common/firewall.README usr/share/doc/cuems-common/
+
+# Operator-facing default credentials disclosure. Referenced by
+# /etc/ssh/sshd_config.d/50-cuems.conf so a locked-out operator at
+# the TTY console can find the recovery account.
+docs/default-credentials.md usr/share/doc/cuems-common/
+usr/lib/cuems/bin/cuems-wait-controller usr/lib/cuems/bin/
+
+# rtpmidid role-aware INI templates (read by cuems-write-rtpmidid-config)
+usr/share/cuems/rtpmidid/default.ini.controller usr/share/cuems/rtpmidid/
+usr/share/cuems/rtpmidid/default.ini.node usr/share/cuems/rtpmidid/
+
+# hostapd template (read by cuems-write-hostapd-config). SSID and WPA
+# passphrase placeholders @@SSID@@ / @@WPA_PASSPHRASE@@ get substituted
+# at hostapd ExecStartPre time into /run/cuems/hostapd.conf.
+usr/share/cuems/hostapd/hostapd.conf.template usr/share/cuems/hostapd/
 
 # Python scripts (executable)
 usr/bin/cuems-config-node usr/bin/
 
 # System scripts
 usr/bin/cuems-hdmi-audio-map usr/bin/
+usr/bin/cuems-logs usr/bin/
 usr/bin/cuems-ola-profile usr/bin/
 usr/bin/cuems-stop usr/bin/
 
@@ -29,19 +65,30 @@ etc/systemd/system/cuems-node-engine.service lib/systemd/system/
 etc/systemd/system/cuems-node.target lib/systemd/system/
 etc/systemd/system/cuems-nodeconf.service lib/systemd/system/
 etc/systemd/system/cuems-wifi.service lib/systemd/system/
-etc/systemd/system/hostapd.service lib/systemd/system/
+# hostapd.service itself is owned by the upstream `hostapd` Debian package.
+# cuems-common adds cuems-wifi.target / cuems-wifi.service plumbing and the
+# /run/cuems/hostapd.conf redirect via drop-ins under hostapd.service.d/
+# only — never overriding the unit file (was a dpkg file-conflict footgun).
 etc/systemd/system/jack-alsa-bridges.service lib/systemd/system/
 etc/systemd/system/jackd-cuems.service lib/systemd/system/
+# Topology-independent WoL arm-er (alternative to per-host .link files which
+# pin Match=Path= to a specific PCI topology; ours don't match across the N97
+# cluster). Walks /sys/class/net and runs ethtool -s wol g on every physical
+# ethernet NIC that hardware-supports magic-packet wake.
+etc/systemd/system/cuems-arm-wol.service lib/systemd/system/
 etc/systemd/system/olad.service lib/systemd/system/
-etc/systemd/system/rsync@.service lib/systemd/system/
 etc/systemd/system/*.path lib/systemd/system/
-etc/systemd/system/*.socket lib/systemd/system/
 # Systemd drop-in directories (package-provided overrides)
 etc/systemd/system/avahi-daemon.d/* lib/systemd/system/avahi-daemon.service.d/
 etc/systemd/system/apache2.service.d/* lib/systemd/system/apache2.service.d/
 etc/systemd/system/hostapd.service.d/* lib/systemd/system/hostapd.service.d/
 etc/systemd/system/isc-dhcp-server.service.d/* lib/systemd/system/isc-dhcp-server.service.d/
 etc/systemd/system/rtpmidid.service.d/* lib/systemd/system/rtpmidid.service.d/
+etc/systemd/system/rsync.service.d/* lib/systemd/system/rsync.service.d/
+etc/systemd/system/systemd-journal-remote.service.d/* lib/systemd/system/systemd-journal-remote.service.d/
+etc/systemd/system/systemd-journal-upload.service.d/* lib/systemd/system/systemd-journal-upload.service.d/
+etc/systemd/system/cuems-videocomposer.service.d/* lib/systemd/system/cuems-videocomposer.service.d/
+etc/systemd/system/chrony.service.d/* lib/systemd/system/chrony.service.d/
 
 # Mask pipewire/wireplumber per-user units system-wide (all users).
 # Why: wireplumber competes with zita-j2a for hw:HID (USB audio), causing
@@ -59,21 +106,72 @@ etc/systemd/user/wireplumber.service etc/systemd/user/
 etc/profile.d/cuems.sh etc/profile.d/
 
 # Configuration files
-etc/avahi/avahi-daemon.conf etc/avahi/
-etc/network/interfaces etc/network/
+# avahi-daemon.conf and dhcpd.conf are NOT shipped as conffiles — they have no
+# drop-in mechanism and must override another package's single file, so they
+# ship as usr/share/cuems/ templates (via the glob below) that postinst installs
+# through a dpkg-divert. See debian/postinst.
+# NOTE: /etc/network/interfaces is intentionally NOT shipped — it is host- and
+# role-specific. Operators deploy from the role templates under usr/share/cuems/
+# (interfaces.master / interfaces.node; a future cuems-write-network-interfaces
+# helper will pick the right one per role). Shipping a single live conffile here
+# pushed the *master* variant onto nodes and risked clobbering host networking
+# on every upgrade.
 etc/rsyncd.conf etc/
 etc/rsyncd.secrets etc/
-etc/rsyslog.conf etc/
-etc/hostapd/hostapd.conf etc/hostapd/
-etc/dhcp/dhcpd.conf etc/dhcp/
+# hostapd.conf is NOT shipped: cuems drives hostapd from /run/cuems/hostapd.conf
+# (generated from usr/share/cuems/hostapd/hostapd.conf.template at ExecStartPre),
+# so the /etc/hostapd/hostapd.conf conffile was unused.
+# journald + rsyslog CUEMS policy ship as drop-ins (so we never divert
+# systemd's or rsyslog's own conffile): the stock files keep ownership and
+# these are pulled in via journald.conf.d/ and rsyslog.d/*.conf includes.
+etc/systemd/journald.conf.d/cuems.conf etc/systemd/journald.conf.d/
+etc/rsyslog.d/cuems.conf etc/rsyslog.d/
 etc/sudoers.d/99-cuems etc/sudoers.d/
+etc/sudoers.d/50-cuems-admin etc/sudoers.d/
+
+# SSH server hardening (drop-in; main /etc/ssh/sshd_config left untouched
+# so upstream conffile-prompt machinery handles any operator edits there)
+etc/ssh/sshd_config.d/50-cuems.conf etc/ssh/sshd_config.d/
+
+# Organization SSH public key — planted in cuems-admin's authorized_keys
+# on first install (see debian/postinst). Private half is held by Stagelab.
+etc/cuems/ssh/cuems-org.pub etc/cuems/ssh/
+etc/sudoers.d/99-cuems-poweroff etc/sudoers.d/
+etc/sudoers.d/99-cuems-admin-poweroff etc/sudoers.d/
 etc/sysctl.d/99-cuems-performance.conf etc/sysctl.d/
 etc/modules-load.d/cuems-midi.conf etc/modules-load.d/
+
+# systemd-udev .link files — rename Intel/Realtek NICs to stable
+# ethernet0 / ethernet1 / wifi0 (Path= matches the PCI slot, so
+# names survive USB MAC churn). Also enable WakeOnLan=magic on the
+# ethernet NICs so remote-wake survives clean reboots without depending
+# on NIC NVRAM persistence (which was the historical bug: an earlier
+# cuems-common upgrade overwrote these files without the directive and
+# WoL silently stopped persisting at OS level). udev's net_setup_link
+# builtin applies these on every interface bring-up regardless of
+# whether systemd-networkd itself is enabled.
+etc/systemd/network/10-ethernet0.link etc/systemd/network/
+etc/systemd/network/10-ethernet1.link etc/systemd/network/
+etc/systemd/network/10-wifi0.link etc/systemd/network/
+
+# Hardware-mismatch recovery guide for the .link files above. Operators
+# whose NICs sit at different PCI paths than the N97 defaults MUST edit
+# /etc/systemd/network/10-*.link to match — and pick "keep my version"
+# on dpkg conffile prompts during upgrades.
+usr/share/doc/cuems-common/link-files.README usr/share/doc/cuems-common/
 etc/tmpfiles.d/jack-cuems.conf etc/tmpfiles.d/
+etc/tmpfiles.d/cuems-journal-remote.conf etc/tmpfiles.d/
 etc/logrotate.d/cuems etc/logrotate.d/
 etc/cuems/network_map.xml etc/cuems/
 etc/cuems/network_map.xsd etc/cuems/
+# AP-network constants — single source of truth, sourced by check-ip.sh.
+# /etc/dhcp/dhcpd.conf cross-references it via header comment.
+etc/cuems/ap.conf etc/cuems/
 etc/cuems/videocomposer-flags.env.example etc/cuems/
+
+# Multi-cluster identity example (not installed to /etc/cuems/ by default;
+# operator copies it manually when multi-cluster deployment is needed).
+etc/cuems/cluster.conf.example usr/share/doc/cuems-common/
 
 # Shared data files
 usr/share/cuems/* usr/share/cuems/
