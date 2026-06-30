@@ -9,7 +9,13 @@ Requires=avahi-daemon.service jackd-cuems.service jack-alsa-bridges.service
 # After cuems-videocomposer.service so /run/cuems/display.conf (written by
 # its ExecStartPre cuems-generate-display-conf) is present when the engine
 # reads it in NodeEngine.set_video_outputs.
-After=network-online.target avahi-daemon.service jackd-cuems.service jack-alsa-bridges.service cuems-videocomposer.service
+# After olad.service so a controller's native OLA daemon owns :9010 before
+# node-engine spawns cuems-dmxplayer. Otherwise the player loses the cold-boot
+# race and spawns a rogue default-config olad that squats :9010, making the
+# native olad.service fail to bind and breaking DMX (the Eurolite MK2 never
+# registers). Pure ordering (not in Requires/Wants): a no-op on nodes where
+# olad isn't enabled, the wait-for-olad where it is (controllers).
+After=network-online.target avahi-daemon.service jackd-cuems.service jack-alsa-bridges.service cuems-videocomposer.service olad.service
 Wants=cuems-videocomposer.service
 StartLimitBurst=5
 StartLimitIntervalSec=33
