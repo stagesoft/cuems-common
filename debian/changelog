@@ -1,3 +1,21 @@
+cuems-common (1.3.0-12) unstable; urgency=medium
+
+  * cuems-node-engine.service: order After=olad.service. On a controller
+    (which runs both olad.service and node-engine, and node-engine spawns
+    cuems-dmxplayer) there was no ordering between them, so at cold boot the
+    player could start before olad.service bound 127.0.0.1:9010 and spawn a
+    rogue default-config olad that squats the port. olad.service then failed
+    with 'Address already in use', the Eurolite MK2 never registered, and DMX
+    stayed dead until manual recovery. Pure ordering (not Requires/Wants): a
+    no-op on nodes where olad isn't enabled, a wait-for-olad on controllers.
+  * cuems-ola-profile: add eurolite-mk2 profile. Eurolite USB-DMX512 PRO MK2
+    presents as a stock FTDI FT232R (0403:6001) and is claimed by the usbdmx
+    EurolitePro factory. The profile enables usbdmx, auto-detects the connected
+    FT232R serial from sysfs and pins eurolite_mk2_serial, and disables the
+    conflicting ftdidmx/usbserial/stageprofi plugins.
+
+ -- Ion Reguera <ion@stagelab.coop>  Wed, 01 Jul 2026 17:45:00 +0200
+
 cuems-common (1.3.0-11) unstable; urgency=medium
 
   * Depend on libnss-mdns so every node can resolve `.local` names (notably
