@@ -2,7 +2,14 @@
 Description=cuems-editor
 PartOf=cuems-controller.target
 After=cuems-controller-engine.service apache2.service
-Requires=cuems-controller-engine.service apache2.service
+# Wants (not Requires): the editor must NOT be torn down when the engine is
+# stopped/restarted. It talks to the engine over /tmp/editor.ipc, but with
+# Restart=always + StartLimitIntervalSec=0 below it self-heals and reconnects
+# once the engine is back, instead of being killed and left in `failed`.
+Wants=cuems-controller-engine.service apache2.service
+# Never give up restarting: a prolonged engine-down window must not trip the
+# default start-rate limit (5 starts / 10s) and leave the WS server dead.
+StartLimitIntervalSec=0
 
 [Service]
 User=cuems
