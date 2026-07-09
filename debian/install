@@ -168,6 +168,7 @@ etc/cuems/network_map.xsd etc/cuems/
 # /etc/dhcp/dhcpd.conf cross-references it via header comment.
 etc/cuems/ap.conf etc/cuems/
 etc/cuems/videocomposer-flags.env.example etc/cuems/
+etc/cuems/gradient-motiond.env.example etc/cuems/
 
 # Multi-cluster identity example (not installed to /etc/cuems/ by default;
 # operator copies it manually when multi-cluster deployment is needed).
