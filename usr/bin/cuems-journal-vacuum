@@ -1,0 +1,57 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# cuems-journal-vacuum — prune the journals collected from cluster nodes.
+#
+# systemd-journal-remote (252, Debian bookworm) has NO retention setting:
+# journal-remote.conf accepts only Seal=, SplitMode= and the TLS options —
+# there is no MaxUse=/MaxFiles=/KeepFree=, and no --max-use flag. Journals
+# uploaded by the nodes therefore grow until /var fills up. Two failure
+# modes were observed on a controller left running for ~3 months:
+#
+#   * steady growth        — ~190 archived files, 20 GB total
+#   * rotation storms      — 261 *.journal~ files created in minutes when
+#                            the collector repeatedly hit "Journal header
+#                            limits reached or header out-of-date"
+#
+# Neither is self-limiting, so prune on a timer. The LOCAL journal is not
+# touched here: journald enforces SystemMaxUse= from
+# /etc/systemd/journald.conf.d/cuems.conf continuously, which is strictly
+# better than a periodic sweep.
+#
+# Limits are overridable without editing this script:
+#   systemctl edit cuems-journal-vacuum.service
+#   [Service]
+#   Environment=CUEMS_JOURNAL_REMOTE_MAX_SIZE=16G
+
+set -euo pipefail
+
+REMOTE_DIR="${CUEMS_JOURNAL_REMOTE_DIR:-/var/log/journal/remote}"
+MAX_SIZE="${CUEMS_JOURNAL_REMOTE_MAX_SIZE:-8G}"
+MAX_AGE="${CUEMS_JOURNAL_REMOTE_MAX_AGE:-30d}"
+
+log() { echo "cuems-journal-vacuum: $*"; }
+
+# Nodes have no collected-journal directory; this unit is controller-only
+# but exiting cleanly keeps a misfiled enablement harmless.
+if [[ ! -d "$REMOTE_DIR" ]]; then
+    log "$REMOTE_DIR does not exist — nothing to prune (not a controller?)"
+    exit 0
+fi
+
+before="$(du -sh "$REMOTE_DIR" 2>/dev/null | cut -f1)"
+files_before="$(find "$REMOTE_DIR" -maxdepth 1 -name '*.journal*' 2>/dev/null | wc -l)"
+
+# --vacuum-size and --vacuum-time are applied in sequence by journalctl, and
+# both consider corrupt/unclean *.journal~ files as well as *.journal
+# archives. The file currently being written is never removed.
+log "pruning $REMOTE_DIR (max-size=$MAX_SIZE max-age=$MAX_AGE, was $before in $files_before files)"
+journalctl --directory="$REMOTE_DIR" \
+    --vacuum-size="$MAX_SIZE" \
+    --vacuum-time="$MAX_AGE"
+
+after="$(du -sh "$REMOTE_DIR" 2>/dev/null | cut -f1)"
+files_after="$(find "$REMOTE_DIR" -maxdepth 1 -name '*.journal*' 2>/dev/null | wc -l)"
+log "done: $before -> $after ($files_before -> $files_after files)"

@@ -47,6 +47,7 @@ usr/bin/cuems-config-node usr/bin/
 
 # System scripts
 usr/bin/cuems-hdmi-audio-map usr/bin/
+usr/bin/cuems-journal-vacuum usr/bin/
 usr/bin/cuems-logs usr/bin/
 usr/bin/cuems-ola-profile usr/bin/
 usr/bin/cuems-stop usr/bin/
@@ -77,7 +78,12 @@ etc/systemd/system/jackd-cuems.service lib/systemd/system/
 # ethernet NIC that hardware-supports magic-packet wake.
 etc/systemd/system/cuems-arm-wol.service lib/systemd/system/
 etc/systemd/system/olad.service lib/systemd/system/
+# Retention for the journals uploaded by the nodes. systemd-journal-remote
+# has no MaxUse=/MaxFiles= of its own on systemd 252, so a timer is the only
+# bound — see the comment in systemd-journal-remote.service.d/.
+etc/systemd/system/cuems-journal-vacuum.service lib/systemd/system/
 etc/systemd/system/*.path lib/systemd/system/
+etc/systemd/system/*.timer lib/systemd/system/
 # Systemd drop-in directories (package-provided overrides)
 etc/systemd/system/avahi-daemon.d/* lib/systemd/system/avahi-daemon.service.d/
 etc/systemd/system/apache2.service.d/* lib/systemd/system/apache2.service.d/

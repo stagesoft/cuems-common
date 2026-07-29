@@ -1,0 +1,18 @@
+[Unit]
+Description=Daily prune of journals collected from CUEMS cluster nodes
+Documentation=man:systemd-journal-remote(8)
+PartOf=cuems-controller.target
+
+[Timer]
+# Daily, well away from show hours, with jitter so a rack of controllers
+# does not all churn /var at the same instant.
+OnCalendar=*-*-* 05:30:00
+RandomizedDelaySec=30m
+# A controller powered off overnight still gets pruned on next boot.
+Persistent=true
+
+[Install]
+# Controller-scoped rather than timers.target: only a controller collects
+# journals from nodes. cuems-journal-vacuum exits cleanly on a host with no
+# /var/log/journal/remote, so a misfiled enablement is harmless either way.
+WantedBy=cuems-controller.target

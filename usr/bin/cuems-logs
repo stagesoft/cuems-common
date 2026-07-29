@@ -204,10 +204,37 @@ PY
 # --- Early-exit subcommands --------------------------------------------
 
 list_nodes() {
-    echo "## Hostnames seen in the journal (last 24h):"
-    sudo journalctl --merge --output=cat --output-fields=_HOSTNAME \
-        --since "24 hours ago" --no-pager 2>/dev/null \
-        | sort -u | sed 's/^/  /' || true
+    echo "## Hostnames in the journal (most recent entry per host):"
+    # Enumerating hosts by streaming every entry of a 24h window through
+    # `sort -u` is O(entries in window). On a controller holding a few GB of
+    # journals collected from nodes that ran for minutes and, before the
+    # journals were pruned, over two — which reads as "cuems-logs is broken"
+    # rather than "still working". --field consults the journal's
+    # unique-value index instead and returns in well under a second.
+    #
+    # The trade-off is that --field ignores --since and so reports every
+    # host the journal has ever seen, including decommissioned ones. The
+    # per-host last-entry lookup below restores the "who is actually still
+    # logging" signal that the time window used to carry, and each of those
+    # is a cheap tail seek.
+    #
+    # stderr is deliberately NOT swallowed: a journalctl failure would
+    # otherwise be indistinguishable from "no nodes logged anything".
+    local hosts=()
+    mapfile -t hosts < <(sudo journalctl --merge --field _HOSTNAME | sed '/^$/d' | sort -u)
+    if [[ ${#hosts[@]} -eq 0 ]]; then
+        echo "  (no _HOSTNAME values in the journal)"
+    else
+        local h last width=0
+        for h in "${hosts[@]}"; do
+            [[ ${#h} -gt $width ]] && width=${#h}
+        done
+        for h in "${hosts[@]}"; do
+            last="$(sudo journalctl --merge "_HOSTNAME=$h" -n 1 --no-pager -o short-iso 2>/dev/null \
+                    | awk 'NF {print $1}' | tail -1)"
+            printf "  %-${width}s  last entry: %s\n" "$h" "${last:-<none>}"
+        done
+    fi
     echo
     if [[ -f "$NETWORK_MAP" ]]; then
         echo "## Nodes in $NETWORK_MAP:"
@@ -408,5 +435,93 @@ fi
 # Compose final argv.
 MERGE=(--merge)
 $merge_disabled && MERGE=()
+
+# --- Unit-glob expansion (journalctl --merge --follow workaround) --------
+#
+# On systemd 252 (Debian bookworm) `journalctl --merge --follow -u '<glob>'`
+# silently yields ZERO entries. Every pair works — glob+merge (historical),
+# glob+follow (single journal), merge+follow (literal unit names) — only the
+# triple fails, and a single glob anywhere poisons the whole match set, so
+# adding literal -u names alongside it does not help. The no-argument
+# cuems-logs invocation is exactly that triple (--merge --follow with
+# -u 'cuems-*'), which made plain `cuems-logs` print nothing at all.
+#
+# Workaround: resolve globs to literal unit names before handing off.
+# journalctl ignores -u values that have no entries, so an over-broad
+# expansion is harmless.
+
+units_have_glob() {
+    local i pattern
+    for ((i = 0; i < ${#UNITS[@]}; i++)); do
+        [[ "${UNITS[i]}" == "-u" ]] || continue
+        pattern="${UNITS[i+1]:-}"
+        if [[ "$pattern" == *"*"* || "$pattern" == *"?"* || "$pattern" == *"["* ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Candidate unit names, most authoritative first:
+#   1. the local systemd unit table — instant, and complete for this host;
+#      cuems-common installs the same unit set on controller and nodes.
+#   2. a best-effort sweep of the merged journal, which also catches units
+#      that only ever ran on a remote node (e.g. cuems-thermalmon on a node
+#      whose package is not installed on the controller). Time-boxed: this
+#      call is O(number of journal files), so it is slow on a host whose
+#      /var/log/journal has accumulated stale files, and is simply skipped
+#      when it overruns.
+known_units() {
+    systemctl list-unit-files --no-legend --no-pager 2>/dev/null | awk '{print $1}'
+    systemctl list-units --all --plain --no-legend --no-pager 2>/dev/null | awk '{print $1}'
+    timeout 3 journalctl "${MERGE[@]}" --field _SYSTEMD_UNIT 2>/dev/null || true
+}
+
+expand_unit_globs() {
+    local -a known=() expanded=()
+    local i pattern u matched
+
+    mapfile -t known < <(known_units | sed '/^$/d' | sort -u)
+    # Nothing to match against: leave UNITS untouched.
+    [[ ${#known[@]} -gt 0 ]] || return 0
+
+    for ((i = 0; i < ${#UNITS[@]}; i++)); do
+        if [[ "${UNITS[i]}" != "-u" ]]; then
+            expanded+=("${UNITS[i]}")
+            continue
+        fi
+        pattern="${UNITS[i+1]:-}"
+        i=$((i + 1))
+        if ! [[ "$pattern" == *"*"* || "$pattern" == *"?"* || "$pattern" == *"["* ]]; then
+            expanded+=(-u "$pattern")
+            continue
+        fi
+        matched=false
+        for u in "${known[@]}"; do
+            # Match with and without the implicit .service suffix, so both
+            # 'cuems-*' and 'cuems-*.service' resolve.
+            # shellcheck disable=SC2053  # RHS is an intentional glob
+            if [[ "$u" == $pattern || "${u%.service}" == $pattern ]]; then
+                expanded+=(-u "$u")
+                matched=true
+            fi
+        done
+        # No match: keep the glob rather than silently dropping the filter.
+        $matched || expanded+=(-u "$pattern")
+    done
+    UNITS=("${expanded[@]}")
+}
+
+following=false
+for arg in "${JOURNAL_ARGS[@]}"; do
+    if [[ "$arg" == "--follow" || "$arg" == "-f" ]]; then
+        following=true
+        break
+    fi
+done
+
+if $following && [[ ${#MERGE[@]} -gt 0 ]] && units_have_glob; then
+    expand_unit_globs
+fi
 
 exec sudo journalctl "${MERGE[@]}" -o short-iso "${UNITS[@]}" "${JOURNAL_ARGS[@]}"

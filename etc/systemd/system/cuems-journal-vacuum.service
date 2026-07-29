@@ -1,0 +1,29 @@
+[Unit]
+Description=Prune journals collected from CUEMS cluster nodes
+Documentation=man:systemd-journal-remote(8) man:journalctl(1)
+After=systemd-journal-remote.service
+
+# No [Install] section on purpose: the schedule belongs to
+# cuems-journal-vacuum.timer, which is what gets enabled. Run a prune by
+# hand with `systemctl start cuems-journal-vacuum.service`.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/cuems-journal-vacuum
+StandardOutput=journal
+StandardError=journal
+
+# Retention for /var/log/journal/remote/. systemd-journal-remote has no
+# equivalent of journald's SystemMaxUse=, so this is the only bound on the
+# journals uploaded by the nodes. Override per site with
+# `systemctl edit cuems-journal-vacuum.service`.
+Environment=CUEMS_JOURNAL_REMOTE_MAX_SIZE=8G
+Environment=CUEMS_JOURNAL_REMOTE_MAX_AGE=30d
+
+# Vacuuming only reads and unlinks journal files.
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/log/journal/remote
+PrivateDevices=yes
+NoNewPrivileges=yes
+RestrictRealtime=yes
