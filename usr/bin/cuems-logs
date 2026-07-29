@@ -436,19 +436,25 @@ fi
 MERGE=(--merge)
 $merge_disabled && MERGE=()
 
-# --- Unit-glob expansion (journalctl --merge --follow workaround) --------
+# --- Unit-glob expansion (journalctl --merge glob workarounds) -----------
 #
-# On systemd 252 (Debian bookworm) `journalctl --merge --follow -u '<glob>'`
-# silently yields ZERO entries. Every pair works — glob+merge (historical),
-# glob+follow (single journal), merge+follow (literal unit names) — only the
-# triple fails, and a single glob anywhere poisons the whole match set, so
-# adding literal -u names alongside it does not help. The no-argument
-# cuems-logs invocation is exactly that triple (--merge --follow with
-# -u 'cuems-*'), which made plain `cuems-logs` print nothing at all.
+# Two independent systemd 252 (Debian bookworm) problems, one fix:
 #
-# Workaround: resolve globs to literal unit names before handing off.
-# journalctl ignores -u values that have no entries, so an over-broad
-# expansion is harmless.
+# 1. `journalctl --merge --follow -u '<glob>'` silently yields ZERO
+#    entries. Every pair works — glob+merge (historical), glob+follow
+#    (single journal), merge+follow (literal unit names) — only the triple
+#    fails, and a single glob anywhere poisons the whole match set. The
+#    no-argument cuems-logs invocation is exactly that triple, which made
+#    plain `cuems-logs` print nothing at all.
+# 2. `journalctl --merge -p N -u '<glob>' ...` grinds: measured 34.5s vs
+#    1.2s for the IDENTICAL query with the glob pre-expanded to literal
+#    unit names (9 results either way). The glob defeats journalctl's
+#    match indexing once a priority filter joins a merged query — which is
+#    exactly what `cuems-logs -e` composes, so it looked hung.
+#
+# Workaround for both: resolve globs to literal unit names before handing
+# off, on EVERY merged query (not just follow mode). journalctl ignores -u
+# values that have no entries, so an over-broad expansion is harmless.
 
 units_have_glob() {
     local i pattern
@@ -520,7 +526,9 @@ for arg in "${JOURNAL_ARGS[@]}"; do
     fi
 done
 
-if $following && [[ ${#MERGE[@]} -gt 0 ]] && units_have_glob; then
+# Expand on every merged query: follow mode returns nothing with a glob,
+# and priority-filtered history grinds ~30x slower (see comment above).
+if [[ ${#MERGE[@]} -gt 0 ]] && units_have_glob; then
     expand_unit_globs
 fi
 

@@ -1,3 +1,12 @@
+cuems-common (1.3.0-14) unstable; urgency=medium
+
+  * cuems-logs: expand unit globs on ALL merged queries, not only follow
+    mode. journalctl --merge -p N -u '<glob>' defeats match indexing on
+    systemd 252 — the identical -e query measured 34.5s with the glob vs
+    1.2s expanded (9 results either way) — so cuems-logs -e looked hung.
+
+ -- Ion Reguera <ion@stagelab.coop>  Wed, 29 Jul 2026 20:15:01 +0200
+
 cuems-common (1.3.0-13) unstable; urgency=medium
 
   * cuems-logs: fix silent-empty follow mode. `journalctl --merge --follow
