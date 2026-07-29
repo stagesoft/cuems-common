@@ -74,6 +74,97 @@ output selection exactly as it confused X11/xrandr. Fix that at the
 kernel/GRUB layer first; don't try to work around it in compositor or
 browser config.
 
+## Firefox policy management (`policies.json`)
+
+Lives at `/etc/firefox-esr/policies/policies.json`. Confirmed identical
+content on both `.253`/`.254` as of this writing:
+
+```json
+{
+  "policies": {
+    "Homepage": { "URL": "https://museullivia.dseny.es/", "Locked": true },
+    "NewTabPage": false,
+    "DisableAppUpdate": true,
+    "DisableFeedbackCommands": true,
+    "DNSOverHTTPS": { "Enabled": false }
+  }
+}
+```
+
+Two genuinely different enforcement mechanisms live inside this one file —
+don't confuse them:
+
+- **Dedicated policies** — `Homepage`, `SanitizeOnShutdown`,
+  `DisableAppUpdate`, `NewTabPage`, `DisableFeedbackCommands`,
+  `DNSOverHTTPS`, etc. Each is its own first-class, fully-supported
+  top-level key. No allow-list restriction applies to these.
+- **The generic `Preferences` block** — a **curated allow-list only**, not
+  a passthrough to arbitrary `about:config`. Confirmed-allowed prefixes
+  (checked against Mozilla's own reference this session):
+  `app.update.*`, `signon.*`, `spellchecker.*`, `sidebar.*`,
+  `general.smoothScroll`, `browser.cache.disk.parent_directory`, several
+  fingerprinting-related `privacy.*`/`security.*` prefs, and a handful of
+  others (list changes across Firefox versions, some entries are
+  version-gated — re-check
+  [Mozilla's `preferences` policy reference](https://firefox-admin-docs.mozilla.org/reference/policies/preferences/)
+  rather than trusting this list to stay current). **Anything not on that
+  list is silently ignored, not rejected or errored** — the policy applies
+  cleanly with no warning and simply does nothing for that key, which gives
+  false confidence unless you check.
+
+  Confirmed **not** on the allow-list this session, so these are
+  ineffective if placed under `Preferences` — use a dedicated policy or a
+  different mechanism instead:
+  - Anything touch/APZ/zoom/pan/gesture-related (`apz.*`,
+    `dom.w3c_touch_events.*`) — see Background section above; this is why
+    Firefox touch/momentum-scroll behavior can't be tuned via policy at
+    all.
+  - `privacy.sanitize.sanitizeOnShutdown`, `privacy.clearOnShutdown.cache`,
+    `privacy.clearOnShutdown_v2.cache`, `browser.cache.disk.enable` — use
+    the dedicated `SanitizeOnShutdown` policy for this instead (below).
+
+### Preserving cache/history (manual clearing only)
+
+Goal: nothing auto-clears cache or history on shutdown; an operator clears
+it by hand when actually needed (e.g. forcing a fresh asset fetch after a
+site deploy). Use the dedicated `SanitizeOnShutdown` policy, not
+`Preferences` — none of the `privacy.clearOnShutdown*` prefs above are
+enforceable through `Preferences` anyway.
+
+Mozilla's documented behavior for this policy in object form: **any
+omitted category defaults to `false`** (don't clear), not "unmanaged" —
+so `{"Cache": false, "Locked": true}` alone already suppresses every
+category, not just cache. Still, spell every category out explicitly
+rather than rely on that implicit-default rule staying true across
+Firefox versions:
+
+```json
+{
+  "policies": {
+    "SanitizeOnShutdown": {
+      "Cache": false,
+      "Cookies": false,
+      "Downloads": false,
+      "FormData": false,
+      "History": false,
+      "Sessions": false,
+      "SiteSettings": false,
+      "OfflineApps": false,
+      "Locked": true
+    }
+  }
+}
+```
+
+Merge this block alongside the existing `Homepage`/`DisableAppUpdate`/etc.
+keys in the same `policies.json` — don't replace the file, add to it.
+
+**Status: proposed, not yet applied to `.253`/`.254`** — remote access to
+both hosts was unavailable at the time this was written up. Deploy and then
+verify via `about:preferences#privacy` (the "Clear history when Firefox
+closes" section should show cache/history/etc. all unchecked and
+greyed-out/locked) before considering this done.
+
 ## Operational baseline tooling
 
 Install on every touch kiosk (both X11 and Wayland/cage builds), not just when
