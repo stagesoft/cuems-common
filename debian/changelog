@@ -1,3 +1,35 @@
+cuems-common (1.3.0-13) unstable; urgency=medium
+
+  * cuems-logs: fix silent-empty follow mode. `journalctl --merge --follow
+    -u '<glob>'` yields ZERO entries on systemd 252 (each pair of those
+    options works; only the triple fails, and one glob poisons the whole
+    match set), and the no-argument cuems-logs invocation is exactly that
+    triple — so plain `cuems-logs` printed nothing while the cluster logged
+    normally. Globs are now resolved to literal unit names (local systemd
+    unit table + a time-boxed sweep of the merged journal) before handing
+    off to journalctl. Verified on the test2 controller: 0 -> 36 lines,
+    with -c and historical queries unchanged.
+  * cuems-logs: make --list-nodes finish. Enumerating hosts by streaming a
+    24h window through `sort -u` is O(entries) and ran for minutes on a
+    controller holding a few GB of collected node journals — read as "the
+    tool is broken". Now uses the journal's unique-value index
+    (`--field _HOSTNAME`) plus a per-host last-entry lookup (12.7s -> 1.5s
+    here), and stderr is no longer sent to /dev/null, so a real journalctl
+    failure is visible instead of masquerading as "no nodes".
+  * Journal retention, bounded from two sides. A controller left running ~3
+    months filled /var to 83%: 20 GB in /var/log/journal/remote (190
+    archived journals + 261 corrupt .journal~ from rotation storms) on top
+    of a 6 GB local journal. systemd-journal-remote 252 cannot express a
+    limit at all (journal-remote.conf accepts only Seal=, SplitMode= and
+    TLS options), so: journald.conf.d/cuems.conf now caps the LOCAL journal
+    (SystemMaxUse=8G, SystemKeepFree=10G, enforced continuously by
+    journald), and a new cuems-journal-vacuum script + daily timer prunes
+    the COLLECTED journals (defaults 8G/30d, overridable via systemctl
+    edit). Postinst enables the timer on controllers, same role-aware
+    pattern as the journal-remote/upload enables.
+
+ -- Ion Reguera <ion@stagelab.coop>  Tue, 29 Jul 2026 18:30:00 +0200
+
 cuems-common (1.3.0-12) unstable; urgency=medium
 
   * cuems-node-engine.service: order After=olad.service. On a controller
