@@ -1,3 +1,34 @@
+cuems-common (1.3.0-15) bookworm; urgency=medium
+
+  * journal maintenance: run on every host, and reclaim orphaned journal
+    directories.
+  * cuems-journal-vacuum.timer was WantedBy=cuems-controller.target, so
+    on a node it could never fire. Nodes need it too: they inherit the
+    same foreign machine-id journal directories from the master image,
+    and a node cloned from a controller keeps a /var/log/journal/remote
+    that nothing else would ever prune. Now WantedBy=timers.target, and
+    the postinst enables it outside the controller-only branch. Also
+    dropped PartOf=cuems-controller.target — a controller-target bounce
+    must not cancel log maintenance.
+  * cuems-journal-vacuum now also removes journal directories belonging
+    to OTHER machines, inherited by cloning a master image. Nothing
+    reclaimed them before: journald enforces SystemMaxUse= only inside
+    its own machine-id directory and the old sweep covered remote/ only,
+    so they were immortal — and journalctl --disk-usage does not count
+    them, which is why the growth stayed invisible. Guarded: never this
+    host's own directory, never remote/, the name must be machine-id
+    shaped, and the directory must contain journal files and nothing
+    else. Disable with CUEMS_JOURNAL_PRUNE_FOREIGN=0.
+  * A missing /var/log/journal/remote no longer exits the script early,
+    so the foreign-directory sweep still runs on hosts that never
+    collected journals. ReadWritePaths widened to /var/log/journal
+    accordingly.
+  * Measured before the fix: 17-22G of /var/log on each of three fleet
+    hosts (cupula2, isil controller, isil node01), ~11G of it orphaned
+    directories on every one; ~45G reclaimed.
+
+ -- Ion Reguera <ion@stagelab.coop>  Wed, 05 Aug 2026 12:14:50 +0200
+
 cuems-common (1.3.0-14) unstable; urgency=medium
 
   * cuems-logs: expand unit globs on ALL merged queries, not only follow

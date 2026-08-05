@@ -28,30 +28,89 @@
 
 set -euo pipefail
 
-REMOTE_DIR="${CUEMS_JOURNAL_REMOTE_DIR:-/var/log/journal/remote}"
+JOURNAL_DIR="${CUEMS_JOURNAL_DIR:-/var/log/journal}"
+REMOTE_DIR="${CUEMS_JOURNAL_REMOTE_DIR:-$JOURNAL_DIR/remote}"
 MAX_SIZE="${CUEMS_JOURNAL_REMOTE_MAX_SIZE:-8G}"
 MAX_AGE="${CUEMS_JOURNAL_REMOTE_MAX_AGE:-30d}"
+PRUNE_FOREIGN="${CUEMS_JOURNAL_PRUNE_FOREIGN:-1}"
 
 log() { echo "cuems-journal-vacuum: $*"; }
 
-# Nodes have no collected-journal directory; this unit is controller-only
-# but exiting cleanly keeps a misfiled enablement harmless.
-if [[ ! -d "$REMOTE_DIR" ]]; then
-    log "$REMOTE_DIR does not exist — nothing to prune (not a controller?)"
+# ---------------------------------------------------------------------------
+# 1. Journals uploaded by the nodes.
+# ---------------------------------------------------------------------------
+# Absent on a host that never collected any — not an error, and NOT a reason to
+# stop: the foreign-directory sweep below still applies to nodes.
+if [[ -d "$REMOTE_DIR" ]]; then
+    before="$(du -sh "$REMOTE_DIR" 2>/dev/null | cut -f1)"
+    files_before="$(find "$REMOTE_DIR" -maxdepth 1 -name '*.journal*' 2>/dev/null | wc -l)"
+
+    # --vacuum-size and --vacuum-time are applied in sequence by journalctl, and
+    # both consider corrupt/unclean *.journal~ files as well as *.journal
+    # archives. The file currently being written is never removed.
+    log "pruning $REMOTE_DIR (max-size=$MAX_SIZE max-age=$MAX_AGE, was $before in $files_before files)"
+    journalctl --directory="$REMOTE_DIR" \
+        --vacuum-size="$MAX_SIZE" \
+        --vacuum-time="$MAX_AGE"
+
+    after="$(du -sh "$REMOTE_DIR" 2>/dev/null | cut -f1)"
+    files_after="$(find "$REMOTE_DIR" -maxdepth 1 -name '*.journal*' 2>/dev/null | wc -l)"
+    log "done: $before -> $after ($files_before -> $files_after files)"
+else
+    log "$REMOTE_DIR does not exist — no collected journals to prune"
+fi
+
+# ---------------------------------------------------------------------------
+# 2. Journal directories belonging to OTHER machines.
+# ---------------------------------------------------------------------------
+# A box provisioned by cloning a master image inherits every journal directory
+# the image carried, keyed by the ORIGINAL machines' machine-ids. Nothing
+# reclaims them: journald enforces SystemMaxUse= only within its own
+# machine-id directory, and the sweep above only covers remote/. They are
+# therefore immortal, and `journalctl --disk-usage` does not even count them —
+# it reports the local directory only, so the growth is invisible by the
+# obvious measurement.
+#
+# Measured 2026-08-05 across the fleet: 11 such directories on each of three
+# hosts, ~11G apiece (the master controller+node01 pair the image was built
+# from, two pre-provisioning boots still on factory hostnames, an aeon-node).
+#
+# Removal is one-shot per host — a machine only ever writes its own directory.
+if [[ "$PRUNE_FOREIGN" != 1 ]]; then
+    log "foreign-directory sweep disabled (CUEMS_JOURNAL_PRUNE_FOREIGN=$PRUNE_FOREIGN)"
+    exit 0
+fi
+if [[ ! -r /etc/machine-id ]]; then
+    log "cannot read /etc/machine-id — skipping the foreign-directory sweep"
     exit 0
 fi
 
-before="$(du -sh "$REMOTE_DIR" 2>/dev/null | cut -f1)"
-files_before="$(find "$REMOTE_DIR" -maxdepth 1 -name '*.journal*' 2>/dev/null | wc -l)"
-
-# --vacuum-size and --vacuum-time are applied in sequence by journalctl, and
-# both consider corrupt/unclean *.journal~ files as well as *.journal
-# archives. The file currently being written is never removed.
-log "pruning $REMOTE_DIR (max-size=$MAX_SIZE max-age=$MAX_AGE, was $before in $files_before files)"
-journalctl --directory="$REMOTE_DIR" \
-    --vacuum-size="$MAX_SIZE" \
-    --vacuum-time="$MAX_AGE"
-
-after="$(du -sh "$REMOTE_DIR" 2>/dev/null | cut -f1)"
-files_after="$(find "$REMOTE_DIR" -maxdepth 1 -name '*.journal*' 2>/dev/null | wc -l)"
-log "done: $before -> $after ($files_before -> $files_after files)"
+mid="$(cat /etc/machine-id)"
+freed_kb=0 removed=0
+for d in "$JOURNAL_DIR"/*/; do
+    [[ -d "$d" ]] || continue
+    n="$(basename "$d")"
+    # Guard 1: never this host's own journal, never the collected-journal dir.
+    [[ "$n" == "$mid" ]] && continue
+    [[ "$n" == remote ]] && continue
+    # Guard 2: must be shaped like a machine-id, so nothing else under
+    # /var/log/journal can ever be matched by accident.
+    [[ "$n" =~ ^[0-9a-f]{32}$ ]] || { log "skipping $n (not a machine-id directory)"; continue; }
+    # Guard 3: must contain journal files and nothing else.
+    strays="$(find "$d" -type f ! -name '*.journal' ! -name '*.journal~' 2>/dev/null | wc -l)"
+    if [[ "$strays" -ne 0 ]]; then
+        log "skipping $n ($strays non-journal file(s) present)"
+        continue
+    fi
+    kb="$(du -sk "$d" 2>/dev/null | cut -f1)"
+    if rm -rf -- "$d"; then
+        freed_kb=$(( freed_kb + kb ))
+        removed=$(( removed + 1 ))
+        log "removed foreign journal directory $n ($(numfmt --to=iec $(( kb * 1024 ))))"
+    fi
+done
+if [[ "$removed" -gt 0 ]]; then
+    log "foreign sweep: $removed director(ies), $(numfmt --to=iec $(( freed_kb * 1024 ))) reclaimed"
+else
+    log "foreign sweep: nothing to reclaim"
+fi

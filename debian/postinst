@@ -460,16 +460,22 @@ fi
 if command -v systemctl >/dev/null 2>&1; then
     if [ -f /etc/cuems/master.ip ]; then
         systemctl enable systemd-journal-remote.service 2>/dev/null || true
-        # Retention for the journals uploaded by the nodes: journal-remote on
-        # systemd 252 has NO MaxUse=/MaxFiles= of its own (journal-remote.conf
-        # accepts only Seal=, SplitMode= and the TLS options), so the daily
-        # vacuum timer is the only bound on /var/log/journal/remote. Explicit
-        # enable, same pattern as the units above — do not rely on
-        # dh_installsystemd inferring it from the unit's WantedBy=.
-        systemctl enable cuems-journal-vacuum.timer 2>/dev/null || true
     else
         systemctl enable systemd-journal-upload.service 2>/dev/null || true
     fi
+    # Journal maintenance runs on EVERY host, controller or node — it was
+    # previously enabled only in the controller branch above, which is why
+    # nodes accumulated journals nothing ever pruned. Two jobs, both needed
+    # cluster-wide:
+    #   * /var/log/journal/remote — journal-remote on systemd 252 has NO
+    #     MaxUse=/MaxFiles= of its own (journal-remote.conf accepts only Seal=,
+    #     SplitMode= and the TLS options), so this timer is its only bound. A
+    #     node cloned from a controller image carries one of these too.
+    #   * foreign machine-id directories inherited from the master image, which
+    #     journald's SystemMaxUse= never touches.
+    # Explicit enable, same pattern as the units above — do not rely on
+    # dh_installsystemd inferring it from the unit's WantedBy=.
+    systemctl enable cuems-journal-vacuum.timer 2>/dev/null || true
 fi
 # CUEMS cluster time sync via chrony
 # =========================================================================

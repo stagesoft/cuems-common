@@ -1,5 +1,5 @@
 [Unit]
-Description=Prune journals collected from CUEMS cluster nodes
+Description=Prune collected and orphaned journals on a CUEMS host
 Documentation=man:systemd-journal-remote(8) man:journalctl(1)
 After=systemd-journal-remote.service
 
@@ -20,10 +20,17 @@ StandardError=journal
 Environment=CUEMS_JOURNAL_REMOTE_MAX_SIZE=8G
 Environment=CUEMS_JOURNAL_REMOTE_MAX_AGE=30d
 
-# Vacuuming only reads and unlinks journal files.
+# Also delete journal directories belonging to OTHER machines, inherited by
+# cloning a master image. Nothing else bounds them: journald's SystemMaxUse=
+# applies only to its own machine-id directory. Set to 0 to disable.
+Environment=CUEMS_JOURNAL_PRUNE_FOREIGN=1
+
+# Vacuuming only reads and unlinks journal files. The write scope is the whole
+# journal tree — not just remote/ — because foreign machine-id directories are
+# removed at that level. The script refuses to touch this host's own directory.
 ProtectHome=yes
 ProtectSystem=strict
-ReadWritePaths=/var/log/journal/remote
+ReadWritePaths=/var/log/journal
 PrivateDevices=yes
 NoNewPrivileges=yes
 RestrictRealtime=yes
