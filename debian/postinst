@@ -133,6 +133,16 @@ if [ -L /etc/systemd/system/cuems-controller.target.wants/cuems-midiconnector.se
     rm -f /etc/systemd/system/cuems-controller.target.wants/cuems-midiconnector.service
 fi
 
+# Migration: cuems-journal-vacuum.timer moved from cuems-controller.target to
+# timers.target in 1.3.0-15 (it has to run on nodes too). Same deb-systemd-helper
+# behaviour as above — the new symlink is written, the old one is left behind, so
+# a host upgraded from 1.3.0-13/-14 ends up WantedBy both targets. Harmless, since
+# PartOf= was dropped in the same release and WantedBy never stops anything, but it
+# contradicts the unit and misleads anyone reading `systemctl show`.
+if [ -L /etc/systemd/system/cuems-controller.target.wants/cuems-journal-vacuum.timer ]; then
+    rm -f /etc/systemd/system/cuems-controller.target.wants/cuems-journal-vacuum.timer
+fi
+
 # Migration: prior cuems-common versions shipped an /lib/systemd/system/hostapd.service
 # that overrode the upstream hostapd package's unit file (dpkg file-conflict footgun
 # during downgrade). Now that hostapd plumbing lives entirely in drop-ins under
