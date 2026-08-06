@@ -92,7 +92,7 @@ Run the static test suite (no side effects, no package installation required):
 bash scripts/test-systemd-units.sh
 bash scripts/test-systemd-deps.sh
 bash scripts/verify-package-structure.sh
-shellcheck scripts/*.sh usr/bin/cuems-stop usr/bin/cuems-ola-profile usr/bin/cuems-healthcheck
+shellcheck scripts/*.sh usr/bin/cuems-cluster-poweroff usr/bin/cuems-displays-on usr/bin/cuems-ola-profile usr/bin/cuems-healthcheck
 bash -n scripts/*.sh usr/lib/cuems/bin/check-ip.sh usr/lib/cuems/bin/wifi-auto.sh
 ```
 
@@ -275,7 +275,7 @@ Before marking a PR as "Ready for review":
 - [ ] All commits follow Conventional Commits and carry a DCO sign-off.
 - [ ] `bash scripts/test-systemd-units.sh` exits 0 (no `FAIL` lines).
 - [ ] `bash scripts/test-systemd-deps.sh` exits 0.
-- [ ] `shellcheck scripts/*.sh usr/bin/cuems-ola-profile usr/bin/cuems-healthcheck usr/bin/cuems-stop` produces no errors (SC2034, SC2046, and similar informational codes are acceptable if annotated).
+- [ ] `shellcheck scripts/*.sh usr/bin/cuems-ola-profile usr/bin/cuems-healthcheck usr/bin/cuems-cluster-poweroff usr/bin/cuems-displays-on` produces no errors (SC2034, SC2046, and similar informational codes are acceptable if annotated).
 - [ ] `bash scripts/verify-package-structure.sh` exits 0.
 - [ ] New or modified unit files pass `systemd-analyze verify <path>` with no errors.
 - [ ] New shell scripts pass `bash -n <script>`.

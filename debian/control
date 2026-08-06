@@ -34,6 +34,18 @@ Depends: ${misc:Depends},
          cpufrequtils,
          ddcutil,
          zita-ajbridge
+# SUGGESTS, never Depends or Recommends — deliberately. cuems-cluster-poweroff
+# and cuems-displays-on drive the cuems-power-bridge library through its venv
+# interpreter, but cuems-common must stay installable and fully functional on a
+# host with no bridge at all (every node, and any controller that does not want
+# orderly power-off). Both scripts check for that interpreter and, if it is
+# absent, log one ERROR and exit 0 — verified on test2: `systemctl stop` still
+# returns 0, so a missing bridge can never fail a poweroff. The units use
+# ordering (Before=/After=) and at most Wants=, which systemd ignores when the
+# named unit does not exist; nothing uses Requires= or BindsTo=.
+# DO NOT promote this to Depends: that would make a controller-only, opt-in
+# feature a mandatory dependency of the package every node installs.
+Suggests: cuems-power-bridge
 Conflicts: network-manager
 Description: CUEMS common configuration and systemd services
  This package contains systemd service files, configuration files,

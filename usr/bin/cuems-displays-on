@@ -1,0 +1,140 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# cuems-displays-on — confirm the projectors actually came on at boot.
+#
+# cuems-power-bridge already powers the display fleet ON at startup when
+# `projector_power_on_on_start = true`. That single attempt is not enough on a
+# fast power cycle: the PJLink driver retries with _RETRY_DELAYS = (1, 3) — three
+# attempts, ~4 seconds — while lamp COOLDOWN is tens of seconds. A projector
+# still cooling answers POWR 1 with ERR3, which surfaces as one
+# `DisplayUnconfirmed` WARNING and then silence: the room stays dark.
+#
+# Since the orderly poweroff (cuems-cluster-poweroff) now switches the lamps off
+# on the way down, "power off, immediately power back on" is exactly the cycle an
+# operator will produce. So poll the bridge and re-issue POST /poweron until every
+# configured display reports "on", or the budget runs out.
+#
+# Polling GET /status is cheap and safe: the bridge's display snapshot is CACHED
+# (no network call per poll) and is refreshed by every power action, so a
+# confirmed power-on flips it to "on" and this loop exits.
+#
+# GATED, deliberately, on `projector_power_on_on_start`: this package ships to
+# every CUEMS host, and several sites have real projector fleets configured that
+# are intentionally left dark (badajoz's six Epson lamps, recovered WoL-only for
+# maintenance). Role alone must not be enough to start commanding them.
+
+set -uo pipefail
+
+CONF=/etc/cuems/cluster-poweroff.conf
+
+enabled=false
+displays_on_first_delay_s=60
+displays_on_interval_s=30
+displays_on_max_tries=20
+venv_python=/usr/lib/cuems/bin/python3
+bridge_url=http://127.0.0.1:8478
+
+# shellcheck source=/dev/null
+[ -r "$CONF" ] && . "$CONF"
+
+# Plain echo: systemd captures the unit's stdout into the journal already.
+# Also logging via logger() duplicated every line and interleaved two streams.
+log() { echo "$*"; }
+
+case "$enabled" in
+    true|yes|1|on) ;;
+    *) log "disabled (enabled=$enabled in $CONF) — not touching the displays"; exit 0 ;;
+esac
+
+for tool in curl jq; do
+    command -v "$tool" >/dev/null 2>&1 || { log "ERROR $tool not installed — cannot confirm displays"; exit 0; }
+done
+[ -x "$venv_python" ] || { log "ERROR $venv_python missing — cuems-power-bridge not installed?"; exit 0; }
+
+# Ask the library, not a sed of the conf: it applies the same
+# bundled-default-then-/etc layering the bridge itself uses, so we can never
+# disagree with the running service about what the flag is set to.
+on_start="$("$venv_python" -c \
+    'from cuemspowerbridge import config; print(str(config.load().projector_power_on_on_start).lower())' \
+    2>/dev/null)" || on_start=unknown
+if [ "$on_start" != true ]; then
+    log "projector_power_on_on_start=$on_start — boot power-on not requested on this host; nothing to confirm"
+    exit 0
+fi
+
+# Read via a variable, never argv: a shared_token in a command line would be
+# visible to any local user through ps. Fed to curl over stdin with -K below.
+token="$("$venv_python" -c \
+    'from cuemspowerbridge import config; print(config.load().shared_token)' 2>/dev/null)" || token=""
+curl_cfg=""
+[ -n "$token" ] && curl_cfg="header = \"X-Auth-Token: $token\""
+
+# The token goes to curl on STDIN via -K, never in argv where ps would show it.
+# NB the bridge 401s an unauthenticated /poweron when shared_token is set, so
+# skipping this is not merely untidy — the call would silently do nothing.
+poweron() {
+    curl -fsS -m10 -X POST -K - "$bridge_url/poweron" >/dev/null 2>&1 <<EOF || log "  /poweron call failed"
+$curl_cfg
+EOF
+}
+
+log "waiting ${displays_on_first_delay_s}s, then confirming displays are ON (every ${displays_on_interval_s}s, up to ${displays_on_max_tries} tries)"
+sleep "$displays_on_first_delay_s"
+
+i=0
+while [ "$i" -lt "$displays_on_max_tries" ]; do
+    i=$((i + 1))
+
+    if ! status="$(curl -fsS -m5 "$bridge_url/status" 2>/dev/null)"; then
+        log "attempt $i/$displays_on_max_tries: bridge not answering on $bridge_url — retrying"
+        sleep "$displays_on_interval_s"
+        continue
+    fi
+
+    count="$(jq -r '.displays | length' <<<"$status" 2>/dev/null)" || count=0
+    if [ "${count:-0}" = 0 ]; then
+        log "no displays configured — nothing to confirm"
+        exit 0
+    fi
+
+    # FIRST PASS: always issue a power-on before believing anything.
+    #
+    # GET /status reports the bridge's CACHED snapshot, refreshed only when a
+    # power action runs inside the bridge process. It is therefore not ground
+    # truth: cuems-cluster-poweroff drives the display fleet OUT OF PROCESS, so a
+    # POWR 0 it issued leaves the running bridge's cache still reading "on".
+    # Observed exactly that on cupula2 (2026-08-06) — the lamps were off and this
+    # unit "confirmed ON" on attempt 1 without doing anything. Causing a power
+    # action first both guarantees a real attempt and refreshes the cache, so
+    # every later iteration reads a value this unit is responsible for. POWR 1 to
+    # an already-on projector is a harmless no-op.
+    if [ "$i" = 1 ]; then
+        log "attempt 1/$displays_on_max_tries: issuing /poweron before trusting the cached status"
+        poweron
+        sleep "$displays_on_interval_s"
+        continue
+    fi
+
+    # Anything not exactly "on" keeps us trying: PowerState is
+    # off|on|warmup|cooldown|unknown, and every one of the other four is a
+    # reason to try again rather than declare success.
+    pending="$(jq -r '[.displays[] | select(.power != "on")] | length' <<<"$status" 2>/dev/null)" || pending=0
+    if [ "$pending" = 0 ]; then
+        log "all $count display(s) confirmed ON (attempt $i)"
+        exit 0
+    fi
+
+    states="$(jq -r '[.displays[] | "\(.name)=\(.power)"] | join(", ")' <<<"$status" 2>/dev/null)"
+    log "attempt $i/$displays_on_max_tries: $pending of $count not on ($states) — POST /poweron"
+    poweron
+
+    sleep "$displays_on_interval_s"
+done
+
+log "WARNING displays still not confirmed ON after $displays_on_max_tries attempts" \
+    "(~$(( (displays_on_first_delay_s + displays_on_max_tries * displays_on_interval_s) / 60 )) min):" \
+    "check PJLink reachability and that each projector has 'Standby Mode Communications = ON'"
+exit 0

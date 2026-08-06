@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+
+[Unit]
+Description=CUEMS orderly cluster power-off (projectors, then nodes)
+Documentation=file:/usr/share/doc/cuems-common/README.md
+
+# The unit does nothing at boot; ALL the work is in ExecStop=, so every edge
+# below is here for its STOP-direction meaning (systemd stops units in the
+# reverse of their start order):
+#
+#   After=networking.service network-online.target avahi-daemon.*
+#     -> we stop BEFORE the network and avahi go down, so PJLink (TCP 4352) and
+#        `<node>.local` mDNS resolution still work while the script runs.
+#        networking.service is named explicitly because IT is what actually
+#        tears the interfaces down (this fleet is ifupdown — cuems-common
+#        Conflicts: network-manager); network-online.target is a passive boot
+#        synchronisation point whose own stop is close to a no-op, so it cannot
+#        carry this guarantee alone. BOTH avahi units are listed: the .socket is
+#        enabled alongside the .service and nss-mdns reaches the daemon through it.
+#
+#   Before=cuems-power-bridge.service
+#     -> we stop AFTER the bridge has stopped. The bridge's stop() calls
+#        _cancel_projector_on_task(), so no in-flight POWR 1 can race our POWR 0.
+#        It also means the HTTP API is already gone when ExecStop runs, which is
+#        why the script drives the venv library directly instead of curling :8478.
+After=networking.service network-online.target avahi-daemon.service avahi-daemon.socket
+Before=cuems-power-bridge.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/usr/bin/cuems-cluster-poweroff
+
+# ssh resolves known_hosts through the invoking user's home; systemd does not set
+# $HOME for a root ExecStop, so pin it rather than depend on the fallback.
+Environment=HOME=/root
+
+# Must exceed the script's own budget: projector stage (projector_timeout_s, 25s
+# default) + node stage (node_wait_s + 30, 150s default). Deliberately NOT
+# infinite — nothing may wedge a poweroff.
+TimeoutStopSec=200
+
+# No sandboxing directives on purpose: the script needs ssh, ip, systemctl and
+# the shared /usr/lib/cuems/ venv, and it only ever runs while the system is
+# already going down.
+
+[Install]
+# Role gate: only a controller ever starts this target, and WantedBy= never
+# propagates stop (see debian/postinst), so a `systemctl stop
+# cuems-controller.target` or an engine restart cannot fire the ExecStop.
+WantedBy=cuems-controller.target

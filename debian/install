@@ -46,11 +46,17 @@ usr/share/cuems/hostapd/hostapd.conf.template usr/share/cuems/hostapd/
 usr/bin/cuems-config-node usr/bin/
 
 # System scripts
+usr/bin/cuems-cluster-poweroff usr/bin/
+usr/bin/cuems-displays-on usr/bin/
 usr/bin/cuems-hdmi-audio-map usr/bin/
 usr/bin/cuems-journal-vacuum usr/bin/
 usr/bin/cuems-logs usr/bin/
 usr/bin/cuems-ola-profile usr/bin/
-usr/bin/cuems-stop usr/bin/
+# usr/bin/cuems-stop RETIRED in 1.3.0-16: hardcoded to a long-gone venue's power
+# relay (192.168.3.20) and SSH targets (stagelab@192.168.2.20x), and its only
+# caller was the equally dead /etc/acpi/ handler chain. The `cuems-stop` shell
+# ALIAS in etc/profile.d/cuems.sh (stop the systemd targets) stays, and with the
+# binary gone it is no longer ambiguous.
 
 # Systemd unit files
 # Package-provided services should be in /lib/systemd/system/ (not /etc/systemd/system/)
@@ -66,6 +72,10 @@ etc/systemd/system/cuems-node-engine.service lib/systemd/system/
 etc/systemd/system/cuems-node.target lib/systemd/system/
 etc/systemd/system/cuems-nodeconf.service lib/systemd/system/
 etc/systemd/system/cuems-wifi.service lib/systemd/system/
+# Orderly power-off (ExecStop hook) + boot display confirmation. Both are gated
+# behind enabled= in /etc/cuems/cluster-poweroff.conf, shipped false.
+etc/systemd/system/cuems-cluster-poweroff.service lib/systemd/system/
+etc/systemd/system/cuems-displays-on.service lib/systemd/system/
 # hostapd.service itself is owned by the upstream `hostapd` Debian package.
 # cuems-common adds cuems-wifi.target / cuems-wifi.service plumbing and the
 # /run/cuems/hostapd.conf redirect via drop-ins under hostapd.service.d/
@@ -131,6 +141,10 @@ etc/rsyncd.secrets etc/
 # systemd's or rsyslog's own conffile): the stock files keep ownership and
 # these are pulled in via journald.conf.d/ and rsyslog.d/*.conf includes.
 etc/systemd/journald.conf.d/cuems.conf etc/systemd/journald.conf.d/
+# Same drop-in rationale for logind: pins HandlePowerKey=poweroff, the behaviour
+# cuems-cluster-poweroff.service's ExecStop hook depends on. Matches systemd's
+# compiled-in default, so it changes nothing — it states the contract.
+etc/systemd/logind.conf.d/10-cuems-power-button.conf etc/systemd/logind.conf.d/
 etc/rsyslog.d/cuems.conf etc/rsyslog.d/
 etc/sudoers.d/99-cuems etc/sudoers.d/
 etc/sudoers.d/50-cuems-admin etc/sudoers.d/
@@ -175,6 +189,9 @@ etc/cuems/network_map.xsd etc/cuems/
 etc/cuems/ap.conf etc/cuems/
 etc/cuems/videocomposer-flags.env.example etc/cuems/
 etc/cuems/gradient-motiond.env.example etc/cuems/
+# Orderly power-off / boot display confirmation. Shell syntax (both readers are
+# shell scripts); ships enabled=false so a fleet-wide upgrade changes no site.
+etc/cuems/cluster-poweroff.conf etc/cuems/
 
 # Multi-cluster identity example (not installed to /etc/cuems/ by default;
 # operator copies it manually when multi-cluster deployment is needed).
@@ -189,6 +206,13 @@ usr/share/cuems/* usr/share/cuems/
 etc/apache2/sites-available/cuems-ui.conf etc/apache2/sites-available/
 etc/apache2/sites-available/cuems-ui-ssl.conf etc/apache2/sites-available/
 
-# ACPI scripts (if needed)
-etc/acpi/** etc/acpi/
+# ACPI scripts: RETIRED in 1.3.0-16, removed via debian/cuems-common.maintscript.
+# They never ran — acpid is not installed on any CUEMS host (verified on isil,
+# test2 and both Medina controllers), so the physical power button has always been
+# handled by systemd-logind's HandlePowerKey. The handler's first action was
+# /usr/bin/cuems-stop, hardcoded to another site's relay and SSH targets, so
+# leaving the files in place was a booby trap: installing acpid for any reason
+# would have resurrected it. Replaced by cuems-cluster-poweroff.service, which
+# hooks the poweroff transition instead and therefore also covers
+# `systemctl poweroff`.
 

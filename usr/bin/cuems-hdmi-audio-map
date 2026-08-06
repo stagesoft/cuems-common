@@ -21,6 +21,7 @@ Connector ordering (determines JACK channel assignment):
 import ctypes
 import struct
 import os
+import re
 import sys
 import fcntl
 import array
@@ -141,6 +142,35 @@ def detect_mapping():
     return mapping
 
 
+def jack_device_hint(path='/etc/default/jack'):
+    """One-line description of the ALSA device jackd is configured to open.
+
+    Read from DAEMON_ARGS in /etc/default/jack, which is a plain conffile and is
+    NOT regenerated at boot — unlike asound.conf. Used only to make the generated
+    header honest about where audio actually goes; never to change behaviour.
+    """
+    try:
+        with open(path) as fh:
+            text = fh.read()
+    except OSError:
+        return f'DAEMON_ARGS unreadable ({path}) — check it by hand'
+    m = re.search(r'^\s*DAEMON_ARGS\s*=\s*"([^"]*)"', text, re.M)
+    if not m:
+        return f'no DAEMON_ARGS found in {path} — check it by hand'
+    args = m.group(1)
+    dev = re.search(r'-d\s*(hw:[^\s"]+|[A-Za-z_][\w:.,-]*)', args[args.find('-dalsa') + 6:]
+                    if '-dalsa' in args else args)
+    if not dev:
+        return f'DAEMON_ARGS={args} (no -d device found)'
+    d = dev.group(1)
+    note = ''
+    if d in ('hw:PCH,0', 'hw:0,0'):
+        note = '  <-- ALC897 analog / minijack, NOT HDMI'
+    elif 'multi_hdmi' in d or 'hdmi' in d.lower():
+        note = '  <-- the HDMI slots defined below'
+    return f'jackd -d {d}{note}'
+
+
 def generate_asound_conf(mapping):
     """Generate asound.conf content from the detected mapping.
 
@@ -177,7 +207,17 @@ def generate_asound_conf(mapping):
     lines.append('#')
     lines.append('#   hw:HID,0  = USB Audio (bridged via alsa_out)')
     lines.append('#')
-    lines.append('# JACK runs on multi_hdmi (always 6ch). USB audio bridged separately.')
+    # Do NOT assert that JACK uses multi_hdmi: this script neither decides that nor
+    # can know it. JACK's device comes from DAEMON_ARGS in /etc/default/jack, and a
+    # venue whose sound goes to a house PA rather than the projectors runs jackd on
+    # the analog output instead — cupula2 runs -dhw:PCH,0 (the ALC897 minijack) with
+    # every HDMI PCM closed. The old unconditional "JACK runs on multi_hdmi" line was
+    # simply false on such a host and sent anyone debugging audio to the wrong
+    # device, so report the configured value instead of assuming one.
+    lines.append('# multi_hdmi (6ch) is DEFINED here; whether JACK actually uses it')
+    lines.append('# is decided by DAEMON_ARGS in /etc/default/jack, not by this file:')
+    lines.append(f'#   {jack_device_hint()}')
+    lines.append('# USB audio, if used, is bridged separately (jack-alsa-bridges).')
     lines.append('')
 
     # multi_hdmi PCM

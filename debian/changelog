@@ -1,3 +1,77 @@
+cuems-common (1.3.0-16) bookworm; urgency=medium
+
+  * Orderly cluster power-off on the physical power button, and confirmed
+    projector power-on at boot. Both OFF by default: see enabled= in the new
+    /etc/cuems/cluster-poweroff.conf. A fleet-wide upgrade therefore changes
+    no site's behaviour until a box is opted in.
+  * New cuems-cluster-poweroff.service: does nothing at boot, and on the way
+    down its ExecStop= powers the projectors off (PJLink), then the cluster
+    node(s) off over SSH, waits until they are really down, and hands back to
+    systemd to power the controller off. The ordering is what makes it work:
+    After=networking.service (ifupdown is what actually tears interfaces
+    down; network-online.target is a passive boot synchronisation point and
+    cannot carry a stop-direction guarantee) plus avahi-daemon.service AND
+    .socket, so PJLink and <node>.local resolution still work when it runs;
+    Before=cuems-power-bridge.service so the bridge has already stopped and
+    its _cancel_projector_on_task() has run, ruling out a POWR 1 racing our
+    POWR 0.
+  * The hook duplicates no protocol logic: it drives the installed
+    cuems-power-bridge library (PJLink driver, SSH fan-out, reachability
+    poller) against this host's own power-bridge.conf, so ssh_user, ssh_key,
+    poweroff_cmd, dry_run and projector_power_off_on_shutdown keep exactly
+    their bridge meanings. dry_run=true gives a full-fidelity, zero-risk
+    rehearsal of the whole sequence.
+  * Guards, each earning its place: it acts only when a poweroff/halt job is
+    actually in the transaction, so a reboot never kills the lamps (PJLink
+    answers ERR3 to POWR 1 during cooldown, so a reboot that powered them off
+    would return to a dark room) and `isolate rescue.target` or a stray
+    `systemctl stop` are inert; self-exclusion by node uuid and by exact
+    local-address membership, because a standalone controller is its own node
+    and a host can never observe ITSELF unreachable, so a missed self-entry
+    would burn the whole node_wait_s on every poweroff — and hostname
+    matching alone would not catch it, since nodeconf never ran and the OS
+    hostname is e.g. cupula1 while the avahi name is node01.local; and
+    idempotency (query display state and node liveness before acting), which
+    makes the second pass after a bridge-driven POST /shutdown a fast no-op
+    instead of a redundant SSH fan-out and a POWR 0 into a cooldown window.
+  * New cuems-displays-on.service: the bridge's projector_power_on_on_start
+    fires one power-on whose retry budget is ~4s, while lamp cooldown is tens
+    of seconds — so a fast power cycle left the room dark with a single
+    unconfirmed WARNING. This re-issues POST /poweron until every display
+    reports "on". Gated on projector_power_on_on_start as well as enabled=,
+    so sites with real fleets deliberately left dark are never commanded.
+  * RETIRED the dead acpid power-button chain:
+    /etc/acpi/events/powerbtn-acpi-support, powerbtn-custom-handler.sh and
+    cuems-power-button-waiter.sh (removed via a new
+    debian/cuems-common.maintscript, since they are conffiles), plus
+    /usr/bin/cuems-stop. acpid is not installed on any CUEMS host — verified
+    on isil, test2 and both Medina controllers — so none of it has ever run;
+    the button has always been handled by systemd-logind. Keeping it was a
+    booby trap: cuems-stop is hardcoded to a long-gone venue's relay
+    (192.168.3.20) and SSH targets (stagelab@192.168.2.20x), so installing
+    acpid for any reason would have resurrected it. The `cuems-stop` shell
+    ALIAS survives and is now unambiguous.
+  * New etc/systemd/logind.conf.d/10-cuems-power-button.conf pins
+    HandlePowerKey=poweroff. Behaviourally a no-op — it is already the
+    compiled-in default — but the new hook depends on a press producing an
+    ordinary orderly transaction, so the contract is now stated. Not
+    reloadable (CanReload=no on systemd 252), so it applies at next boot;
+    harmless, since it matches what is already in force.
+  * cuems-hdmi-audio-map: stop asserting that JACK uses multi_hdmi. The
+    generated asound.conf header said so unconditionally, which is FALSE on a
+    venue whose sound goes to a house PA rather than the projectors -- cupula2
+    runs jackd -dhw:PCH,0 (the ALC897 analog minijack) with every HDMI PCM
+    closed, and that line would send anyone debugging audio to the wrong
+    device. The header now reports the device actually configured in
+    DAEMON_ARGS (/etc/default/jack, a conffile that is NOT regenerated at
+    boot), flagging whether it is the minijack or the HDMI slots. Documentation
+    only; no behavioural change.
+  * Known blind spot, documented rather than papered over: `systemctl
+    poweroff --force` skips the orderly per-unit stop, so no ExecStop runs
+    and the projectors and nodes stay up.
+
+ -- Ion Reguera <ion@stagelab.coop>  Thu, 06 Aug 2026 12:29:07 +0200
+
 cuems-common (1.3.0-15) bookworm; urgency=medium
 
   * journal maintenance: run on every host, and reclaim orphaned journal

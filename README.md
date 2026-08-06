@@ -207,7 +207,8 @@ Pipewire, pipewire-pulse, and wireplumber are **masked system-wide** via `/etc/s
 | `cuems-hdmi-audio-map` | Python 3 | Detects the runtime DRM connector → GPU CRTC → ALSA device mapping via direct DRM ioctls on `/dev/dri/card0`. Generates a three-slot `multi_hdmi` PCM definition in `/etc/asound.conf` so JACK always uses a stable 6-channel device regardless of boot-time connector assignment. Accepts `--dry-run` / `-n` to print the config without writing it. |
 | `cuems-ola-profile` | bash | Enables OLA DMX hardware profiles by toggling `/etc/ola/*.conf` files and restarting `olad`. Profiles: `pro` (Enttec USB Pro / DMXking), `opendmx` (Enttec Open DMX, FTDI-based), `artnet` (network-only), `sacn` (network-only). Handles the `ftdi_sio` kernel module blacklist required by the `opendmx` profile. After applying, lists enabled plugins with supported hardware models. |
 | `cuems-healthcheck` | bash | Polls `systemctl is-active` for the core CUEMS services, checks disk usage against a 90 % threshold, and logs results to `/var/log/cuems-health.log`. Exits 0 when all checks pass, 1 when any check fails. |
-| `cuems-stop` | bash | Graceful full-rig shutdown: turns off power relay at `192.168.3.20` via HTTP, then SSH-shuts-down all node machines, then turns off the second relay at `192.168.3.21`. Addresses are site-specific and must be edited per installation. |
+| `cuems-cluster-poweroff` | bash | Orderly cluster power-off, run as the `ExecStop=` of `cuems-cluster-poweroff.service` so it fires during a poweroff transition (power button via logind, or `systemctl poweroff`). Projectors off over PJLink → cluster node(s) off over SSH → wait until really down → hand back to systemd. Drives the installed `cuems-power-bridge` library, so it duplicates no protocol logic and honours that host's `power-bridge.conf`. Skips on a reboot, self-excludes this host from the node list, and is idempotent. Gated by `enabled=` in `/etc/cuems/cluster-poweroff.conf` (ships `false`). Replaced the retired `cuems-stop`. |
+| `cuems-displays-on` | bash | Boot-time confirmation that the projectors actually came on: polls the bridge's `GET /status` and re-issues `POST /poweron` until every display reports `on`. Exists because the bridge's own `projector_power_on_on_start` gets one attempt with a ~4 s retry budget while lamp cooldown is tens of seconds. Gated by `enabled=` **and** `projector_power_on_on_start`. |
 
 ### Internal Helpers — `/usr/lib/cuems/bin`
 
@@ -392,15 +393,54 @@ Checks: `cuems-controller-engine`, `cuems-node-engine`, `cuems-videocomposer`, `
 
 **Exit codes:** 0 all systems healthy, 1 one or more checks failed.
 
-#### `cuems-stop`
+#### `cuems-cluster-poweroff`
 
 ```
-cuems-stop
+cuems-cluster-poweroff [--force]
 ```
 
-Site-specific shutdown sequence (addresses embedded in the script). Sends HTTP relay-off commands and SSH shutdown commands. Must be edited per installation before use.
+Normally invoked only by systemd, as the `ExecStop=` of
+`cuems-cluster-poweroff.service`. Sequence: displays off (PJLink) → cluster node(s)
+off (SSH) → wait until unreachable → return, leaving systemd to power this controller
+off. `--force` runs it outside a poweroff transaction for rehearsal; pair that with
+`dry_run = true` in `power-bridge.conf` for a zero-risk full-fidelity run.
 
-**Exit codes:** inherits from `wget`/`ssh`.
+Guards worth knowing before touching it:
+
+- **Poweroff-only.** It inspects `systemctl list-jobs` and does nothing unless a
+  `poweroff.target`/`halt.target` job is in the transaction. A reboot is skipped
+  deliberately: PJLink answers `ERR3` to `POWR 1` during lamp cooldown, so powering the
+  lamps off on a reboot would return to a dark room.
+- **Self-exclusion.** A standalone controller is its own node, so a `NodeType.slave`
+  self-entry in `network_map.xml` would otherwise make it SSH `poweroff` to itself —
+  and a host can never observe *itself* unreachable, so it would then burn the whole
+  `node_wait_s` every time. Matching is by node uuid (from `settings.xml`) and by exact
+  local-address membership, **not** by hostname: with `cuems-nodeconf` disabled the OS
+  hostname is e.g. `cupula1` while the avahi name is `node01.local`.
+- **Idempotent.** Display state and node liveness are queried first, so a second pass
+  costs seconds instead of repeating the work. This matters because a bridge-driven
+  `POST /shutdown` ends in `sudo /sbin/poweroff`, which re-enters this script.
+
+Every run logs an *ordering probe* (whether the bridge has already stopped, whether
+avahi and networking are still up), including on the skip paths — so an ordinary
+`systemctl reboot` permanently certifies the unit's shutdown ordering at no cost.
+
+**Not covered:** `systemctl poweroff --force` skips every unit's orderly stop, so no
+`ExecStop` runs and the projectors and nodes stay up.
+
+**Exit codes:** always 0 — nothing here may wedge a poweroff. Failures are logged.
+
+#### `cuems-displays-on`
+
+```
+cuems-displays-on
+```
+
+Invoked by `cuems-displays-on.service` at boot. No arguments; cadence and gating come
+from `/etc/cuems/cluster-poweroff.conf` plus `projector_power_on_on_start` in
+`power-bridge.conf`.
+
+**Exit codes:** always 0.
 
 ### Shell Aliases
 
@@ -413,7 +453,7 @@ Installed via `/etc/profile.d/cuems.sh` (sourced by every login shell):
 | `cuems-stop` | `sudo systemctl stop cuems-controller.target cuems-node.target` |
 | `cuems-status` | `systemctl status cuems-node.target cuems-controller.target` |
 
-Note: `cuems-stop` the alias stops systemd targets; `cuems-stop` the binary in `/usr/bin` shuts down the entire rig via SSH and relay. The alias shadows the binary in interactive shells — type the full path `/usr/bin/cuems-stop` when the rig-shutdown script is intended.
+Note: `cuems-stop` is now unambiguously the alias above. The `/usr/bin/cuems-stop` binary it used to shadow — a rig shutdown hardcoded to a long-gone venue's relay and SSH targets — was retired in 1.3.0-16; orderly cluster power-off is now `cuems-cluster-poweroff`, driven by systemd rather than run by hand.
 
 ### Environment and Configuration Variables
 
@@ -578,7 +618,7 @@ sudo systemctl restart cuems-node-engine.service
 All shell scripts should pass `bash -n` (syntax check). For a stricter check, `shellcheck` is recommended:
 
 ```bash
-shellcheck scripts/*.sh usr/bin/cuems-stop usr/bin/cuems-ola-profile usr/bin/cuems-healthcheck
+shellcheck scripts/*.sh usr/bin/cuems-cluster-poweroff usr/bin/cuems-displays-on usr/bin/cuems-ola-profile usr/bin/cuems-healthcheck
 ```
 
 ### Debian packaging
@@ -651,7 +691,8 @@ jobs:
         run: >
           shellcheck
           scripts/*.sh
-          usr/bin/cuems-stop
+          usr/bin/cuems-cluster-poweroff
+          usr/bin/cuems-displays-on
           usr/bin/cuems-ola-profile
           usr/bin/cuems-healthcheck
       - name: Verify package structure

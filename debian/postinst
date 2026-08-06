@@ -3,6 +3,35 @@ set -e
 
 # CUEMS Common package post-installation script
 
+# =========================================================================
+# Retire the dead acpid power-button conffiles (1.3.0-16)
+# =========================================================================
+# /etc/acpi/{powerbtn-custom-handler.sh,cuems-power-button-waiter.sh,
+# events/powerbtn-acpi-support} were conffiles, so dropping them from
+# debian/install is not enough — dpkg would keep them on every upgraded host
+# forever. See etc/systemd/logind.conf.d/10-cuems-power-button.conf for why
+# they were dead code (acpid is installed on no CUEMS host) and why leaving
+# them was a booby trap (the handler called the hardcoded /usr/bin/cuems-stop).
+#
+# These calls are HAND-WRITTEN rather than declared in a debian/*.maintscript
+# on purpose. rm_conffile must run in preinst (move aside), postinst (finish)
+# and postrm (restore on abort), but debhelper can only inject where its
+# substitution token appears — and this postinst/postrm have none. Adding one
+# would ALSO inject dh_installsystemd's snippets for every unit in the
+# package for the first time, which would restart the engine, editor and
+# videocomposer on any upgrade and create .wants symlinks for units that are
+# deliberately disabled (cuems-nodeconf is masked at Medina). That blast
+# radius does not belong in this change. The identical line works in all
+# three scripts: the helper reads $DPKG_MAINTSCRIPT_NAME to know its phase.
+if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
+    for _cf in /etc/acpi/powerbtn-custom-handler.sh \
+               /etc/acpi/cuems-power-button-waiter.sh \
+               /etc/acpi/events/powerbtn-acpi-support; do
+        dpkg-maintscript-helper rm_conffile "$_cf" 1.3.0-16~ cuems-common -- "$@"
+    done
+    unset _cf
+fi
+
 # Published default credentials. See docs/default-credentials.md.
 # Single source of truth at code level; doc cites the same literals.
 DEFAULT_OPERATOR_PASSWORD="cuems-admin-default"
@@ -486,6 +515,21 @@ if command -v systemctl >/dev/null 2>&1; then
     # Explicit enable, same pattern as the units above — do not rely on
     # dh_installsystemd inferring it from the unit's WantedBy=.
     systemctl enable cuems-journal-vacuum.timer 2>/dev/null || true
+
+    # Orderly cluster power-off + boot display confirmation. Enabled
+    # UNCONDITIONALLY here, exactly like the timer above and for the same reason:
+    # burying an enable inside the `master.ip` controller branch is what left
+    # nodes without journal maintenance for months. Role gating belongs to the
+    # units' own WantedBy=cuems-controller.target (a node never starts that
+    # target), and BEHAVIOURAL gating belongs to enabled= in
+    # /etc/cuems/cluster-poweroff.conf, which ships false. So enabling here is
+    # inert on every existing host until an operator opts that box in.
+    #
+    # NB WantedBy= never stops anything, which is why cuems-cluster-poweroff's
+    # ExecStop cannot be fired by `systemctl stop cuems-controller.target` or by
+    # an engine restart — only by a real poweroff transaction.
+    systemctl enable cuems-cluster-poweroff.service 2>/dev/null || true
+    systemctl enable cuems-displays-on.service 2>/dev/null || true
 fi
 # CUEMS cluster time sync via chrony
 # =========================================================================

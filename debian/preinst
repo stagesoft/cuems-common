@@ -8,6 +8,22 @@ set -e
 CUEMS_USER="cuems"
 CUEMS_HOME="/var/lib/cuems"
 
+# Retire the dead acpid power-button conffiles (1.3.0-16). This is the phase
+# that moves them aside; postinst finishes and postrm restores on abort — all
+# three are needed. Hand-written rather than declared in a
+# debian/*.maintscript: that mechanism only reaches scripts carrying debhelper's
+# substitution token, which postinst and postrm here do not have, and adding it would
+# inject dh_installsystemd's snippets for every unit for the first time (see
+# the comment at the top of debian/postinst).
+if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
+    for _cf in /etc/acpi/powerbtn-custom-handler.sh \
+               /etc/acpi/cuems-power-button-waiter.sh \
+               /etc/acpi/events/powerbtn-acpi-support; do
+        dpkg-maintscript-helper rm_conffile "$_cf" 1.3.0-16~ cuems-common -- "$@"
+    done
+    unset _cf
+fi
+
 case "$1" in
     install|upgrade)
         # Create cuems system group if it doesn't exist
