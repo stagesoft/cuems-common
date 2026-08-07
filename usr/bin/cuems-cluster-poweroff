@@ -41,6 +41,7 @@ CONF=/etc/cuems/cluster-poweroff.conf
 # Defaults; /etc/cuems/cluster-poweroff.conf overrides. Shipped disabled so a
 # fleet-wide package upgrade changes no site's behaviour until opted in.
 enabled=false
+nodes_off=true
 node_wait_s=120
 projector_timeout_s=25
 venv_python=/usr/lib/cuems/bin/python3
@@ -177,7 +178,28 @@ then :; else log "  WARNING stage 1 exited non-zero (see above) — continuing t
 
 # ---------------------------------------------------------------------------
 # Stage 2 — cluster node(s) OFF.
+#
+# nodes_off=false is a deliberate site choice: power the displays down and shut
+# this controller down, but leave the cluster nodes running. Before this knob
+# existed the only way to express it was to withhold the node's SSH key, so the
+# intent was encoded as an authentication failure — invisible in config, and
+# silently undone the moment someone installed the key for good reasons. It also
+# cost the full node_wait_s on every shutdown, because a node that stays up is
+# polled until the deadline (measured on sala1: +120 s per power-button press).
+#
+# Returns early rather than wrapping the stage: the heredoc terminator below has
+# to stay in column 0, so wrapping would force a mixed-indentation block in the
+# one script that runs while the machine is shutting down.
 # ---------------------------------------------------------------------------
+case "$nodes_off" in
+    true|yes|1|on) : ;;
+    *)
+        log "stage 2/2: SKIPPED — nodes_off=$nodes_off in $CONF; leaving cluster node(s) running"
+        log "orderly sequence complete — handing back to systemd"
+        exit 0
+        ;;
+esac
+
 log "stage 2/2: cluster nodes off (max wait ${node_wait_s}s)"
 if timeout "$((node_wait_s + 30))" "$venv_python" -u - "$node_wait_s" <<'PY' 2>&1 | while IFS= read -r l; do log "  $l"; done
 import asyncio, logging, socket, subprocess, sys
