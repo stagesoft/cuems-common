@@ -28,7 +28,7 @@ Every adopted node has these fields in `network_map.xml`:
 | `uuid`       | yes      | YES    | provisioning   | primary key, never changes during hardware life   |
 | `mac`        | yes      | YES    | hardware       | informational, matches one NIC                    |
 | `name`       | yes      | YES    | nodeconf       | mDNS FQDN (`<mac>._cuems_nodeconf._tcp.local.`)  |
-| `node_type`  | yes      | NO     | operator       | `NodeType.master` or `NodeType.slave`             |
+| `node_role`  | yes      | NO     | operator       | `controller`, `node`, or `firstrun` (feature 007 — was `node_type`, `NodeType.master`/`NodeType.slave`) |
 | `ip`         | yes      | NO     | nodeconf       | link-local IP discovered via avahi                |
 | `adopted`    | opt      | NO     | nodeconf       | `True` once adopted                               |
 | `online`     | opt      | NO     | nodeconf       | last-known liveness                               |
@@ -36,11 +36,11 @@ Every adopted node has these fields in `network_map.xml`:
 | `alias`      | opt      | NO     | operator (UI)  | free-form human label                             |
 | `hostname`   | opt      | NO     | nodeconf       | TRANSITIONAL: legacy OS hostname if differs       |
 
-`*` `role_id` changes only on a role-flip (master↔slave), which is a
+`*` `role_id` changes only on a role-flip (controller↔node), which is a
 planned, reboot-mandatory procedure (see "Role-flip" below).
 
 **UUID is the primary key.** Every consumer (engine, editor, nodeconf,
-cuems-logs) identifies nodes by UUID. role_id/alias/hostname/node_type
+cuems-logs) identifies nodes by UUID. role_id/alias/hostname/node_role
 are mutable projections.
 
 ### ⚠️ Which MAC — `mac` is less stable than the table implies
@@ -75,6 +75,42 @@ An operator finding an explicit `hwaddress ether` line on a venue box is looking
 at the second state. It is correct and was proven; it is simply not what a
 template can carry.
 
+## The `node_type` -> `node_role` migration (feature 007)
+
+`network_map.xml` documents written before this change carry `<node_type>`
+(free text: `NodeType.master`, `NodeType.slave`, `NodeType.firstrun`, or the
+bare `master`/`slave`/`firstrun` spelling). `cuems-migrate-network-map`
+(`/usr/bin/cuems-migrate-network-map`) converts a document in place, run
+automatically from `debian/postinst` on every package install/upgrade —
+an operator does not need to run it by hand.
+
+**Recovery, if a conversion needs to be undone.** No reverse conversion is
+provided or planned — `node_role`'s enumeration is a narrower vocabulary
+than free text was, and there is no principled string a converted value
+reverts to (`controller` could have come from `NodeType.master` or the
+bare `master`; the mapping is not invertible). The only path back is the
+timestamped backup the conversion writes **before any change**, beside the
+original file:
+
+```bash
+ls -la /etc/cuems/network_map.xml.*.bak   # newest is the most recent conversion
+sudo cp /etc/cuems/network_map.xml.20260824T120000Z.bak /etc/cuems/network_map.xml
+```
+
+Restoring reproduces the pre-conversion bytes exactly — the backup is a
+plain copy of the file as it stood immediately before the rewrite, taken
+unconditionally, every time the script actually converts something (not on
+a no-op run, so repeated idempotent installs do not accumulate backups
+without bound — the five most recent are kept, older ones pruned).
+
+A document that still carries an **unrecognised** `<node_type>` value (not
+one of the six accepted spellings above) is refused whole by the
+conversion — nothing is written, the file is left exactly as it was, and
+`postinst` still exits 0 (the upgrade is never blocked by a bad map). Edit
+the offending `<node_type>` value by hand to one of the accepted spellings
+and reinstall (or re-run `/usr/bin/cuems-migrate-network-map
+/etc/cuems/network_map.xml` directly) to retry.
+
 ## Role-id assignment rules (cuems-nodeconf)
 
 ### New adoption (node has no entry in network_map.xml)
@@ -83,22 +119,22 @@ When `cuems-nodeconf` adopts a node whose UUID is not in
 `network_map.xml`:
 
 1. Acquire `/var/lock/cuems-nodeconf-adopt.lock` (serializes concurrent
-   adoptions; without the lock, two slaves adopted in parallel could
+   adoptions; without the lock, two nodes adopted in parallel could
    both compute `node01`).
 
-2. Compute `role_id` based on `<node_type>`:
-   - `NodeType.master`:
+2. Compute `role_id` based on `<node_role>`:
+   - `controller`:
      - If `<role_id>controller</role_id>` is already assigned to a
        different UUID → abort with error: "controller already assigned
        to UUID <other>; demote that node first before promoting this
        one".
      - Otherwise → `role_id = "controller"`.
-   - `NodeType.slave`:
+   - `node`:
      - Read all existing `<role_id>` values matching `^node(\d+)$`,
        compute `next_n = max(existing or [0]) + 1`, assign
        `f"node{next_n:02d}"` (minimum two-digit padding, no upper
        bound — `node100` is valid).
-   - If multiple nodes in the XML declare `<node_type>=master` → emit
+   - If multiple nodes in the XML declare `<node_role>controller</node_role>` → emit
      a `WARNING` to stderr (do not abort) so the operator notices the
      inconsistency.
 
@@ -157,8 +193,8 @@ NOT match `^(<cluster>-)?(controller|node\d+)$`:
 
 ### Re-adoption (UUID already in XML)
 
-- Same `node_type` → reuse existing `role_id`.
-- Different `node_type` (role-flip) → follow "Role-flip" below.
+- Same `node_role` → reuse existing `role_id`.
+- Different `node_role` (role-flip) → follow "Role-flip" below.
 
 ## Role-flip (planned, reboot mandatory)
 
@@ -168,8 +204,8 @@ Role-flips MUST NEVER occur mid-show. The procedure:
 # 1. Cluster outside show, no project loaded. Verify with the UI or:
 cuems-logs -c engine -e --since "5 min ago"
 
-# 2. Edit /etc/cuems/network_map.xml — change <node_type> on affected
-#    nodes (NodeType.slave <-> NodeType.master).
+# 2. Edit /etc/cuems/network_map.xml — change <node_role> on affected
+#    nodes (node <-> controller).
 
 # 3. Validate the XML against the schema.
 xmllint --noout --schema /etc/cuems/network_map.xsd /etc/cuems/network_map.xml
@@ -182,9 +218,9 @@ sudo cuems-nodeconf apply-identity --check
 # exit 2 — error (XML missing, settings.xml missing, etc.)
 
 # 5. On EACH affected node, IN ORDER:
-#    a. First on nodes that demote (master -> slave) — they release
+#    a. First on nodes that demote (controller -> node) — they release
 #       the "controller" role_id.
-#    b. Then on nodes that promote (slave -> master) — they claim
+#    b. Then on nodes that promote (node -> controller) — they claim
 #       "controller".
 #    Skipping order risks "controller already assigned to UUID <other>"
 #    aborts. apply-identity refuses to assign a duplicate "controller".
@@ -195,7 +231,7 @@ sudo reboot
 
 # 7. After boot:
 hostname                        # reflects the new role_id
-avahi-resolve -n controller.local  # only on the new master
+avahi-resolve -n controller.local  # only on the new controller
 cuems-logs --list-nodes         # coherent table
 journalctl CUEMS_NODE_UUID=<uuid> -n 20  # includes the role_id change
 ```
@@ -340,10 +376,10 @@ Minimal flow:
 sudo cp /etc/cuems/network_map.xml /etc/cuems/network_map.xml.bak
 
 # Edit each <node>, appending the three fields before </node>:
-#   <role_id>controller</role_id>   (master)
-#   <role_id>node01</role_id>       (first slave)
+#   <role_id>controller</role_id>   (the controller)
+#   <role_id>node01</role_id>       (first node)
 #   <hostname>000000000002</hostname>  (the current OS hostname, legacy)
-#   <alias>master</alias>           (optional, operator-defined)
+#   <alias>controller</alias>       (optional, operator-defined)
 
 xmllint --noout --schema /etc/cuems/network_map.xsd /etc/cuems/network_map.xml
 

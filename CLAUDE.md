@@ -18,9 +18,14 @@ Ships: systemd service/target/path/socket units for both roles + drop-ins for th
 
 A CUEMS host is either a **controller** (one per cluster) or a **node** (many). **Roles are dynamic** — any host can be promoted/demoted without a reinstall by editing the cluster topology. One source of truth: `network_map.xml` + `master.ip`; the postinst-time and runtime hooks adapt automatically on a flip.
 
-Role is decided **only** by `<node_type>` in `/etc/cuems/network_map.xml`:
-- `NodeType.master` → controller
-- `NodeType.slave` → node
+Role is decided **only** by `<node_role>` in `/etc/cuems/network_map.xml`:
+- `controller` → controller
+- `node` → node
+
+(feature 007: was `<node_type>`, free text `NodeType.master`/`NodeType.slave` — every
+`/etc/cuems/network_map.xml` is migrated automatically on package upgrade by
+`cuems-migrate-network-map`, run from `debian/postinst`. See
+`docs/node-identity-contract.md`'s "The node_type -> node_role migration" section.)
 
 systemd targets per role:
 - **Controller host** enables `cuems-controller.target` (`Requires=cuems-node.target` → also pulls node-side units). Controller-side units: `cuems-controller-engine.service`, `cuems-editor.service`, `cuems-midiconnector.service`.
@@ -37,12 +42,12 @@ Hooks that depend on role must (a) detect via `master.ip` presence, (b) be idemp
 **Planned operation with mandatory reboot. NEVER mid-show.**
 
 Current procedure (nodeconf disabled, hand-managed):
-1. Update `<node_type>` in `network_map.xml` for the affected host.
-2. Update `<role_id>` to match (`controller` for master, `nodeNN` for slave).
+1. Update `<node_role>` in `network_map.xml` for the affected host.
+2. Update `<role_id>` to match (`controller` for a controller, `nodeNN` for a node).
 3. `touch /etc/cuems/master.ip` (or `rm` to demote).
 4. `systemctl restart chrony rtpmidid cuems-node-engine` (+ `enable/disable cuems-controller.target` if the engine type changes). `rtpmidid` matters because `cuems-write-rtpmidid-config` only runs as its ExecStartPre — without a restart an ex-controller keeps acting as the network's controller and a fresh controller still tries to connect to itself.
 
-Future procedure (when nodeconf is reactivated): edit only `<node_type>` → `xmllint --schema` → `cuems-nodeconf apply-identity --check` → `apply-identity` (**demotes first** to free `controller`, promotions second) → `reboot` each affected node. `apply-identity` rewrites `/etc/hostname`, `/etc/hosts`, `/etc/avahi/avahi-daemon.conf` and emits `CUEMS_NODE_UUID=…` before renaming (traceable under the old `_HOSTNAME`). The `apply-identity` CLI is **planned, not yet implemented in source**.
+Future procedure (when nodeconf is reactivated): edit only `<node_role>` → `xmllint --schema` → `cuems-nodeconf apply-identity --check` → `apply-identity` (**demotes first** to free `controller`, promotions second) → `reboot` each affected node. `apply-identity` rewrites `/etc/hostname`, `/etc/hosts`, `/etc/avahi/avahi-daemon.conf` and emits `CUEMS_NODE_UUID=…` before renaming (traceable under the old `_HOSTNAME`). The `apply-identity` CLI is **planned, not yet implemented in source**.
 
 ## Node identity
 
@@ -53,7 +58,7 @@ Every adopted node carries identity fields in `network_map.xml`. Schema shipped 
 | `uuid` | yes | **YES — primary key** | provisioning | The only stable identifier across the hardware's life. Every consumer keys nodes by UUID. |
 | `mac` | yes | yes | hardware | Informational; matches one NIC. |
 | `name` | yes | yes | nodeconf | mDNS FQDN (`<mac>._cuems_nodeconf._tcp.local.`). |
-| `node_type` | yes | no | operator | `NodeType.master` / `NodeType.slave`. |
+| `node_role` | yes | no | operator | `controller` / `node` / `firstrun`. |
 | `ip` | yes | no | nodeconf | Link-local IP discovered via avahi. |
 | `adopted` | opt | no | nodeconf | `True` once adopted. |
 | `online` | opt | no | nodeconf | Discovery-pass snapshot — NOT runtime liveness. See the nodeconf CLAUDE.md. |
@@ -61,7 +66,7 @@ Every adopted node carries identity fields in `network_map.xml`. Schema shipped 
 | `alias` | opt | no | operator (UI) | Free-form human label. |
 | `hostname` | opt | no | nodeconf | **Transitional** — set only when the OS hostname differs from `role_id`. |
 
-`*` `role_id` changes only on a planned role-flip with reboot. **UUID is the primary key**; `role_id`/`alias`/`hostname`/`node_type` are mutable projections — any historical correlation goes through UUID. `role_id` assignment (nodeconf, when reactivated): master → `controller` (abort if another UUID already holds it); slave → next free `nodeNN` (`max+1`, 2-digit min pad); re-adoption of the same UUID+type reuses the prior `role_id`.
+`*` `role_id` changes only on a planned role-flip with reboot. **UUID is the primary key**; `role_id`/`alias`/`hostname`/`node_role` are mutable projections — any historical correlation goes through UUID. `role_id` assignment (nodeconf, when reactivated): controller → `controller` (abort if another UUID already holds it); node → next free `nodeNN` (`max+1`, 2-digit min pad); re-adoption of the same UUID+role reuses the prior `role_id`.
 
 `/etc/cuems/cluster.conf` (optional) — when present with `cluster_name != default`, the OS hostname becomes `<cluster_name>-<role_id>`. Example at `/usr/share/doc/cuems-common/cluster.conf.example`.
 
@@ -86,7 +91,7 @@ Constants: `/etc/cuems/ap.conf` (shell-sourceable — `AP_GATEWAY`, `AP_SUBNET`,
 
 ## Naming conventions
 
-Standardize on **controller/node** for all new code, docs, strings, log messages, config fields, and new paths. Legacy **master/slave** survives only in identifiers that would need coordinated multi-component migrations: `/etc/cuems/master.ip` + `master.lock` (read by every role-aware hook); `<node_type>NodeType.master|slave</node_type>` (serialized enum, XSD migration); `CONTROLLER_NETWORK_FLAG = "NodeType.master"` and enum constants in engine/utils. Reading these is fine; do not introduce new occurrences.
+Standardize on **controller/node** for all new code, docs, strings, log messages, config fields, and new paths. The `<node_type>`/`NodeType.master|slave` XSD migration **landed** (feature 007): `network_map.xml` now carries `<node_role>controller|node|firstrun</node_role>`, converted automatically on upgrade by `cuems-migrate-network-map`. Legacy **master/slave** still survives in identifiers that need a *separate* coordinated multi-component migration, not done here: `/etc/cuems/master.ip` + `master.lock` (read by every role-aware hook — a marker-file mechanism, not the XML field); `CONTROLLER_NETWORK_FLAG = "NodeType.master"` and enum constants in `cuems-engine`/`cuems-utils` consumers, migrated in feature 008 once the readers move (see `cuems-utils`'s `specs/007-node-model-migration/migration-guide.md` §5). Reading these is fine; do not introduce new occurrences.
 
 ## Field notes / gotchas
 
