@@ -1,16 +1,16 @@
 <?xml version='1.0' encoding='utf-8'?>
 <cms:CuemsNetworkMap xmlns:cms="https://stagelab.coop/cuems/"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-    <CuemsNodeDict>
+    <node_list>
         <node>
             <uuid>0367f391-ebf4-48b2-9f26-000000000001</uuid>
             <mac>2cf05d21cca3</mac>
             <name>2cf05d21cca3._cuems_nodeconf._tcp.local.</name>
-            <node_type>NodeType.master</node_type>
+            <node_role>controller</node_role>
             <ip>192.168.1.10</ip>
             <adopted>True</adopted>
             <online>True</online>
         </node>
-    </CuemsNodeDict>
+    </node_list>
 </cms:CuemsNetworkMap>
 

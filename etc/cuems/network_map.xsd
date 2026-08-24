@@ -1,19 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
-  SPDX-License-Identifier: GPL-3.0-or-later
-  SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
--->
 <xs:schema targetNamespace="https://stagelab.coop/cuems/" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:cms="https://stagelab.coop/cuems/">
     <xs:element name="CuemsNetworkMap">
         <xs:complexType>
             <xs:sequence>
-                <xs:element name="node_list" minOccurs="0" maxOccurs="1" type="cms:NodeListType" />
+                <xs:element name="node_list" minOccurs="0" maxOccurs="1" type="cms:NodeDictType" />
             </xs:sequence>
         </xs:complexType>
     </xs:element>
 
-    <xs:complexType name="NodeListType">
+    <xs:complexType name="NodeDictType">
         <xs:sequence>
             <xs:element name="node" minOccurs="0" maxOccurs="unbounded" type="cms:NodeType" />
         </xs:sequence>
@@ -21,40 +16,20 @@
 
     <xs:complexType name="NodeType">
         <xs:sequence>
-            <xs:element name="uuid"      minOccurs="1" maxOccurs="1" type="cms:NonEmptyString"/>
-            <xs:element name="mac"       minOccurs="1" maxOccurs="1" type="cms:NonEmptyString"/>
-            <xs:element name="name"      minOccurs="1" maxOccurs="1" type="cms:NonEmptyString"/>
-            <xs:element name="node_type" minOccurs="1" maxOccurs="1" type="cms:NonEmptyString"/>
-            <xs:element name="ip"        minOccurs="1" maxOccurs="1" type="cms:NonEmptyString"/>
-            <xs:element name="adopted"   minOccurs="0" maxOccurs="1" type="cms:BoolType"/>
-            <xs:element name="online"    minOccurs="0" maxOccurs="1" type="cms:BoolType"/>
+            <xs:element name="uuid" minOccurs="1" maxOccurs="1" type="cms:UuidType"/>
+            <xs:element name="mac" minOccurs="1" maxOccurs="1" type="cms:NonEmptyString"/>
+            <xs:element name="name" minOccurs="1" maxOccurs="1" type="cms:NonEmptyString"/>
+            <xs:element name="node_role" minOccurs="1" maxOccurs="1" type="cms:NodeRoleType"/>
+            <xs:element name="ip" minOccurs="1" maxOccurs="1" type="cms:NonEmptyString"/>
+            <xs:element name="adopted" minOccurs="0" maxOccurs="1" type="cms:BoolType"/>
+            <xs:element name="online" minOccurs="0" maxOccurs="1" type="cms:BoolType"/>
             <!-- Optional identity fields (feat/node-identity). nodeconf assigns
                  role_id during adoption; alias is operator-defined; hostname
                  is transitional (only set for legacy nodes whose OS hostname
-                 differs from role_id). -->
-            <xs:element name="role_id"   minOccurs="0" maxOccurs="1" type="cms:NonEmptyString"/>
-            <xs:element name="alias"     minOccurs="0" maxOccurs="1" type="cms:NonEmptyString"/>
-            <xs:element name="hostname"  minOccurs="0" maxOccurs="1" type="xs:string"/>
-        </xs:sequence>
-    </xs:complexType>
-
-    <xs:simpleType name="BoolType">
-        <xs:restriction base="xs:string">
-            <xs:enumeration value="True" />
-            <xs:enumeration value="False" />
-        </xs:restriction>
-    </xs:simpleType>
-
-    <xs:complexType name="PutType">
-        <xs:sequence>
-            <xs:element name="name" minOccurs="1" maxOccurs="1" type="cms:NonEmptyString"></xs:element>
-            <xs:element name="mappings">
-                <xs:complexType>
-                    <xs:sequence>
-                        <xs:element name="mapped_to" minOccurs="1" maxOccurs="unbounded" type="xs:string"></xs:element>
-                    </xs:sequence>
-                </xs:complexType>
-            </xs:element>
+                 differs from role_id). See cuems-common docs/node-identity-contract.md. -->
+            <xs:element name="role_id" minOccurs="0" maxOccurs="1" type="cms:NonEmptyString"/>
+            <xs:element name="alias" minOccurs="0" maxOccurs="1" type="cms:NonEmptyString"/>
+            <xs:element name="hostname" minOccurs="0" maxOccurs="1" type="xs:string"/>
         </xs:sequence>
     </xs:complexType>
 
@@ -64,5 +39,29 @@
             <xs:pattern value=".*[^\s].*" />
         </xs:restriction>
     </xs:simpleType>
-</xs:schema>
 
+    <xs:simpleType name="BoolType">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="True" />
+            <xs:enumeration value="False" />
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- feature 007: node_type (free text) -> node_role (real enumeration).
+         controller/node/firstrun replace master/slave/firstrun. -->
+    <xs:simpleType name="NodeRoleType">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="controller" />
+            <xs:enumeration value="node" />
+            <xs:enumeration value="firstrun" />
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- feature 007: shape only (canonical 8-4-4-4-12 hex), not uuid4 semantics
+         — an unparseable value still loads, kept as raw text (research R2). -->
+    <xs:simpleType name="UuidType">
+        <xs:restriction base="xs:string">
+            <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" />
+        </xs:restriction>
+    </xs:simpleType>
+</xs:schema>
