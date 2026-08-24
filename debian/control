@@ -9,7 +9,7 @@ Package: cuems-common
 Architecture: all
 Pre-Depends: adduser
 Depends: ${misc:Depends},
-         cuems-utils (>= 0.1.0),
+         cuems-utils (>= 0.1.0rc15),
          systemd,
          systemd-journal-remote (>= 247),
          python3,
@@ -47,12 +47,22 @@ Depends: ${misc:Depends},
 # feature a mandatory dependency of the package every node installs.
 Suggests: cuems-power-bridge
 Conflicts: network-manager
+Breaks: cuems-nodeconf (<< 0.1.0-8)
 Description: CUEMS common configuration and systemd services
  This package contains systemd service files, configuration files,
  and scripts required for CUEMS operation.
  .
  All Python scripts use /usr/lib/cuems/bin/python3 provided by
  the cuems-utils package.
+ .
+ network_map.xml's node_role migration (feature 007) — the cuems-utils
+ version floor is the schema this package ships and converts documents to;
+ the cuems-nodeconf Breaks (not a hard Depends — nodeconf is optional and
+ currently disabled cluster-wide) refuses installing this package's
+ conversion alongside a cuems-nodeconf still writing the retired
+ <node_type> element, rather than merely documenting the ordering
+ (FR-030d, SC-012). See specs/007-node-model-migration/migration-guide.md
+ in cuems-utils for the full release gate this enforces one edge of.
  .
  This package requires isc-dhcp-server and hostapd for WiFi access
  point functionality (cuems-wifi.service and hostapd.service).
