@@ -2,7 +2,7 @@
 """Resolve the CUEMS log collector URL for systemd-journal-upload.
 
 Reads /etc/cuems/network_map.xml, finds the node with
-<node_type>NodeType.master</node_type>, extracts its <ip>, and
+<node_role>controller</node_role>, extracts its <ip>, and
 writes URL=http://<ip>:19532 to /run/cuems-journal-upload/url.env so
 the upload service can pick it up via EnvironmentFile=.
 
@@ -42,22 +42,23 @@ def main() -> None:
     # Inner elements are unprefixed in the live schema (only the root
     # carries xmlns:cms). If that changes, find() returns None — print
     # the actual root tag and first child so the operator can see why.
-    master_ip_elem = root.find("./node_list/node[node_type='NodeType.master']/ip")
-    if master_ip_elem is None:
+    controller_ip_elem = root.find("./node_list/node[node_role='controller']/ip")
+    if controller_ip_elem is None:
         first_child = list(root)[0].tag if list(root) else "<none>"
         die(
-            "could not find NodeType.master/ip in network_map.xml — "
-            f"root tag was {root.tag!r}, first child was {first_child!r}. "
-            "Search expression: ./node_list/node[node_type='NodeType.master']/ip. "
+            "could not find a node with node_role='controller' in "
+            f"network_map.xml — root tag was {root.tag!r}, first child was "
+            f"{first_child!r}. Search expression: "
+            "./node_list/node[node_role='controller']/ip. "
             "If element names are now namespaced (e.g. {http://...}node), "
             "the helper must be updated."
         )
 
-    master_ip = (master_ip_elem.text or "").strip()
-    if not master_ip:
-        die("NodeType.master found but its <ip> tag is empty")
+    controller_ip = (controller_ip_elem.text or "").strip()
+    if not controller_ip:
+        die("controller node found but its <ip> tag is empty")
 
-    url = f"http://{master_ip}:{COLLECTOR_PORT}"
+    url = f"http://{controller_ip}:{COLLECTOR_PORT}"
 
     ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
     ENV_FILE.write_text(f"URL={url}\n")

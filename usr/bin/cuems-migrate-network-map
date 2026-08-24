@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Convert a deployed node's ``network_map.xml`` from ``node_type`` to ``node_role``.
+
+Relocated **verbatim** from `cuems-utils`'s
+`specs/007-node-model-migration/cuems_migrate_network_map.py` — that repository
+developed this script ahead of this one because its own corpus conversion
+(T015) needed a script whose correctness is established independently of the
+corpus it converts, per that feature's phasing note. See that module's
+docstring for the full history; this copy is the shipped artifact.
+
+Runs from `/usr/bin`, where the shared venv at `/usr/lib/cuems` is **not**
+importable (`CLAUDE.md`'s shared-venv rule) — stdlib only, no `cuemsutils`
+import, so this file has no runtime dependency on the package whose schema it
+is converting documents for.
+
+**Textual, line-oriented rewrite — not an ElementTree round trip** (research
+R8). An ElementTree round trip would reformat the whole document
+(indentation, attribute order, namespace prefix rendering), so it could not
+honour "every other byte unchanged" and would not be idempotent in the byte
+sense. A targeted regex rewrite touches only the matched elements.
+
+**Value mapping**, accepting both legacy spellings because both exist in the
+wild:
+
+======================  ===============
+found                   written
+======================  ===============
+``NodeType.master``     ``controller``
+``master``              ``controller``
+``NodeType.slave``      ``node``
+``slave``               ``node``
+``NodeType.firstrun``   ``firstrun``
+``firstrun``            ``firstrun``
+*anything else*         **the whole file is refused**
+======================  ===============
+
+A map mixing a recognised and an unrecognised value is refused whole — never
+half-converted, since a document carrying both vocabularies is something no
+requirement describes and no test can pin (M3).
+
+**Invoked from `debian/postinst` on every path a conffile might actually be
+live at**: `/etc/cuems/network_map.xml` and, if dpkg left one behind because
+an operator chose to keep local modifications during the conffile prompt,
+`/etc/cuems/network_map.xml.dpkg-new` — `convert()` itself is path-agnostic
+(it operates on whatever string it is given), so handling that sibling is
+`postinst`'s responsibility (which path it invokes this script on), not a
+special case in the conversion logic here.
+"""
+
+from __future__ import annotations
+
+import argparse
+import glob
+import os
+import re
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+
+_VALUE_MAP = {
+    "NodeType.master": "controller",
+    "master": "controller",
+    "NodeType.slave": "node",
+    "slave": "node",
+    "NodeType.firstrun": "firstrun",
+    "firstrun": "firstrun",
+}
+
+_ACCEPTED = sorted(set(_VALUE_MAP))
+
+#: One ``<node>...</node>`` block at a time, so a diagnostic can name *which*
+#: node carries an unrecognised value rather than only the document.
+_NODE_BLOCK_RE = re.compile(r"<node>.*?</node>", re.S)
+_UUID_RE = re.compile(r"<uuid>(.*?)</uuid>", re.S)
+_NODE_TYPE_RE = re.compile(r"<node_type>(.*?)</node_type>", re.S)
+
+#: Backups accumulate one per conversion, never per no-op run (FR-011i) — the
+#: timestamp has second resolution, which is enough to keep two *different*
+#: conversions of the same file from colliding while never growing unbounded
+#: on repeated idempotent runs (a no-op run never reaches the backup step).
+_BACKUP_SUFFIX_FMT = ".%Y%m%dT%H%M%SZ.bak"
+
+
+@dataclass(frozen=True)
+class Outcome:
+    """One of exactly four distinguishable results (FR-011d-i).
+
+    Silence on success is the failure mode this guards against: an operator
+    must be able to tell "already in the new format" from "the conversion
+    never reached this node" without reading source.
+    """
+
+    status: str  # "converted" | "already_converted" | "absent" | "refused"
+    path: str
+    nodes_converted: int = 0
+    backup_path: str | None = None
+    message: str = ""
+    deprecation_notices: tuple[str, ...] = field(default_factory=tuple)
+
+    def render(self) -> str:
+        if self.status == "absent":
+            return f"absent: {self.path} does not exist; nothing to convert"
+        if self.status == "already_converted":
+            return f"already converted: {self.path} carries no <node_type>"
+        if self.status == "refused":
+            return f"refused: {self.path} — {self.message}"
+        lines = [
+            f"converted: {self.path} — {self.nodes_converted} node(s), "
+            f"backup at {self.backup_path}"
+        ]
+        lines.extend(self.deprecation_notices)
+        return "\n".join(lines)
+
+
+def _prune_old_backups(path: str, *, keep: int = 5) -> None:
+    """Bound backup accumulation (FR-011i) without deleting the newest ones.
+
+    A node that is converted, restored and reconverted repeatedly (unusual,
+    but not forbidden) must not leave an unbounded trail beside the file that
+    holds its cluster's live topology.
+    """
+    existing = sorted(glob.glob(f"{path}.*.bak"))
+    for stale in existing[:-keep] if len(existing) > keep else []:
+        try:
+            os.remove(stale)
+        except OSError:
+            pass
+
+
+def convert(path: str) -> Outcome:
+    """Convert ``path`` in place, or explain why nothing was written.
+
+    Never raises for an expected outcome (absent file, already converted,
+    unrecognised value) — every one of those is a returned :class:`Outcome`,
+    because the caller (``postinst``) must never fail an upgrade over a
+    node's map (M3).
+    """
+    if not os.path.exists(path):
+        return Outcome(status="absent", path=path)
+
+    with open(path, "r", encoding="utf-8") as fh:
+        text = fh.read()
+
+    if "<node_type>" not in text:
+        return Outcome(status="already_converted", path=path)
+
+    deprecation_notices: list[str] = []
+    converted_blocks: list[tuple[str, str]] = []  # (original block, new block)
+    for block in _NODE_BLOCK_RE.findall(text):
+        type_match = _NODE_TYPE_RE.search(block)
+        if type_match is None:
+            continue
+        found = type_match.group(1)
+        uuid_match = _UUID_RE.search(block)
+        node_id = uuid_match.group(1) if uuid_match else "<uuid unknown>"
+
+        if found not in _VALUE_MAP:
+            return Outcome(
+                status="refused",
+                path=path,
+                message=(
+                    f"node {node_id} has <node_type>{found}</node_type>, "
+                    f"not one of the accepted values {_ACCEPTED} — "
+                    "edit the document and re-run the conversion"
+                ),
+            )
+
+        replacement = block[: type_match.start()] + (
+            f"<node_role>{_VALUE_MAP[found]}</node_role>"
+        ) + block[type_match.end():]
+        converted_blocks.append((block, replacement))
+        if found.startswith("NodeType."):
+            deprecation_notices.append(
+                f"note: node {node_id}'s value {found!r} is the retired "
+                f"enum-repr spelling; written as {_VALUE_MAP[found]!r}"
+            )
+
+    if not converted_blocks:
+        # <node_type> text appeared but not inside a <node> block (e.g. a
+        # comment) — nothing this script's contract covers converting.
+        return Outcome(status="already_converted", path=path)
+
+    new_text = text
+    for original_block, replacement_block in converted_blocks:
+        new_text = new_text.replace(original_block, replacement_block, 1)
+
+    timestamp = datetime.now(timezone.utc).strftime(_BACKUP_SUFFIX_FMT)
+    backup_path = f"{path}{timestamp}"
+    with open(backup_path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(new_text)
+    _prune_old_backups(path)
+
+    return Outcome(
+        status="converted",
+        path=path,
+        nodes_converted=len(converted_blocks),
+        backup_path=backup_path,
+        deprecation_notices=tuple(deprecation_notices),
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("path", help="network_map.xml to convert in place")
+    args = parser.parse_args(argv)
+
+    outcome = convert(args.path)
+    print(outcome.render())
+    # Never fails the upgrade (M3) — including on refusal.
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

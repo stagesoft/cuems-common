@@ -48,6 +48,7 @@ usr/share/cuems/hostapd/hostapd.conf.template usr/share/cuems/hostapd/
 
 # Python scripts (executable)
 usr/bin/cuems-config-node usr/bin/
+usr/bin/cuems-migrate-network-map usr/bin/
 
 # System scripts
 usr/bin/cuems-cluster-poweroff usr/bin/

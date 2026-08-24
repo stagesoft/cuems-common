@@ -251,17 +251,17 @@ except ET.ParseError as e:
     raise SystemExit
 
 rows = []
-masters = 0
+controllers = 0
 for n in root.findall("./node_list/node"):
     role_id  = n.findtext("role_id")  or "-"
     alias    = n.findtext("alias")    or "-"
     hostname = n.findtext("hostname") or "-"
-    node_type = n.findtext("node_type") or "-"
+    node_role = n.findtext("node_role") or "-"
     ip       = n.findtext("ip")       or "-"
     adopted  = n.findtext("adopted")  or "-"
-    role_simple = node_type.replace("NodeType.", "")
-    if role_simple == "master":
-        masters += 1
+    role_simple = node_role
+    if role_simple == "controller":
+        controllers += 1
     legacy = " [legacy]" if hostname != "-" and hostname != role_id else ""
     rows.append((role_id, alias, hostname, role_simple, ip, adopted, legacy))
 
@@ -276,8 +276,8 @@ else:
     for r in rows:
         print(fmt.format(*r[:6], r[6]))
 
-if masters > 1:
-    print(f"\n  WARNING: {masters} nodes declared as master; expected exactly 1.")
+if controllers > 1:
+    print(f"\n  WARNING: {controllers} nodes declared as controller; expected exactly 1.")
 PY
     else
         echo "## $NETWORK_MAP not found (no XML context available)."

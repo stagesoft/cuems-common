@@ -21,7 +21,8 @@ On slave:
   - Copies /usr/share/cuems/chrony-client.conf.template to
     /etc/chrony/conf.d/cuems.conf (maxdistance 16 + makestep 1 -1
     to absorb large initial offsets from freshly-cloned hardware).
-  - Reads /etc/cuems/network_map.xml, finds NodeType.master/ip, writes
+  - Reads /etc/cuems/network_map.xml, finds the node with
+    node_role='controller' and its <ip>, writes
     /etc/chrony/sources.d/cuems-master.sources with one line:
         server <master-ip> iburst minpoll 4 maxpoll 6
 
@@ -85,19 +86,20 @@ def read_master_ip() -> str:
     except ET.ParseError as e:
         die(f"failed to parse {NETWORK_MAP}: {e}")
     root = tree.getroot()
-    elem = root.find("./node_list/node[node_type='NodeType.master']/ip")
+    elem = root.find("./node_list/node[node_role='controller']/ip")
     if elem is None:
         first_child = list(root)[0].tag if list(root) else "<none>"
         die(
-            "could not find NodeType.master/ip in network_map.xml — "
-            f"root tag was {root.tag!r}, first child was {first_child!r}. "
-            "Search expression: ./node_list/node[node_type='NodeType.master']/ip. "
+            "could not find a node with node_role='controller' in "
+            f"network_map.xml — root tag was {root.tag!r}, first child was "
+            f"{first_child!r}. Search expression: "
+            "./node_list/node[node_role='controller']/ip. "
             "If element names are now namespaced (e.g. {http://...}node), "
             "the helper must be updated."
         )
     ip = (elem.text or "").strip()
     if not ip:
-        die("NodeType.master found but its <ip> tag is empty")
+        die("controller node found but its <ip> tag is empty")
     return ip
 
 
