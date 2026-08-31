@@ -1,3 +1,30 @@
+cuems-common (1.3.0-19) bookworm; urgency=medium
+
+  * Retire /etc/default/grub.d/cuems-display.cfg, the last live remnant of the
+    HDMI warm-restart hack. It appended `i915.enable_dc=0` to
+    GRUB_CMDLINE_LINUX_DEFAULT; the hack was reverted in bd47669 (April 2026,
+    the black screen was a monitor-side setup problem) and the file was dropped
+    from debian/install — but with no rm_conffile, so dpkg marked it `obsolete`
+    and kept it on disk forever.
+  * Consequence, found on the FP530 on 2026-08-31: a fresh install has no such
+    file, while every host upgraded across the revert still carries the
+    parameter on EVERY boot entry, Debian's own included. Where an operator had
+    also hand-added it to /etc/default/grub, it appears TWICE:
+    `ro pci=nommconf i915.enable_dc=0 i915.enable_dc=0`. Nothing in any log says
+    so, and the fleet silently splits into two populations depending on whether
+    a box was installed before or after April.
+  * Handled with dpkg-maintscript-helper rm_conffile across preinst/postinst/
+    postrm, the pattern already used for the acpid files in 1.3.0-16 and for the
+    same reason (debhelper cannot inject here — see the note atop postinst).
+  * The postinst's update-grub then recompiles the menu without the parameter,
+    since rm_conffile has already moved the file out of the *.cfg glob that
+    grub-mkconfig sources.
+  * NOT touched: a copy hand-added to /etc/default/grub itself. That is
+    grub-common's conffile and host-level config; this package has no business
+    rewriting it, so it stays an operator action.
+
+ -- Ion Reguera <ion@stagelab.coop>  Sun, 31 Aug 2026 14:05:00 +0200
+
 cuems-common (1.3.0-18) bookworm; urgency=medium
 
   * New /etc/grub.d/11_cuems_recovery: a GRUB boot entry that starts the box
