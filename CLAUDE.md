@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+SPDX-License-Identifier: GPL-3.0-or-later
+SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+-->
+
 # cuems-common
 
 Part of the **CUEMS** ecosystem — see the [`cuems-RELATIONS`](https://github.com/stagesoft/cuems-RELATIONS) repo for the system index, architecture diagram, and protocol/port map.
@@ -88,4 +94,9 @@ Standardize on **controller/node** for all new code, docs, strings, log messages
 - **OLA race + eurolite** codified in cuems-common 1.3.0-12: `cuems-node-engine.service After=olad.service` (native olad binds :9010 before node-engine spawns dmxplayer → no rogue olad at boot) + `cuems-ola-profile eurolite-mk2`. Details in the `ola` CLAUDE.md.
 - **Hardware enablement (unrelated to CUEMS code):** Meteor Lake controllers (PCI VGA `7d45`) on Debian 6.1 need `i915.force_probe=7d45` in GRUB or `/dev/dri` is absent → jackd/node-engine/videocomposer cascade-fail. i3-1215U NIC naming standardized via systemd `.link` files (PCI `04/03/02:00.0` I226-V → ethernet0/1/2, `05:00.0` AX200 → wifi0); filename must == `Name=` (duplicate `Name=` silently breaks one); renames apply on reboot only; bond0 slave/MAC/DHCP-IP change is the dangerous part. Future improvement: hardware-specific golden base images (i3 vs N97) so provisioning is only uniqueness + customization.
 - **dpkg-db drift on can't-`dpkg -i` controllers**: where an operator has no sudo password for dpkg, packages get deployed by file-copy (rsync of extracted `.deb` trees), so `dpkg-query` reports stale versions while the binaries are new. Audit by binary file date / `/proc/<pid>/exe`, not dpkg.
+- **GRUB recovery entry — package-owned since 1.3.0-18.** On a video host the compositor holds DRM master over every output, so there is no text console exactly when an operator needs one. `/etc/grub.d/11_cuems_recovery` (shipped, conffile) generates boot entries titled `CUEMS Recovery (<kver>) — videocomposer disabled`, id `cuems-recovery-<kver>`, top-level in the menu, for each of the **two newest** kernels that have a matching initrd. They mask **only** `cuems-videocomposer.service`, via `systemd.mask=` on the kernel command line — nothing on disk changes, so **one ordinary reboot undoes it**; `quiet`/`splash` are stripped. It is a console escape hatch, not a "CUEMS off" switch.
+  - Two kernels, not one: the entry must not inherit whatever is wrong with the default boot (the FP530's backports 6.12.95 comes up on the wrong IP — `iwlwifi` never probes, the bond takes the wrong MAC, the DHCP reservation misses). Two, not all: this package's postinst disables `apt-daily*.timer`, so superseded kernels are **never purged** on a CUEMS host.
+  - `postinst` deletes the legacy hand-placed `/etc/grub.d/11_formitgo_recovery` (it existed on the FP530 only, owned by no package) and runs `update-grub`; `postrm` runs it again on remove/purge, otherwise the compiled menu would keep offering the entry after the package is gone. Both are guarded but **warn on stderr** — a failing `update-grub` is host-wide, since `/etc/grub.d/*` runs under `set -e` and the same failure breaks the kernel package's own hook.
+  - When editing it: never hardcode `/boot/vmlinuz-<kver>` (that assumes `/boot` is not a separate partition) — the script sources `grub-mkconfig_lib` and uses `make_system_path_relative_to_its_root` + `prepare_grub_to_access_device`. And never `exit` non-zero: that aborts `grub-mkconfig` before `20_linux_xen`/`30_os-prober` for the whole host, permanently. Missing input ⇒ `exit 0`.
+  - It is a **conffile**: do not edit it on a box to try something out. dpkg would then keep the local version on the next non-interactive `dpkg -i` and say almost nothing — which reads as "the .deb didn't install". Copy it elsewhere to experiment.
 - Default credentials, latency tuning, and OLA install notes live in `docs/` (`default-credentials.md`, `latency-tuning.md`, `ola-install.md`).

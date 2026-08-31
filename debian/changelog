@@ -1,3 +1,39 @@
+cuems-common (1.3.0-18) bookworm; urgency=medium
+
+  * New /etc/grub.d/11_cuems_recovery: a GRUB boot entry that starts the box
+    with cuems-videocomposer masked, so an operator in front of a broken video
+    host always has a usable text console. The compositor takes DRM master
+    over every connected output, which means the console disappears exactly
+    when it is needed.
+  * The mask is applied with systemd.mask= on the kernel command line, not on
+    disk, so one ordinary reboot undoes it. quiet/splash are stripped so the
+    boot is readable. Only the compositor is masked — this is a console escape
+    hatch, not a "CUEMS off" switch.
+  * Why it is in the package at all: the idea existed on ONE machine as a
+    hand-placed /etc/grub.d/11_formitgo_recovery that no package owned
+    (dpkg -S found nothing) and that no other host had. postinst removes that
+    legacy file, so an upgraded FP530 does not end up with two entries.
+  * One entry per each of the TWO newest kernels, newest first, with a stable
+    --id (cuems-recovery-<kver>). The hand-written script always picked the
+    newest kernel, so its recovery entry inherited whatever was wrong with the
+    default boot — on the FP530 that is the backports 6.12.95, which comes up
+    on the wrong IP. Capped at two because this package's own postinst
+    disables apt-daily*.timer, so superseded kernels are never purged here.
+  * Kernel/initrd paths come from grub-mkconfig_lib
+    (make_system_path_relative_to_its_root + prepare_grub_to_access_device)
+    instead of a hardcoded /boot/vmlinuz-<kver>, which silently assumes /boot
+    is not a separate partition. A kernel with no matching initrd is skipped.
+  * postinst and postrm both run update-grub, guarded so a host without GRUB
+    still (de)configures cleanly — but with a WARNING on stderr rather than a
+    bare `|| true`. A broken update-grub is host-wide: /etc/grub.d/* runs
+    under set -e, so it also breaks the hook the kernel package runs.
+  * postrm is not optional: files shipped under /etc/ become dpkg conffiles
+    automatically, and neither remove nor purge regenerates grub.cfg. Without
+    the hook the compiled menu would keep offering a recovery entry for a
+    package that is gone.
+
+ -- Ion Reguera <ion@stagelab.coop>  Sun, 31 Aug 2026 13:20:00 +0200
+
 cuems-common (1.3.0-17) bookworm; urgency=medium
 
   * cluster-poweroff.conf: new nodes_off= knob (default true, so no site's

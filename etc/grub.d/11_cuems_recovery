@@ -1,0 +1,113 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# 11_cuems_recovery — GRUB generator for the CUEMS recovery boot entries.
+#
+# Why this exists: on a CUEMS video host the compositor takes DRM master over
+# every connected output, so an operator standing in front of a broken box has
+# no usable text console — which is exactly when they need one. These entries
+# boot the same system with cuems-videocomposer masked ON THE KERNEL COMMAND
+# LINE (systemd.mask=), so nothing on disk changes and one ordinary reboot
+# undoes it. quiet/splash are stripped so the boot is readable.
+#
+# ONLY the compositor is masked, deliberately. Masking the engine or the whole
+# cuems-node.target would turn this into a general "CUEMS off" switch — a
+# different tool, and one that invites being used to "fix" a show. The console
+# is the goal.
+#
+# One entry for each of the TWO newest kernels, newest first. Two and not one
+# because a recovery entry that boots the kernel you are recovering *from* is
+# half an escape hatch (measured: on the FP530 the backports 6.12.95 brings the
+# box up on the wrong IP — iwlwifi never probes, the bond adopts the wrong MAC
+# and the DHCP reservation misses). Two and not all because cuems-common's own
+# postinst disables apt-daily*.timer, so superseded kernels are never purged on
+# a CUEMS host and an unbounded list would grow for the life of the machine.
+#
+# Top level, NOT nested in `Advanced options for ...` — unlike 10_linux, which
+# nests every non-default entry it emits. An escape hatch buried one level down
+# is worse at the job; capping at two is what makes staying top-level
+# affordable.
+#
+# ⚠ /etc/grub.d/* runs from grub-mkconfig under `set -e`, as a bare command in
+# a loop. A non-zero exit here aborts that loop before 20_linux_xen /
+# 30_os-prober AND makes every future update-grub on the host fail the same way
+# — including the hook run when a kernel package is installed. So: every
+# command that can fail is guarded, and anything missing means `exit 0` (the
+# host loses this entry, nothing else). The existing grub.cfg is never at risk
+# — grub-mkconfig writes a .new file and only installs it after
+# grub_script_check passes.
+
+set -e
+
+MASK_UNITS="cuems-videocomposer.service"
+MAX_ENTRIES=2
+
+# grub_probe / grub_quote / grub_add_tab / grub_file_is_not_garbage and, most
+# importantly, make_system_path_relative_to_its_root + prepare_grub_to_access_device.
+# The last two are why we source this at all: hardcoding /boot/vmlinuz-<kver>
+# assumes /boot is not a separate partition. That happens to hold on the FP530
+# and on test2, but where it does not the correct GRUB path is /vmlinuz-<kver>,
+# and the entry would fail precisely when the operator needs it while Debian's
+# own entries kept working — the most confusing shape a failure can take.
+_lib="${pkgdatadir:-/usr/share/grub}/grub-mkconfig_lib"
+[ -r "$_lib" ] || exit 0
+. "$_lib"
+
+# grub-mkconfig exports these; derive them when the script is run stand-alone
+# (the dry run of §7). grub_probe needs root — as non-root we simply emit
+# nothing rather than a wrong entry.
+if [ -z "${GRUB_DEVICE}" ]; then
+    GRUB_DEVICE="$("${grub_probe}" --target=device / 2>/dev/null || true)"
+fi
+[ -n "${GRUB_DEVICE}" ] || exit 0
+
+if [ -z "${GRUB_DEVICE_UUID}" ]; then
+    GRUB_DEVICE_UUID="$("${grub_probe}" --device "${GRUB_DEVICE}" --target=fs_uuid 2>/dev/null || true)"
+fi
+[ -n "${GRUB_DEVICE_UUID}" ] || exit 0
+
+if [ -z "${GRUB_DEVICE_BOOT}" ]; then
+    GRUB_DEVICE_BOOT="$("${grub_probe}" --target=device /boot 2>/dev/null || true)"
+fi
+[ -n "${GRUB_DEVICE_BOOT}" ] || exit 0
+
+# Same source of truth as the default entry, minus quiet/splash.
+if [ -z "${GRUB_CMDLINE_LINUX}${GRUB_CMDLINE_LINUX_DEFAULT}" ] && [ -r /etc/default/grub ]; then
+    . /etc/default/grub
+fi
+cmdline="$(printf '%s %s' "${GRUB_CMDLINE_LINUX}" "${GRUB_CMDLINE_LINUX_DEFAULT}" \
+    | sed -e 's/\bquiet\b//g' -e 's/\bsplash\b//g' -e 's/  */ /g' -e 's/^ //' -e 's/ $//' \
+    || true)"
+
+# GRUB-visible path to /boot: "/boot" normally, "/" when /boot is its own
+# filesystem. prepare_grub_to_access_device emits the matching insmod/search.
+rel_dirname="$(make_system_path_relative_to_its_root /boot 2>/dev/null)" || exit 0
+[ -n "${rel_dirname}" ] || exit 0
+prepare_boot="$(prepare_grub_to_access_device "${GRUB_DEVICE_BOOT}" 2>/dev/null | grub_add_tab)" || exit 0
+
+emitted=0
+for _kver in $(ls -1 /boot/vmlinuz-* 2>/dev/null | sed 's#.*/vmlinuz-##' | sort -Vr || true); do
+    [ "${emitted}" -lt "${MAX_ENTRIES}" ] || break
+    # A half-installed kernel must not produce an unbootable entry.
+    [ -f "/boot/initrd.img-${_kver}" ] || continue
+    grub_file_is_not_garbage "/boot/vmlinuz-${_kver}" || continue
+
+    _title="CUEMS Recovery (${_kver}) — videocomposer disabled"
+    # --id is stable (it does not depend on the title string), so a future
+    # GRUB_DEFAULT can address the entry directly.
+    cat <<EOF
+menuentry '$(echo "${_title}" | grub_quote)' --class recovery --class cuems \$menuentry_id_option 'cuems-recovery-${_kver}' {
+	load_video
+	insmod gzio
+${prepare_boot}
+	echo	'CUEMS recovery: booting with ${MASK_UNITS} masked ...'
+	linux	${rel_dirname}/vmlinuz-${_kver} root=UUID=${GRUB_DEVICE_UUID} ro ${cmdline} systemd.mask=${MASK_UNITS}
+	initrd	${rel_dirname}/initrd.img-${_kver}
+}
+EOF
+    emitted=$((emitted + 1))
+done
+
+exit 0

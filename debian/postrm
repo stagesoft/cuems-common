@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 set -e
 
 # Retire the dead acpid power-button conffiles (1.3.0-16). The postrm half of
@@ -23,5 +26,37 @@ if [ "$1" = "purge" ]; then
     rm -f /etc/chrony/conf.d/cuems.conf \
           /etc/chrony/sources.d/cuems-master.sources
 fi
+
+# =========================================================================
+# GRUB recovery boot entry (1.3.0-18)
+# =========================================================================
+# /etc/grub.d/11_cuems_recovery lives under /etc/, so dh_installdeb makes it a
+# dpkg CONFFILE automatically. Neither `remove` nor `purge` regenerates
+# grub.cfg on its own, so without this hook the compiled menu would keep
+# offering "CUEMS Recovery (<kver>)" with
+# systemd.mask=cuems-videocomposer.service for a package that is gone — an
+# unowned, stale boot entry, i.e. exactly the problem the packaging exists to
+# fix.
+#
+# The remove/purge asymmetry below is intended, not a bug:
+#   remove — the conffile is still on disk, so the regenerated menu still
+#            carries the entries. Correct: the package's config is still there.
+#   purge  — dpkg deletes the conffile BEFORE running postrm, so the
+#            regeneration produces a menu without them.
+#
+# Guarded the same way as postinst, and just as loudly: a broken update-grub
+# is a host-wide condition (it also breaks the kernel package's own hook), not
+# a cosmetic one.
+case "$1" in
+    remove|purge)
+        if command -v update-grub >/dev/null 2>&1; then
+            update-grub >/dev/null 2>&1 || \
+                echo "WARNING: update-grub failed; grub.cfg may still list CUEMS recovery entries" >&2
+        elif command -v grub-mkconfig >/dev/null 2>&1 && [ -d /boot/grub ]; then
+            grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || \
+                echo "WARNING: grub-mkconfig failed; grub.cfg may still list CUEMS recovery entries" >&2
+        fi
+        ;;
+esac
 
 exit 0

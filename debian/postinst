@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 set -e
 
 # CUEMS Common package post-installation script
@@ -152,6 +155,36 @@ if command -v deb-systemd-helper >/dev/null 2>&1; then
     deb-systemd-helper update-state >/dev/null 2>&1 || true
 elif command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload
+fi
+
+# =========================================================================
+# GRUB recovery boot entry (1.3.0-18)
+# =========================================================================
+# /etc/grub.d/11_cuems_recovery is package-owned from this version on. Before
+# it, the same idea existed on exactly ONE machine (the FP530) as a
+# hand-placed /etc/grub.d/11_formitgo_recovery that no package owned — so
+# nothing would ever remove it, and leaving it would give that host TWO
+# recovery entries with different rules: the old script always picks the
+# NEWEST installed kernel, which is precisely the defect the new generator
+# exists to fix (on the FP530 the newest kernel is the backports 6.12.95 that
+# comes up on the wrong IP).
+rm -f /etc/grub.d/11_formitgo_recovery
+
+# Compile the entry into grub.cfg now instead of waiting for the next kernel
+# install. Guarded, because a host with no GRUB (container, chroot, build
+# environment) must still configure cleanly — but NOT silently: a failing
+# update-grub means far more than a missing recovery entry. /etc/grub.d/* runs
+# from grub-mkconfig under `set -e`, so whatever aborted it will abort EVERY
+# future update-grub on this host, the hook the kernel package runs included,
+# and the box would quietly stop getting new kernels into its menu. The
+# existing grub.cfg is never destroyed (grub-mkconfig writes a .new and only
+# installs it after grub_script_check passes) — it just freezes.
+if command -v update-grub >/dev/null 2>&1; then
+    update-grub >/dev/null 2>&1 || \
+        echo "WARNING: update-grub failed; the CUEMS recovery entry is not in grub.cfg" >&2
+elif command -v grub-mkconfig >/dev/null 2>&1 && [ -d /boot/grub ]; then
+    grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || \
+        echo "WARNING: grub-mkconfig failed; the CUEMS recovery entry is not in grub.cfg" >&2
 fi
 
 # Migration: cuems-midiconnector.service moved from cuems-controller.target
