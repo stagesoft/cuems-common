@@ -1,3 +1,39 @@
+cuems-common (1.3.0-20) bookworm; urgency=medium
+
+  * interfaces.master: list ethernet0 before wifi0 in bond-slaves. A bond adopts
+    the MAC of its FIRST slave and forces it onto the others, so listing wifi0
+    first put the WiFi card's MAC on the ethernet wire — making a controller's
+    DHCP identity depend on a chip it does not need. Measured 2026-08-31: on a
+    kernel whose iwlwifi firmware was missing, wifi0 never appeared, the bond
+    fell back to ethernet0's MAC, the reservation missed, and the host came up
+    on a pool lease looking dead. The new order simply makes the adopted MAC
+    agree with the bond-primary that was already declared; failover is decided
+    by bond-primary + miimon and is unchanged, and the WiFi AP is unaffected
+    because hostapd unenslaves wifi0 before binding. Controller-only: nodes use
+    bridge0 and have no bond.
+  * Retire /etc/network/interfaces and /etc/network/interfaces.cuems via
+    rm_conffile in preinst/postinst/postrm. Versions old enough to ship them
+    left dpkg recording both as `obsolete` conffiles on every host that came
+    through the divert -> postinst-cp transition (verified on test2, 1.3.0-14).
+    Two consequences this retires: `dpkg -S /etc/network/interfaces` still
+    answered cuems-common, which reads as the package owning the live network
+    config when it does not; and `dpkg --purge` would have DELETED the host's
+    live /etc/network/interfaces, obsolete conffiles being removed on purge.
+    The repo's two dead duplicates are deleted with them — the shipped template
+    is usr/share/cuems/interfaces.master and always was.
+  * CLAUDE.md: correct two false clauses in the same sentence. The templates ARE
+    auto-deployed on first install (debian/postinst copies interfaces.master
+    when [ -z "$2" ]), and nodeconf DOES touch network plumbing
+    (CuemsNodeConf.py:770-777 copies the same template during controller
+    promotion) — the note claimed the opposite "confirmed by source audit".
+  * docs/node-identity-contract.md: say which MAC. The `mac` field is less
+    stable than its table implies on controllers, `ethernet0`'s permanent
+    address is what a DHCP reservation and WoL must key to, and the fleet's
+    three coexisting states (unfixed / hwaddress-pinned / reordered) are named
+    so an operator meeting a pinned box knows what they are looking at.
+
+ -- Ion Reguera <ion@stagelab.coop>  Mon, 31 Aug 2026 20:33:12 +0200
+
 cuems-common (1.3.0-19) bookworm; urgency=medium
 
   * Retire /etc/default/grub.d/cuems-display.cfg, the last live remnant of the

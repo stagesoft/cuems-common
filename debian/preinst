@@ -38,6 +38,22 @@ if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
         /etc/default/grub.d/cuems-display.cfg 1.3.0-19~ cuems-common -- "$@"
 fi
 
+# /etc/network/interfaces and /etc/network/interfaces.cuems were shipped by
+# versions old enough that dpkg still records them as `obsolete` conffiles on
+# every host that came through the divert -> postinst-cp transition — verified
+# on test2 (1.3.0-14) in 2026-08. Two consequences that this retires: `dpkg -S
+# /etc/network/interfaces` still answers cuems-common, which reads as "the
+# package owns the live network config" and it does not; and a `dpkg --purge`
+# would DELETE the host's live /etc/network/interfaces, because obsolete
+# conffiles are removed on purge. The live file is host-specific and must
+# survive purge. Same family as the acpid and grub-display conffiles above.
+if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
+    for _cf in /etc/network/interfaces /etc/network/interfaces.cuems; do
+        dpkg-maintscript-helper rm_conffile "$_cf" 1.3.0-20~ cuems-common -- "$@"
+    done
+fi
+
+
 case "$1" in
     install|upgrade)
         # Create cuems system group if it doesn't exist

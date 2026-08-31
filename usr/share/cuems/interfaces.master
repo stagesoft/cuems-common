@@ -12,7 +12,14 @@ iface lo inet loopback
 auto bond0
 
 iface bond0 inet dhcp
-	bond-slaves wifi0 ethernet0
+	# ethernet0 FIRST on purpose: a bond adopts the MAC of its first slave and
+	# forces it onto the others, so listing wifi0 first put the WiFi card's MAC
+	# on the ethernet wire — making the host's DHCP identity depend on a chip it
+	# does not need. Measured 2026-08-31: on a kernel whose iwlwifi firmware was
+	# missing, wifi0 never appeared, the bond fell back to ethernet0's MAC, the
+	# reservation missed and the host came up on a pool lease looking dead.
+	# This order simply makes the adopted MAC agree with bond-primary below.
+	bond-slaves ethernet0 wifi0
 	bond-mode active-backup
 	bond-primary ethernet0
 	bond-miimon 100

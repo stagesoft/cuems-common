@@ -43,6 +43,38 @@ planned, reboot-mandatory procedure (see "Role-flip" below).
 cuems-logs) identifies nodes by UUID. role_id/alias/hostname/node_type
 are mutable projections.
 
+### ⚠️ Which MAC — `mac` is less stable than the table implies
+
+On a **controller** the live `bond0` address is **not** a NIC's own: a bond
+adopts the MAC of its **first slave** and forces it onto the others. Until
+`1.3.0-20` `interfaces.master` listed `wifi0` first, so controllers presented
+the **WiFi card's** MAC on the ethernet wire — and any `mac` recorded from
+`ip link show bond0` captured that, not a permanent hardware address.
+
+The fleet noticed this independently before it was understood. In
+`cuems-fleet/inventory/nodes.yaml` the **alquiler1** controller's `mac` is
+annotated *"SUSPECT AS A PK … very likely bond0's adopted MAC and NOT
+ethernet0's permanent hwaddr"*, and **sala1** carries the same mismatch.
+
+**The rule:** record `ethernet0`'s **permanent** address — read it from
+`/proc/net/bonding/bond0` (`Permanent HW addr` per slave) or `ethtool -P
+ethernet0`, **never** from `/sys/class/net/*/address`, which shows the
+bond-imposed value on every slave. The same address is what a DHCP reservation
+must be keyed to, and what WoL must target (`cuems-fleet` records that WoL goes
+to the **ethernet** MACs — a bond/bridge address is useless for it).
+
+Three states coexist in the fleet as of 2026-08-31, deliberately:
+
+| state | hosts | how |
+|---|---|---|
+| unfixed | most deployed controllers | bond adopts `wifi0`'s MAC; left as-is on purpose |
+| **pinned** | alquiler1, sala1 | `hwaddress ether <ethernet0 mac>` in the `bond0` stanza — deployed 2026-08-28, *"VERIFIED across 2 reboots, lease + node identity preserved"* |
+| **reordered** | test2, and every controller built from `1.3.0-20` onward | `bond-slaves ethernet0 wifi0` — needs no per-host value, so it fits the shipped template |
+
+An operator finding an explicit `hwaddress ether` line on a venue box is looking
+at the second state. It is correct and was proven; it is simply not what a
+template can carry.
+
 ## Role-id assignment rules (cuems-nodeconf)
 
 ### New adoption (node has no entry in network_map.xml)
