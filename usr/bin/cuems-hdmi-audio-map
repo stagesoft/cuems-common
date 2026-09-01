@@ -4,13 +4,20 @@
 On Intel Alder Lake, the GPU assigns display pipes (CRTCs) to physical ports
 dynamically at boot. The HDA HDMI audio codec maps pipes to fixed ALSA devices:
 
-    Pipe A (CRTC index 0) → hw:PCH,3
-    Pipe B (CRTC index 1) → hw:PCH,7
-    Pipe C (CRTC index 2) → hw:PCH,8
+    Pipe A (CRTC index 0) → device 3
+    Pipe B (CRTC index 1) → device 7
+    Pipe C (CRTC index 2) → device 8
 
 This script reads the current CRTC→connector assignment via DRM ioctls,
 builds the mapping, and writes /etc/asound.conf so that physical ports
 always map to the same JACK channel pairs regardless of boot order.
+
+The ALSA *card* is detected, never assumed. It is called "PCH" on the Intel
+N97/N100 nodes but "Generic" on the AMD boxes, and writing the Intel name into
+the config on an AMD host produces "Cannot get card index for PCH" - at which
+point jackd cannot open a device, crash-loops, and takes cuems-node-engine
+down with it as a failed dependency. The device numbers themselves (3, 7, 8)
+are a property of the HDA codec layout and are the same on both.
 
 Connector ordering (determines JACK channel assignment):
     Slot a (ch 1-2) = first connected port  (alphabetical by DRM name)
@@ -34,6 +41,67 @@ ASOUND_CONF = '/etc/asound.conf'
 
 # Intel Alder Lake HDA HDMI: pipe index → ALSA device number
 PIPE_TO_DEVICE = {0: 3, 1: 7, 2: 8}
+
+# Card name used only when detection finds nothing at all - the historical
+# Intel value, so a host that somehow reports no HDMI PCMs behaves exactly as
+# it did before this was made portable.
+FALLBACK_CARD = 'PCH'
+
+
+def detect_hda_card():
+    """Return the ALSA card name that carries the HDMI playback devices.
+
+    Read out of /proc/asound rather than assumed, because the name is a
+    property of the machine: "PCH" on Intel, "Generic" on the AMD boxes. A
+    card is the right one when it has playback PCMs describing themselves as
+    HDMI - which also skips the analog codec (ALC897) that sits on its own
+    card and would otherwise be an equally plausible guess.
+    """
+    try:
+        entries = sorted(os.listdir('/proc/asound'))
+    except OSError as e:
+        log.warning(f'cannot read /proc/asound ({e}) - assuming card {FALLBACK_CARD}')
+        return FALLBACK_CARD
+
+    for entry in entries:
+        if not re.fullmatch(r'card\d+', entry):
+            continue
+        base = f'/proc/asound/{entry}'
+        try:
+            card_id = open(f'{base}/id').read().strip()
+        except OSError:
+            continue
+
+        hdmi_devices = set()
+        try:
+            subs = os.listdir(base)
+        except OSError:
+            continue
+        for sub in subs:
+            m = re.fullmatch(r'pcm(\d+)p', sub)
+            if not m:
+                continue
+            try:
+                info = open(f'{base}/{sub}/info').read()
+            except OSError:
+                continue
+            if 'HDMI' in info:
+                hdmi_devices.add(int(m.group(1)))
+
+        if hdmi_devices:
+            log.info(f'ALSA card for HDMI audio: {card_id} '
+                     f'(devices {sorted(hdmi_devices)})')
+            missing = sorted(set(PIPE_TO_DEVICE.values()) - hdmi_devices)
+            if missing:
+                # Not fatal - the config still generates - but it means a slot
+                # will point at a PCM this machine does not have.
+                log.warning(f'card {card_id} lacks expected HDMI device(s) {missing}; '
+                            f'the generated slots for them will not open')
+            return card_id
+
+    log.warning(f'no HDMI playback devices found in /proc/asound - '
+                f'assuming card {FALLBACK_CARD}')
+    return FALLBACK_CARD
 
 # DRM connector type constants
 CONNECTOR_TYPES = {
@@ -131,7 +199,7 @@ def detect_mapping():
                 log.warning(f'  {name}: pipe {pipe_idx} has no known audio device')
                 continue
 
-            log.info(f'  {name}: CRTC {crtc_id} → pipe {pipe_idx} → hw:PCH,{device}')
+            log.info(f'  {name}: CRTC {crtc_id} → pipe {pipe_idx} → device {device}')
             mapping.append((name, device))
 
     finally:
@@ -164,19 +232,22 @@ def jack_device_hint(path='/etc/default/jack'):
         return f'DAEMON_ARGS={args} (no -d device found)'
     d = dev.group(1)
     note = ''
-    if d in ('hw:PCH,0', 'hw:0,0'):
+    if re.fullmatch(r'hw:(PCH|Generic\w*|0),0', d):
         note = '  <-- ALC897 analog / minijack, NOT HDMI'
     elif 'multi_hdmi' in d or 'hdmi' in d.lower():
         note = '  <-- the HDMI slots defined below'
     return f'jackd -d {d}{note}'
 
 
-def generate_asound_conf(mapping):
+def generate_asound_conf(mapping, card):
     """Generate asound.conf content from the detected mapping.
 
     Always produces 3 slots (6 channels) for JACK stability.
     Connected ports are assigned first (sorted alphabetically),
     then remaining ALSA devices fill the unused slots.
+
+    `card` is the ALSA card name detected on this machine; it is never
+    hardcoded, because it differs between the Intel and AMD nodes.
     """
     ALL_DEVICES = sorted(PIPE_TO_DEVICE.values())  # [3, 7, 8]
     SLOT_COUNT = len(ALL_DEVICES)
@@ -192,7 +263,7 @@ def generate_asound_conf(mapping):
     for dev in spare_devices:
         if len(slots) >= SLOT_COUNT:
             break
-        slots.append((f'(unused, hw:PCH,{dev})', dev))
+        slots.append((f'(unused, hw:{card},{dev})', dev))
 
     # Header comment
     lines = [
@@ -203,7 +274,7 @@ def generate_asound_conf(mapping):
     ]
     for i, (label, dev) in enumerate(slots):
         slot = slot_names[i]
-        lines.append(f'#   slot {slot} (ch {i*2+1}-{i*2+2}) = {label} → hw:PCH,{dev}')
+        lines.append(f'#   slot {slot} (ch {i*2+1}-{i*2+2}) = {label} → hw:{card},{dev}')
     lines.append('#')
     lines.append('#   hw:HID,0  = USB Audio (bridged via alsa_out)')
     lines.append('#')
@@ -227,7 +298,7 @@ def generate_asound_conf(mapping):
     lines.append('    slaves {')
     for i, (label, dev) in enumerate(slots):
         slot = slot_names[i]
-        lines.append(f'        {slot} {{ pcm "hw:PCH,{dev}" channels 2 }}')
+        lines.append(f'        {slot} {{ pcm "hw:{card},{dev}" channels 2 }}')
     lines.append('    }')
     lines.append('')
     lines.append('    bindings {')
@@ -258,7 +329,8 @@ def main():
         log.error('No HDMI/DP audio outputs detected. Leaving asound.conf unchanged.')
         sys.exit(1)
 
-    conf = generate_asound_conf(mapping)
+    card = detect_hda_card()
+    conf = generate_asound_conf(mapping, card)
 
     if dry_run:
         print(conf)
