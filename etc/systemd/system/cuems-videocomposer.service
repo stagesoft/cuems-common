@@ -28,6 +28,15 @@ Group=cuems
 SupplementaryGroups=video render audio
 # Environment for GPU/display (adjust for your setup)
 Environment=HOME=/var/lib/cuems
+# Cap glibc's malloc arenas (869en4tqt). The default cap is 8 x nproc = 32 on
+# these boxes, and decode-thread churn warms up ~31 secondary arenas that
+# glibc never unmaps: a bounded ~134 MB RSS plateau measured on the FP530
+# (interleaved n=3 matrix, 2026-08-29). Cap 4 keeps that memory while leaving
+# 3-4 arenas, so render and decode threads are NOT serialised through a single
+# malloc lock (which is why it is 4 and not 1 - cap 1 saves only 38 MB more).
+# Drops were indistinguishable from control. Adopted by Ion 2026-09-02; the
+# measurement is Picasso-only, the mechanism is plain glibc and travels.
+Environment=MALLOC_ARENA_MAX=4
 # Extract videoplayer/output_latency_ms from /etc/cuems/settings.xml
 # into /run/cuems/videocomposer.env. Graceful: integer → flag emitted,
 # "auto"/absent/missing → OUTPUT_LATENCY_FLAG empty.
