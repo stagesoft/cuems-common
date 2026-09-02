@@ -1,3 +1,49 @@
+cuems-common (1.3.0-21) bookworm; urgency=medium
+
+  * NEW cuems-gpu-pin.service + /usr/lib/cuems/bin/cuems-gpu-pin: force the AMD
+    GPU's DPM level to `high` at boot, on measured hardware only (869eq54nj).
+    On the Maxtang FP530 (Picasso, 1002:15d8) sustained multi-4K decode
+    collapses amdgpu's DPM to ~210-277 MHz after the first heavy rung per boot;
+    only a reboot restores it, and newer GPU firmware does NOT fix it (tested
+    2/2 on 20250410-2, hang signature identical). Pinning rescues the box at a
+    measured +8 C (plateau 76.0 C at ~28 C ambient).
+    SHIPS INERT. The helper exits 0 unless BOTH enabled=true in the new
+    /etc/cuems/gpu-pin.conf (ships false) AND an allow-listed GPU is present,
+    so this changes nothing on any existing host, exactly like the enabled=
+    gate in cluster-poweroff.conf. The allow-list is one entry — the evidence
+    is Picasso-only, and a future AMD SKU gets its own thermal soak first.
+    The unit is enabled explicitly in postinst, not via WantedBy=: this
+    package's postinst carries no #DEBHELPER# token, so dh_installsystemd
+    generates nothing and a unit relying on WantedBy= alone would be installed
+    but never symlinked, i.e. silently never run.
+    Note for anyone writing a test against it: `high` is a CEILING, not a
+    floor. The SMU still bounds the clock by the package power budget
+    (550-985 MHz under load on this box, 1200 only in bursts), so any check of
+    the form "sclk >= X while pinned" is wrong and fails on healthy hardware.
+  * cuems-videocomposer.service: Environment=MALLOC_ARENA_MAX=4. Decode-thread
+    churn warms up ~31 glibc secondary arenas (the 8 x nproc default) that
+    glibc never unmaps — a bounded ~134 MB RSS plateau, not a leak. Measured
+    across an interleaved n=3 matrix with decode occupancy flat at 57-58 %
+    across all nine arms: -133.9 MB against within-treatment spreads of
+    13-22 MB, drops indistinguishable from control. Cap 4 rather than 1 keeps
+    3-4 arenas, so render and decode threads are not serialised through a
+    single malloc lock; cap 1's extra 38 MB was judged not worth that risk at
+    layer counts nobody has measured. Memory measure only — no effect on the
+    hang boundary, on drops, or on VRAM.
+  * cuems-hdmi-audio-map: detect the ALSA card instead of assuming Intel's
+    name. The generator hardcoded hw:PCH, which is the card name on Intel
+    hosts; on the AMD FP530 the HDMI card is `Generic`, so the generated
+    /etc/asound.conf named a device that does not exist. jackd-cuems then
+    failed to open it and crash-looped (235 restarts observed), taking
+    cuems-node-engine down with it as a failed dependency — a video node dead
+    at boot for an audio-routing reason. Now reads /proc/asound/card*/pcm*p/info
+    for an HDMI-capable card and falls back to PCH.
+  * videocomposer-flags.env.example: document the hang-guard operator flags
+    (--hang-guard, --vc-profile, --saturation-monitor) shipped by
+    cuems-videocomposer 0.1.2-6.
+
+ -- Ion Reguera <ion@stagelab.coop>  Wed, 02 Sep 2026 18:34:00 +0200
+
 cuems-common (1.3.0-20) bookworm; urgency=medium
 
   * interfaces.master: list ethernet0 before wifi0 in bond-slaves. A bond adopts

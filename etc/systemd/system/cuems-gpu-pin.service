@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# Pin the AMD GPU clock to `high` at boot, where measured (869eq54nj).
+#
+# Behaviourally gated by enabled= in /etc/cuems/gpu-pin.conf, which ships FALSE,
+# so this unit is inert on every host until an operator opts that box in — the
+# same arrangement as cuems-cluster-poweroff.service. It is therefore safe to
+# enable unconditionally in postinst, which is also NECESSARY: this package's
+# postinst carries no #DEBHELPER# token, so dh_installsystemd never generates an
+# enable and WantedBy= alone would leave the unit un-symlinked and silently
+# never run.
+#
+# Type=oneshot is safe here ONLY because the helper checks the PCI allow-list
+# before it waits for anything: a non-AMD host exits immediately, so this never
+# holds the cuems-node.target start job open (the hazard cuems-displays-on
+# documents in its own header).
+#
+# A FAILED unit here is meaningful: it means an allow-listed GPU is present and
+# opted in, but the clock could NOT be pinned — the box is unprotected.
+
+[Unit]
+Description=CUEMS GPU clock pin (amdgpu DPM force high, 869eq54nj)
+Documentation=file:/etc/cuems/gpu-pin.conf
+PartOf=cuems-node.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/cuems/bin/cuems-gpu-pin
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cuems-gpu-pin
+
+[Install]
+WantedBy=cuems-node.target

@@ -14,6 +14,7 @@ usr/bin/cuems-healthcheck usr/bin/
 usr/lib/cuems/bin/cuems-extract-video-latency usr/lib/cuems/bin/
 usr/lib/cuems/bin/cuems-write-rtpmidid-config usr/lib/cuems/bin/
 usr/lib/cuems/bin/cuems-write-hostapd-config usr/lib/cuems/bin/
+usr/lib/cuems/bin/cuems-gpu-pin usr/lib/cuems/bin/
 usr/lib/cuems/bin/cuems-generate-display-conf usr/lib/cuems/bin/
 
 # Opt-in HDMI helpers (cuems-videocomposer pre/post-start drop-ins
@@ -79,6 +80,9 @@ etc/systemd/system/cuems-wifi.service lib/systemd/system/
 # behind enabled= in /etc/cuems/cluster-poweroff.conf, shipped false.
 etc/systemd/system/cuems-cluster-poweroff.service lib/systemd/system/
 etc/systemd/system/cuems-displays-on.service lib/systemd/system/
+# GPU clock pin (869eq54nj). Same arrangement: enabled unconditionally in
+# postinst, gated behind enabled= in /etc/cuems/gpu-pin.conf, shipped false.
+etc/systemd/system/cuems-gpu-pin.service lib/systemd/system/
 # hostapd.service itself is owned by the upstream `hostapd` Debian package.
 # cuems-common adds cuems-wifi.target / cuems-wifi.service plumbing and the
 # /run/cuems/hostapd.conf redirect via drop-ins under hostapd.service.d/
@@ -205,6 +209,11 @@ etc/cuems/gradient-motiond.env.example etc/cuems/
 # Orderly power-off / boot display confirmation. Shell syntax (both readers are
 # shell scripts); ships enabled=false so a fleet-wide upgrade changes no site.
 etc/cuems/cluster-poweroff.conf etc/cuems/
+
+# GPU clock pin. Shell syntax (the reader is a shell script); ships
+# enabled=false so a fleet-wide upgrade never starts pinning clocks - and +8 C -
+# on an AMD box nobody has thermally soaked.
+etc/cuems/gpu-pin.conf etc/cuems/
 
 # Multi-cluster identity example (not installed to /etc/cuems/ by default;
 # operator copies it manually when multi-cluster deployment is needed).

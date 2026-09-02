@@ -74,7 +74,7 @@ if [ -d /usr/lib/cuems/bin ]; then
     chmod +x /usr/lib/cuems/bin/*.sh 2>/dev/null || true
     chmod +x /usr/lib/cuems/bin/*.py 2>/dev/null || true
     # Scripts without standard extensions
-    for f in cuems-extract-video-latency cuems-log-collector-url cuems-write-rtpmidid-config cuems-write-hostapd-config cuems-arm-wol; do
+    for f in cuems-extract-video-latency cuems-log-collector-url cuems-write-rtpmidid-config cuems-write-hostapd-config cuems-arm-wol cuems-gpu-pin; do
         [ -f "/usr/lib/cuems/bin/$f" ] && chmod +x "/usr/lib/cuems/bin/$f"
     done
 
@@ -593,6 +593,13 @@ if command -v systemctl >/dev/null 2>&1; then
     # an engine restart — only by a real poweroff transaction.
     systemctl enable cuems-cluster-poweroff.service 2>/dev/null || true
     systemctl enable cuems-displays-on.service 2>/dev/null || true
+
+    # GPU clock pin (869eq54nj). Enabled unconditionally for the same reason as
+    # the two above, and inert for the same reason: the helper exits 0 unless
+    # BOTH enabled=true in /etc/cuems/gpu-pin.conf (ships false) AND an
+    # allow-listed GPU is present (currently only Picasso 1002:15d8). So this
+    # changes nothing on any existing host until an operator opts that box in.
+    systemctl enable cuems-gpu-pin.service 2>/dev/null || true
 fi
 # CUEMS cluster time sync via chrony
 # =========================================================================
