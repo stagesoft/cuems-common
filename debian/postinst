@@ -64,6 +64,18 @@ if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
     done
 fi
 
+# Put the live network config back (snapshot taken in the preinst). The
+# deregistration above has already happened, so from here on the file is a
+# plain file that no dpkg operation owns — which was the whole point: `dpkg -S`
+# stops answering cuems-common, `dpkg --purge` can no longer delete it, and the
+# host keeps its network. Only ever restores when the path is empty, so an
+# operator's file is never clobbered.
+if [ ! -e /etc/network/interfaces ] && \
+   [ -e /var/backups/cuems-common.interfaces.presave ]; then
+    cp -a /var/backups/cuems-common.interfaces.presave /etc/network/interfaces
+    echo "cuems-common: /etc/network/interfaces deregistered as a conffile and restored in place"
+fi
+
 
 # Published default credentials. See docs/default-credentials.md.
 # Single source of truth at code level; doc cites the same literals.

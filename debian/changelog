@@ -1,3 +1,26 @@
+cuems-common (1.3.0-22) bookworm; urgency=medium
+
+  * The 1.3.0-20 conffile retirement DELETED the host's live
+    /etc/network/interfaces on upgrade — the exact outcome its own
+    comment said it was preventing. dpkg-maintscript-helper's
+    prepare_rm_conffile moves the live file aside (unmodified -> .dpkg-
+    remove, which finish_rm_conffile deletes with NO backup; modified ->
+    .dpkg-bak), so after the upgrade the path is empty either way.
+    Nothing fails at the time: the running network survives in the
+    kernel, so the upgrade looks clean and the host comes up with no
+    bond0, no DHCP and no address at the NEXT reboot — hours or days
+    later, and at a venue that means a physical trip. Hit on
+    formitgo_default 2026-09-04 going 1.3.0-12 -> -21; the file was
+    modified there so it landed in .dpkg-bak and could be restored, but
+    a clone-image box whose file still matches the registered md5 loses
+    it outright. Fixed by snapshotting the file in the preinst and
+    restoring it in the postinst after the deregistration completes,
+    which keeps the intent (dpkg -S stops answering cuems-common, --
+    purge can no longer take the live config) without the collateral.
+    interfaces.cuems is a dead duplicate and is still removed.
+
+ -- Ion Reguera <ion@stagelab.coop>  Fri, 04 Sep 2026 13:52:36 +0200
+
 cuems-common (1.3.0-21) bookworm; urgency=medium
 
   * NEW cuems-gpu-pin.service + /usr/lib/cuems/bin/cuems-gpu-pin: force the AMD

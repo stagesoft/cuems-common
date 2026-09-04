@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 set -e
 
 # CUEMS Common package pre-installation script
@@ -47,6 +50,20 @@ fi
 # would DELETE the host's live /etc/network/interfaces, because obsolete
 # conffiles are removed on purge. The live file is host-specific and must
 # survive purge. Same family as the acpid and grub-display conffiles above.
+# ⚠ rm_conffile MOVES THE LIVE FILE ASIDE. Per dpkg-maintscript-helper's
+# prepare_rm_conffile: unmodified -> .dpkg-remove, which finish_rm_conffile
+# DELETES in the postinst with no backup at all; modified -> .dpkg-backup ->
+# .dpkg-bak. Either way /etc/network/interfaces is gone when the upgrade ends,
+# and the host comes up with no bond0, no DHCP and no address on the next boot
+# — a fault that only shows itself at reboot, hours or days later. The live
+# network config has to survive, so snapshot it here and put it back in the
+# postinst, once dpkg has dropped the conffile record. interfaces.cuems is a
+# dead duplicate and is genuinely meant to go.
+if [ -e /etc/network/interfaces ]; then
+    mkdir -p /var/backups
+    cp -a /etc/network/interfaces /var/backups/cuems-common.interfaces.presave
+fi
+
 if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
     for _cf in /etc/network/interfaces /etc/network/interfaces.cuems; do
         dpkg-maintscript-helper rm_conffile "$_cf" 1.3.0-20~ cuems-common -- "$@"
