@@ -5,6 +5,11 @@
             <xs:sequence>
                 <xs:element name="node_list" minOccurs="0" maxOccurs="1" type="cms:NodeDictType" />
             </xs:sequence>
+            <!-- Document-property version marker (feature 008, ITEM E, FR-048a).
+                 Not a domain field: excluded from spec._derive_attributes and
+                 every wire projection (research R1). Absent means version 1
+                 (FR-050); this schema stays at version 1 (FR-048b). -->
+            <xs:attribute name="doc_version" type="xs:positiveInteger" use="optional" />
         </xs:complexType>
     </xs:element>
 

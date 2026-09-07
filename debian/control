@@ -9,7 +9,7 @@ Package: cuems-common
 Architecture: all
 Pre-Depends: adduser
 Depends: ${misc:Depends},
-         cuems-utils (>= 0.1.0rc15),
+         cuems-utils (>= 0.1.0rc16),
          systemd,
          systemd-journal-remote (>= 247),
          python3,
