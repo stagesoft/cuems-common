@@ -36,8 +36,12 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 ## Notes
 
-**Iteration 2 (2026-09-15) — all items pass.** Q1-Q3 were answered by the decision-maker and
-the spec was rewritten around them; the single `[NEEDS CLARIFICATION]` marker is gone.
+**Iteration 2 (2026-09-15) — all items pass.** The three scoping questions below were answered by the
+decision-maker and the spec was rewritten around them; the single `[NEEDS CLARIFICATION]` marker is gone.
+
+(These are the **specification** session's questions. The spec's own `## Clarifications` section
+records a later `/speckit-clarify` session with three *different* questions — the live-file
+rewrite rule, the sudoers conffile, and the version bound. Re-validated after it: still 16/16.)
 
 | | Question | Answer | Effect on the spec |
 |---|---|---|---|

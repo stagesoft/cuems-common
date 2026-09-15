@@ -9,7 +9,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 **Created**: 2026-09-15
 
-**Status**: Draft — Q1/Q2/Q3 resolved 2026-09-15
+**Status**: Draft — clarified 2026-09-15 (see Clarifications)
 
 **Input**: Feature 010 flow 03 (`cuems-common`), from
 `dev/planning/cuems-utils-xml-refactor-consumer-migration.md` §5, with §4's context block as
@@ -17,6 +17,16 @@ corrected against the tree on 2026-09-15 (§0.5 of the same document).
 
 **Pairs with**: `../cuems-nodeconf` flow 04
 (`specs/001-network-map-object-adoption`). Their merges are simultaneous (D33).
+
+---
+
+## Clarifications
+
+### Session 2026-09-15
+
+- Q: How should the upgrade decide that a host's live `/etc/avahi/services/cuems.service` is safe to rewrite? → A: Targeted key rewrite of any file carrying the retired key — rewrite only the TXT records, leave every other byte unchanged.
+- Q: How should the role-flip privilege survive the template rename on hosts whose `99-cuems` conffile was locally modified? → A: Ship the rules in a NEW sudoers file naming the new templates; a new conffile installs unconditionally, so a kept local copy cannot block it. The old rules become inert.
+- Q: What upper bound should this package declare against `cuems-utils`? → A: Lock by minor release — `>= 0.1.0~rc16, << 0.1.1` — and make that bound mean something with a cross-repo rule: `cuems-utils` bumps the minor version for any schema change. Measured with `dpkg --compare-versions`: `0.1.0rc17 < 0.1.1` is true, so the ceiling alone does not constrain the rc line; and `0.1.0 < 0.1.0rc16` is true, so the pre-release spelling must become `~rc` or the floor refuses the real 0.1.0 release.
 
 ---
 
@@ -45,19 +55,25 @@ word. Delivers value even if nothing else in this feature ships.
 1. **Given** a host running the previous package version whose live discovery file announces
    the retired key, **When** the package is upgraded, **Then** the host's live announcement
    carries the new key and the value matching its role, with no operator intervention.
-2. **Given** a live discovery file the upgrade does not recognise — hand-edited, unusual, or
-   absent — **When** the package is upgraded, **Then** the upgrade leaves it alone and reports
-   the path and what to do, and the upgrade still succeeds.
-3. **Given** an upgraded host, **When** the operator switches its role using the documented
+2. **Given** a hand-edited live discovery file that still carries the retired key, **When** the
+   package is upgraded, **Then** the key and its value are rewritten and every other byte —
+   the operator's edits, comments, ordering and whitespace — is unchanged.
+3. **Given** a live discovery file that is absent, unreadable, or carries the retired key in a
+   shape the rewrite does not match, **When** the package is upgraded, **Then** it is left
+   untouched, its path is reported with the action to take, and the upgrade still succeeds.
+4. **Given** an upgraded host, **When** the operator switches its role using the documented
    privileged command, **Then** the command succeeds: the privilege covers the template's
    current name.
-4. **Given** the two repositories' halves of the cutover, **When** their pinned vocabularies
+4a. **Given** a host whose privileged-command file was locally modified before the upgrade,
+   **When** the package is upgraded and the operator switches its role, **Then** the command
+   still succeeds, with no prompt resolved and no manual edit.
+5. **Given** the two repositories' halves of the cutover, **When** their pinned vocabularies
    are compared, **Then** key, all three values and all three filenames agree exactly.
-5. **Given** a cluster where only one repository's half has been installed, **When** the
+6. **Given** a cluster where only one repository's half has been installed, **When** the
    package manager is asked to complete the installation, **Then** it refuses.
-6. **Given** an upgraded cluster, **When** a node is adopted or re-adopted, **Then** it
+7. **Given** an upgraded cluster, **When** a node is adopted or re-adopted, **Then** it
    announces the new vocabulary and is discovered.
-7. **Given** an upgrade that already migrated a host's live file, **When** the package is
+8. **Given** an upgrade that already migrated a host's live file, **When** the package is
    reinstalled or upgraded again, **Then** the migration rewrites nothing and says so.
 
 ---
@@ -126,6 +142,9 @@ disposable environment, capture the refusal.
   accepted set.
 - **A locally modified privileged-command file.** It is a conffile, so a host that modified it
   keeps the old rules through the upgrade — and those rules name the templates literally.
+  Resolved by FR-003a: the working rules arrive in a file that has never been shipped, which
+  the package manager installs unconditionally. The kept file's rules become inert, not
+  wrong-but-active.
 - **A live discovery file that is hand-edited, absent, or belongs to a role the host no longer
   has.**
 - **A role flip during or immediately after the upgrade**, before a reboot.
@@ -147,6 +166,14 @@ disposable environment, capture the refusal.
 - **FR-003**: The two templates whose filenames carry the retired word MUST be renamed to the
   pinned names, and the rename MUST reach every consumer that names a template literally —
   including the privileged-command rules and the node-configuration tool.
+- **FR-003a**: The role-flip privilege MUST work after the upgrade on **every** host, including
+  one whose existing privileged-command file was locally modified and is therefore kept by the
+  package manager. The rules naming the renamed templates MUST therefore be delivered in a file
+  that has not been shipped before, so that delivering them cannot depend on resolving a
+  conflict in an existing one.
+- **FR-003b**: The rules left behind in the previously shipped file MUST be inert — they may
+  name only paths that no longer exist — and the feature MUST record how and when that file's
+  dead rules are retired, using this package's established conffile-retirement discipline.
 - **FR-004**: The package upgrade MUST bring an already-deployed host's **live** discovery file
   to the new vocabulary. A rename confined to the shipped templates does not satisfy this
   requirement, because the live file is not shipped by this package.
@@ -155,9 +182,14 @@ disposable environment, capture the refusal.
   to be.
 - **FR-006**: The live-file migration MUST be idempotent, MUST NOT fail the upgrade, and MUST
   report which of its outcomes occurred.
-- **FR-007**: The migration MUST rewrite only a file it recognises. Anything else is left
-  untouched and reported to the operator with its path and the action to take — never silently
-  rewritten and never silently skipped.
+- **FR-007**: The migration MUST be a **targeted key rewrite**: it rewrites the retired TXT
+  records in place — mapping the retired role words to the pinned values — and leaves every
+  other byte of the file unchanged, including operator edits, comments, ordering and
+  whitespace. It MUST NOT re-serialise the document. A file that does not carry the retired key
+  is already current and is left alone.
+- **FR-007a**: A file the migration cannot rewrite — unreadable, or carrying the retired key in
+  a shape the rewrite does not match — MUST be left untouched and reported to the operator with
+  its path and the action to take. Never silently rewritten, never silently skipped.
 - **FR-008**: After the upgrade the host MUST be announcing the new vocabulary without a
   reboot; the discovery daemon is made to see the change.
 - **FR-009**: This repository's half MUST be reviewed and ready to merge in the same window as
@@ -185,13 +217,26 @@ disposable environment, capture the refusal.
 
 - **FR-016**: This package's metadata MUST express the constraint it actually has against the
   shared library, including refusing a library version that has moved past what this package
-  can read. A lower bound alone does not satisfy this requirement.
+  can read. A lower bound alone does not satisfy this requirement. The bound is **locked to the
+  library's minor release** — a floor at the version this package's mirrored schema came from,
+  and a ceiling at the next minor.
+- **FR-016a**: The pre-release spelling in both bounds MUST sort **below** the corresponding
+  final release. Measured with `dpkg --compare-versions`: `0.1.0 < 0.1.0rc16` is true, so the
+  floor as written today would refuse the library's own `0.1.0` release. The bounds MUST use
+  the tilde form, and the feature MUST verify each bound's behaviour by comparison rather than
+  by reading.
+- **FR-016b**: A minor-release lock only enforces the schema coupling if the library bumps its
+  minor version whenever a schema changes. That rule MUST be recorded as a cross-repository
+  contract and carried to the library's own flow as its deliverable (FR-019), together with the
+  pre-release spelling change FR-016a requires. Until both are in place, this bound is
+  documented as partial rather than presented as complete.
 - **FR-017**: The existing constraint against the node-configuration daemon's package MUST be
   preserved and MUST remain true for the versions this feature releases.
 - **FR-018**: An out-of-order installation MUST be attempted for real and the refusal captured
   — versions, command, output — and stored with the feature.
-- **FR-019**: Where another repository is missing its own constraint, this feature MUST record
-  it as that repository's deliverable rather than attempting to enforce it from here.
+- **FR-019**: Where another repository is missing its own constraint — or owes a release rule
+  this package's bounds depend on (FR-016b) — this feature MUST record it as that repository's
+  deliverable rather than attempting to enforce it from here.
 
 ### Functional Requirements — release discipline
 
@@ -277,16 +322,21 @@ its operator-visible symptom, a deliverable of this feature.
 - **SC-003**: The two repositories' pinned vocabularies match on all seven points — one key,
   three values, three filenames — verified before either merges.
 - **SC-004**: An operator can flip a host's role with the documented privileged command after
-  the upgrade, with no privilege granted by hand.
+  the upgrade, with no privilege granted by hand — on a host with a pristine privileged-command
+  file and on one whose copy was locally modified alike.
 - **SC-005**: Re-running the upgrade on an already-migrated host rewrites no discovery file and
   reports that outcome.
-- **SC-006**: A live discovery file the migration does not recognise survives the upgrade
-  unchanged, and its path appears in the upgrade's output.
+- **SC-006**: A hand-edited live discovery file comes through the upgrade with its retired key
+  rewritten and every other byte identical to before; a file the rewrite cannot handle survives
+  unchanged with its path in the upgrade's output.
 - **SC-007**: No maintainer script in this package defers a decision to a feature number.
 - **SC-008**: Every ordering claim in the feature's record is verifiable against the files it
   describes, and at least one is enforced by a test.
 - **SC-009**: An out-of-order installation is refused by the package manager, with the refusal
   recorded as observed output.
+- **SC-009a**: Every version bound this package declares is verified by direct version
+  comparison — including that the floor admits the library's final release and that the ceiling
+  excludes the next minor — rather than by inspection of the string.
 - **SC-010**: The test suite passes and covers: the config conversion's four cases (happy path,
   idempotence, whole-document refusal, backup fidelity), the retired key's absence, the
   live-file migration including the unrecognised-file case, and the ordering assertion.
