@@ -281,6 +281,132 @@ one layer up.
 
 ---
 
+## 7. File-control requirements — what each unit needs on disk, and which package puts it there
+
+**Audited 2026-09-15** against `etc/systemd/system/*`, `debian/install`, and the sibling
+repositories' packaging branches.
+
+Moving a `.service` file moves the unit. It does **not** move the files the unit reads, and
+several of those are not shipped by the package that ships the unit — one class is shipped by
+*no* package at all. A component repository that takes ownership of a unit without taking
+ownership of that unit's inputs produces a package that installs cleanly and fails at start.
+This section is the inventory a split has to satisfy.
+
+### 7.1 The five provenance classes
+
+| Class | Meaning | Examples |
+|---|---|---|
+| **A — packaged here** | `cuems-common` ships it via `debian/install`; conffile or plain | `etc/cuems/network_map.xml`, `ap.conf`, `gpu-pin.conf`, `cluster-poweroff.conf`, the `usr/share/cuems/` templates |
+| **B — venv-shipped** | Installed under `/usr/lib/cuems/` by a `dh-virtualenv` package | `/usr/lib/cuems/bin/{node-engine,controller-engine,cuems-editor,cuems-midiconnector,cuems-nodeconf}`, the interpreter, `site-packages/rtmidi` |
+| **C — generated at start** | Written to `/run` (tmpfs) by an `ExecStartPre` helper `cuems-common` ships; never on disk at install time | `/run/cuems/videocomposer.env`, `/run/cuems/display.conf`, `/run/cuems/rtpmidid.ini`, `/run/cuems/hostapd.conf`, `/run/cuems-journal-upload/url.env` |
+| **D — hand-placed, authority elsewhere** | Required at runtime, shipped by nobody; its schema and reference template live in another repository | `/etc/cuems/settings.xml`, `/etc/cuems/settings.xsd` |
+| **E — template-derived** | A shipped template exists; the live file is created by *copying* it, and the live path is owned by no package | `/etc/avahi/services/cuems.service`, `/etc/avahi/avahi-daemon.conf`, `/etc/dhcp/dhcpd.conf`, `/etc/cuems/master.ip` |
+
+Classes **D** and **E** are the ones that break a split silently: in both, `Depends:` on the
+"owning" package delivers nothing to the path the unit names.
+
+### 7.2 Per-unit inventory
+
+| Unit | Needs at runtime | Class | Who provides it today | What a split must arrange |
+|---|---|---|---|---|
+| `cuems-videocomposer.service` | `/usr/bin/cuems-videocomposer` | own pkg | `cuems-videocomposer` | moves with the unit |
+| | `/etc/cuems/settings.xml` (`output_latency_ms`) | **D** | **nobody** — schema + template in `cuems-utils` source | decide: ship a template + first-install copy, or document it as operator state |
+| | `/run/cuems/videocomposer.env` | C | `cuems-extract-video-latency` (`cuems-common`) | the helper must move with the unit or stay a declared dependency |
+| | `/etc/cuems/videocomposer-flags.env` (optional) | A (`.example` only) | `cuems-common` ships the `.example`; live file is operator-made | move the `.example` with the unit — it *is* the key documentation |
+| | `/run/cuems/display.conf` | C | `cuems-generate-display-conf`, from this unit's own drop-in | stays with the unit; the engines consume it (ordering contract) |
+| | `/var/lib/cuems` (`HOME=`) | dir | `cuems-common` (tmpfiles/adduser) | a standalone package must create it itself |
+| `cuems-node-engine.service` / `cuems-controller-engine.service` | `/usr/lib/cuems/bin/{node,controller}-engine` | **B** | `cuems-engine` venv | see 7.3-②: the venv root is shared |
+| | `LD_LIBRARY_PATH=/usr/lib/cuems/lib/python3.11/site-packages/rtmidi` | **B** | `cuems-engine` venv — **a hardcoded Python minor version** | any interpreter bump silently breaks it; a split must own or parameterise this |
+| | `/run/cuems/display.conf` | C | `cuems-videocomposer`'s drop-in | cross-package ordering contract (§6 applies) |
+| | `/etc/cuems/network_map.xml`, `settings.xml` | A / **D** | `cuems-common` / nobody | the map moves with role scaffolding; settings does not exist |
+| `cuems-editor.service` | `/usr/lib/cuems/bin/cuems-editor`, `/run/cuems-editor/service.pid` | B / C | `cuems-editor` venv / runtime | — |
+| `jackd-cuems.service` | `/usr/bin/jackd` | third party | `jackd2` | `Depends:` |
+| | `/etc/default/jack` (optional) | **nobody** | shipped by no package in this ecosystem | a `cuems-audioplayer` split must decide whether it owns the tuning file |
+| `jack-alsa-bridges.service` | `/usr/bin/zita-j2a`, `alsactl`, `/run/alsa` | third party | `zita-ajbridge`, `alsa-utils` | `Depends:`; the hardcoded `hw:HID,0` is host state, not package state |
+| `cuems-gradient-motiond.service` | `/usr/bin/gradient-motiond` | own pkg | `cuems-gradient-motiond` | moves with the unit |
+| | `/etc/cuems/gradient-motiond.env` (optional) | A (`.example` only) | `cuems-common` | move the `.example` with the unit |
+| `cuems-midiconnector.service`, `cuems-nodeconf.service` | `/usr/lib/cuems/bin/*` | B | their venvs | — |
+| `rtpmidid.service.d` drop-in | `/run/cuems/rtpmidid.ini` ← `/usr/share/cuems/rtpmidid/default.ini.{controller,node}` + `/etc/cuems/master.ip` | C ← A + **E** | `cuems-common` | role scaffolding: keep central (§1 reasoning) |
+| `chrony.service.d` drop-in | `/etc/cuems/network_map.xml`, `master.ip`, `/usr/share/cuems/chrony-*.template` | A + **E** | `cuems-common` | keep central |
+| `hostapd.service.d`, `cuems-wifi.service` | `/run/cuems/hostapd.conf` ← `hostapd.conf.template` + `/etc/cuems/ap.conf`; `check-ip.sh` | C ← A | `cuems-common` | keep central |
+| `cuems-gpu-pin.service` | `/etc/cuems/gpu-pin.conf` | A (conffile, ships `false`) | `cuems-common` | moves only with the hardware policy |
+| `cuems-cluster-poweroff.service` | `/etc/cuems/cluster-poweroff.conf`, `network_map.xml`, `settings.xml` (own uuid), the bridge venv | A + **D** + B | `cuems-common` + nobody + `cuems-power-bridge` | see 7.3-① |
+| `systemd-journal-upload.service.d` | `/run/cuems-journal-upload/url.env`, `/etc/cuems/master.ip` | C + **E** | `cuems-common` | keep central |
+| Avahi discovery | `/etc/avahi/services/cuems.service` ← `/usr/share/cuems/cuems.service.{firstrun,master,slave}` | **E** ← A | template shipped; **live file shipped by nobody** | see 7.3-③ |
+
+### 7.3 The findings that actually bite
+
+**① `/etc/cuems/settings.xml` and `settings.xsd` are required by units and shipped by no
+package.** `cuems-videocomposer.service`'s `ExecStartPre` reads `settings.xml`, the engines read
+it, `cuems-cluster-poweroff` reads the node's own uuid from it, and `docs/latency-tuning.md`
+tells operators to validate it against `/etc/cuems/settings.xsd`. Neither path is in this
+package's `debian/install`, and `cuems-utils`'s `.deb` is a `dh-virtualenv` build whose
+`debian/rules` installs **only the venv under `/usr/lib/cuems`** — no `debian/install`, no
+`.links`, nothing under `/etc`. The *authority* for the file is `cuems-utils` (it owns
+`settings.xsd` and the per-node template in its source tree, and its changelog tracks the
+schema's fields); the *deployment* is an operator copy. So `Depends: cuems-utils` does not put
+`settings.xml` on a host, and a future `cuems-videocomposer` package that assumes it does will
+install cleanly and fail at first start on a fresh box. **A split must decide explicitly**:
+either the component package ships a template and first-install-copies it (the pattern this
+repo already uses for `avahi-daemon.conf`/`dhcpd.conf` — copy on `[ -z "$2" ]` only, so
+operator edits survive upgrades), or it stays hand-placed and that is stated in the package
+description, not assumed.
+
+**② `/usr/lib/cuems/` is a shared multi-package tree.** `cuems-utils` and `cuems-engine` are
+both `dh-virtualenv` builds with `--install-suffix cuems`, i.e. both rooted at
+`/usr/lib/cuems/`, and `cuems-common` additionally ships eleven of its own helpers into
+`/usr/lib/cuems/bin/` via `debian/install`. Overlapping *identical* paths between packages are a
+dpkg hard error unless `Replaces:`/`Conflicts:` is declared, and `cuems-engine`'s
+`debian/control` declares neither against `cuems-utils` (its only `Conflicts:` is on
+`cuems-engine-mock`). Whatever the current state is on a live host — and the `dpkg-db` drift
+note in the repo-root CLAUDE.md means the database may not answer honestly there — **this must
+be established before any further package is pointed into that tree.** A split that adds a
+fourth writer to `/usr/lib/cuems/bin/` without resolving it is adding a third way for two CUEMS
+packages to become mutually uninstallable.
+
+**③ Template-derived files (class E) are not reachable by shipping a template.** The live
+`/etc/avahi/services/cuems.service` is created by copying one of three shipped templates; no
+package owns the live path. The same is true of `avahi-daemon.conf`, `dhcpd.conf` and
+`/etc/cuems/master.ip`. Consequence for a split: **a package that ships only the template
+cannot claim to control the runtime file** — changing the template changes nothing on an
+already-deployed host until something re-copies it, and on a cluster where `cuems-nodeconf` is
+disabled, nothing does. The same finding is what forced a live-file migration step into feature
+010's spec (`specs/001-node-role-and-conversion-ordering`, FR-004). Any unit whose behaviour
+depends on a class-E file needs a named mechanism that reaches the live copy, in whichever
+package ends up owning the unit.
+
+**④ The `.example` files are the interface documentation.** `videocomposer-flags.env.example`,
+`gradient-motiond.env.example` and `cluster.conf.example` are shipped by `cuems-common`; the
+live files are optional and operator-made (`EnvironmentFile=-`). If the unit moves and the
+`.example` does not, the operator keeps a unit whose tunables are undocumented on the host.
+Move them together.
+
+**⑤ Version-pinned paths inside units.** `cuems-{node,controller}-engine.service` hardcode
+`/usr/lib/cuems/lib/python3.11/site-packages/rtmidi` in `LD_LIBRARY_PATH`. That path is valid
+only for the interpreter `cuems-utils`'s packaging pins (`/usr/bin/python3`, 3.11 on bookworm).
+Whoever ends up owning those units owns that coupling; it belongs in the same repository as the
+venv it points into, or it must be computed at start rather than written literally.
+
+### 7.4 The rule this section exists to state
+
+> **A package that ships a unit MUST also ship — or name, in its own packaging, the package or
+> the operator step that provides — every path that unit references.**
+
+Checklist to run against any unit before moving it out of `cuems-common`:
+
+- [ ] Every `ExecStart*`, `EnvironmentFile=`, `Environment=` path classified A-E.
+- [ ] Every class-A input either moves with the unit or becomes a declared `Depends:` with a
+      version floor that guarantees the path exists.
+- [ ] Every class-C helper either moves with the unit or is declared; a generator and its
+      consumer must not end up in packages that can be installed independently.
+- [ ] Every class-D input has a named deployer — or the package documents that it has none.
+- [ ] Every class-E input has a named mechanism that reaches the *live* file, not just the
+      template.
+- [ ] No path collides with another package's tree (see 7.3-②).
+- [ ] `.example` files travel with the unit that reads their live counterpart.
+
+---
+
 ## Open items to verify before executing any of this
 
 - [ ] Does anything besides `cuems-audioplayer` consume JACK
@@ -297,6 +423,14 @@ one layer up.
 - [ ] Decide package naming/versioning contract for `cuems-common` as the
       permanent home of shared `.target` interface units once component
       `.service` files move out.
+- [ ] **Establish whether `cuems-utils` and `cuems-engine` can be co-installed**
+      at all: both are `dh-virtualenv` builds rooted at `/usr/lib/cuems/`, and
+      neither declares `Replaces:`/`Conflicts:` against the other (§7.3-②).
+      Check a real host by file, not by `dpkg-query`.
+- [ ] **Decide who deploys `/etc/cuems/settings.xml` and `settings.xsd`** — no
+      package does today, and two units plus three tools require them (§7.3-①).
+- [ ] For each unit proposed for a move, run the §7.4 checklist and record the
+      A-E classification of its inputs alongside the move.
 
 ## Summary of guidance
 
@@ -308,3 +442,5 @@ one layer up.
 | Standalone deployment | Real use cases exist (dev, single-box, embedding, CI); split incrementally, starting with uncoupled components |
 | Resource-owned config split (audio/DMX) | Sound in principle; verify single-consumer assumptions first; document cross-repo ordering contracts |
 | Future-proofing daemon swaps (OLA → successor) | Introduce a thin interface `.target` in `cuems-common` with `Before=+WantedBy=` on concrete units; avoids hardcoding daemon names in dependents |
+| Files a moved unit needs at install time | §7: classify every referenced path A-E; a package that ships a unit must ship or name the provider of every path it references. Two paths (`settings.xml`, `settings.xsd`) are provided by **no package today** |
+| Shared `/usr/lib/cuems/` venv tree | Three packages write into it and none declares `Replaces:`/`Conflicts:`; resolve before pointing a fourth at it |
