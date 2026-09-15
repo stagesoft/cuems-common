@@ -308,7 +308,7 @@ Spec-kit's sequential branch numbering will want its own branch. Stay on
 
 ---
 
-## 3. Constitution — write one, this repository has none
+## 3. Constitution — DONE 2026-09-15 (`c238e74`), v1.0.0, six principles
 
 ```
 /speckit.constitution
@@ -359,7 +359,12 @@ Do NOT weaken any rule to accommodate the migration that follows.
 
 ---
 
-## 4. Context block — paste verbatim into `/speckit.specify` and `/speckit.plan`
+## 4. Context block — paste verbatim into `/speckit-specify` and `/speckit-plan`
+
+**Corrected 2026-09-15** against the working tree. The 2026-09-03 measurements
+this block shipped with are preserved only where they still hold; everything
+else carries its current line anchor. §0.5's corrections are folded in here, so
+this block no longer asserts the two things the audit disproved.
 
 ```
 CONTEXT — read these before writing anything. They live in the SIBLING checkout
@@ -369,7 +374,12 @@ CONTEXT — read these before writing anything. They live in the SIBLING checkou
   ../cuems-utils/specs/008-rebuild-extension/migration-guide.md      the conversion tool and its FR-042 entry
   ../cuems-utils/specs/planning/xml-rebuild/xml-rebuild-09-consumer-audit.md   C6, C7, C9, C11 are this repo's
   ../cuems-utils/specs/planning/xml-rebuild/xml-rebuild-07-speckit-prompts.md  §2 = the FULL decision list
-  AND IN THIS REPOSITORY: docs/node-identity-contract.md, debian/postinst, debian/control
+  ../cuems-nodeconf/specs/001-network-map-object-adoption/contracts/avahi-txt.md  flow 04's half of D33,
+                                                                    and the vocabulary it pins
+  AND IN THIS REPOSITORY: .specify/memory/constitution.md (ratified 2026-09-15 — this spec is
+      checked against it), docs/node-identity-contract.md, debian/postinst, debian/control,
+      dev/planning/cuems-utils-xml-refactor-consumer-migration.md §0 (the audit this block is
+      corrected from)
 
   (§§5-8 below inline the C6/C7/C9/C11 findings and the two migration-guide sections, so the
   sibling checkout is only needed for the full six-repo decision list and other repos' scope.)
@@ -381,46 +391,104 @@ outside this subset: read §2 of the prompts file above.
   D21 an OLD document converts on read; the same logic is also a standalone tool
   D33 the Avahi TXT-record vocabulary (node_type=master|slave|firstrun) is renamed in BOTH
       this repository AND cuems-nodeconf, inside feature 010, as ONE coordinated cutover --
-      including the two template FILENAMES and the debian/install entries that place them.
-      It cannot be half-renamed: a listener reading node_role against a publisher writing
-      node_type discovers nothing, and discovery failure is how a cluster loses its topology.
+      including the two template FILENAMES. It cannot be half-renamed: a listener reading
+      node_role against a publisher writing node_type discovers nothing, and discovery
+      failure is how a cluster loses its topology.
+      (D33 as originally written also said "and the debian/install entries that place them".
+      There are none -- see the measured state below. Renaming the templates needs no
+      debian/install change; what it DOES need is a step that reaches the live file, which
+      D33 never mentioned.)
+      TARGET VOCABULARY, pinned by flow 04's contract -- must agree exactly, both halves:
+        TXT key     node_role
+        values      controller | node | firstrun     (master->controller, slave->node)
+        filenames   cuems.service.{firstrun,controller,node}
+        both service types carry it: _cuems_nodeconf._tcp:9000 and _cuems_osc._tcp:9090,
+        i.e. TWO records per template. uuid is untouched.
   D27 nothing in the ecosystem releases until every 010 flow lands. This repository is where
       that gate is mechanically enforced.
   D30/D18b 008's duration promotion invalidates EVERY project document on disk, carried by
       the script 1->2 conversion. 007 converted ONE config file per node; this converts a
       whole library.
 
-MEASURED STARTING STATE — verified against live files 2026-09-03, not transcribed (see §0
-above for what has since changed):
-  debian/postinst:35-58  the network_map node_type -> node_role conversion, run over BOTH
+MEASURED STARTING STATE — re-verified against live files 2026-09-15:
+  debian/postinst:109-133  the network_map node_type -> node_role conversion, run over BOTH
       /etc/cuems/network_map.xml and its .dpkg-new sibling, `|| true`, never fails the
-      upgrade. Its own comment defers the ordering against dh_installsystemd's service
-      restart to "feature 008" — a closed, cuems-utils-only feature. That deferral is THIS
-      feature's to resolve (007 FR-011d-ii).
-  debian/control:12  cuems-utils (>= 0.1.0rc16 as of 2026-09-07)     :38  Breaks: cuems-nodeconf (<< 0.1.0-8)
-      ^ the ONLY mechanically enforced edge of the release gate in the whole ecosystem
+      upgrade. Its comment at :113-117 STILL defers the ordering against dh_installsystemd's
+      service restart to "feature 008" — a closed, renumbered, cuems-utils-only feature.
+      That deferral is THIS feature's to resolve (007 FR-011d-ii).
+  ^^ BUT THE DEFERRAL'S PREMISE IS FALSE, measured 2026-09-15:
+      this package's debian/postinst carries NO #DEBHELPER# token (only debian/preinst:117
+      does), so dh_installsystemd generates NOTHING into it. The package already relies on
+      this elsewhere — debian/changelog:38-41 is why cuems-gpu-pin.service is enabled by hand
+      rather than via WantedBy=. What postinst actually touches: systemd-journald, rsyslog,
+      apache2, hostapd (reenable), ssh, rsync, and `systemctl enable` — never `start` — for
+      the CUEMS units. NO map-reading CUEMS service is restarted from this postinst at all,
+      and the one in-postinst reader (cuems-write-chrony-source, near the end) is already
+      preceded by the conversion. So the ordering deliverable is a DECISION WRITTEN DOWN,
+      not a re-sequencing. Do not spec work that does not exist.
+  debian/control:12  cuems-utils (>= 0.1.0rc16)     :50  Breaks: cuems-nodeconf (<< 0.1.0-8)
+      ^ the ONLY mechanically enforced edge of the release gate in the whole ecosystem, and
+        a LOWER bound is the only thing this repository declares against cuems-utils
   etc/cuems/network_map.xml:9   <node_role>controller</node_role>   (already converted)
-  etc/cuems/network_map.xsd     the mirrored schema (re-synced 2026-09-07 to carry doc_version)
+  etc/cuems/network_map.xsd     the mirrored schema — byte-identical to
+      ../cuems-utils/src/cuemsutils/xml/schemas/network_map.xsd as of 2026-09-15, carries the
+      optional doc_version attribute at :12
+  THE AVAHI SURFACE, and how much of it the package actually owns:
   etc/avahi/services/cuems.service:6,13          <txt-record>node_type=master</txt-record>
+      ^ NOT SHIPPED. No debian/install entry, nothing in debian/rules, nothing in postinst
+        places it. The in-repo file is a checked-in copy of what a host ends up with; the LIVE
+        file is only ever created by copying a template. CONSEQUENCE: renaming both
+        repositories' halves changes NOTHING about an already-deployed host's announcement.
+        Every running host keeps publishing node_type= until something re-copies a template,
+        and cuems-nodeconf — which would — is disabled cluster-wide. A correctly-simultaneous
+        D33 merge still leaves a cluster that cannot discover itself. THIS IS A DELIVERABLE.
   usr/share/cuems/cuems.service.firstrun:6,13    node_type=firstrun
   usr/share/cuems/cuems.service.master:6,13      node_type=master
   usr/share/cuems/cuems.service.slave:6,13       node_type=slave
-      ^ THE RETIRED WORD IS IN THE FILENAME of the last two, so the change reaches
-        debian/install and anything resolving a template by name
-  CLAUDE.md corrected 2026-09-07: CONTROLLER_NETWORK_FLAG etc. now correctly say
-      "migrated in feature 010" (was stale at "feature 008" — see C9 below)
+      ^ THE RETIRED WORD IS IN THE FILENAME of the last two. These three DO ship — but
+        through a single glob, debian/install:224 `usr/share/cuems/* usr/share/cuems/`.
+        There are no per-file entries to rename.
+  TWO RESOLVERS THAT NAME THE TEMPLATES, which the consumer audit never listed:
+  etc/sudoers.d/99-cuems:3-5   three NOPASSWD rules naming the exact template paths
+      (`/usr/bin/cp /usr/share/cuems/cuems.service.<x> /etc/avahi/services/cuems.service`).
+      sudoers matches a command LITERALLY, so renaming the files revokes the privilege
+      silently. It is also a CONFFILE — a host with a locally modified sudoers keeps the old
+      rules, and the obsolete-conffile footgun applies.
+  usr/bin/cuems-config-node:64  service_files = ['cuems.service.firstrun',
+      'cuems.service.master', 'cuems.service.slave'] — hardcoded; rewrites the uuid= record.
+  A NODE_TYPE READER OUTSIDE THE SIX-REPO SCOPE:
+  usr/bin/cuems-cluster-poweroff:275  `if n.node_type != "NodeType.slave": continue`, through
+      cuemspowerbridge.network_map (imported :209) — the cuems-power-bridge package, which
+      this migration never enumerated and which is not checked out beside this repository.
+      The 007 conversion already shipping on this branch retires that vocabulary from every
+      live network_map.xml, so either that parser still reads <node_type> (the tool finds
+      zero nodes and powers off nothing, silently) or it exposes node_role (AttributeError).
+      It was NOT among the "three tools updated" by feature 007 (those were
+      cuems-write-chrony-source, cuems-log-collector-url, cuems-logs).
+  DOCUMENTATION CARRYING THE RETIRED WORD: README.md:227,231,232,264,306,307 and
+      docs/node-identity-contract.md (5 occurrences). 45 occurrences across 15 tracked files
+      in total — C6's "27" predates this branch.
+  CLAUDE.md:94 (was :88): CONTROLLER_NETWORK_FLAG etc. correctly say "migrated in feature
+      010". C9 item 2 is DONE.
   tests/test_network_map_conversion.py, tests/test_controller_resolution.py,
-  tests/test_schema_mirror.py   the three existing tests
+  tests/test_schema_mirror.py   the three existing test files — 23 tests, green. The default
+      interpreter may have no pytest; the invocation this repository passes under is
+      `uv run --with pytest --with lxml python -m pytest tests/ -q`.
+  debian/changelog  top entry is 1.3.0-22. No entry exists for this feature.
 
-ECOSYSTEM PIN STATE (C7), measured 2026-09-03 — this is what "the gate" currently is:
-  cuems-engine    pyproject >=0.1.0rc10   debian/control >= 0.1.0rc4   (they disagree)
-  cuems-editor    pyproject >=0.1.0rc10   no debian entry
-  cuems-nodeconf  pyproject >=0.1.0rc15   debian/control >= 0.1.0rc5
-  cuems-wsclient  pyproject >=0.1.0rc5 (optional)   debian/control >= 0.1.0rc5
-  cuems-common    debian/control >= 0.1.0rc16 (bumped 2026-09-07) + Breaks: cuems-nodeconf (<< 0.1.0-8)
+ECOSYSTEM PIN STATE (C7) — re-measured 2026-09-15 where the checkout exists:
+  cuems-engine    pyproject:41 >=0.1.0rc10   debian/control:18 >= 0.1.0rc4   (still disagree)
+  cuems-nodeconf  pyproject:28 >=0.1.0rc15   debian/control:18 >= 0.1.0rc5
+  cuems-common    debian/control:12 >= 0.1.0rc16 + :50 Breaks: cuems-nodeconf (<< 0.1.0-8)
+  cuems-editor, cuems-wsclient   NOT CHECKED OUT beside this repository — their 2026-09-03
+      rows (editor: pyproject >=0.1.0rc10, no debian entry; wsclient: >=0.1.0rc5 optional,
+      debian >= 0.1.0rc5) are UNVERIFIED. Re-check before relying on them.
   Every one of those is a LOWER BOUND. A lower bound cannot express "refuse a library that
-  moved past me", which is precisely what the gate says. Re-verify the other four repos'
-  numbers before acting — only cuems-common's row was re-measured on 2026-09-07.
+  moved past me", which is precisely what the gate says.
+  SCOPE LIMIT: this repository CANNOT add a bound to another package's debian/control. Its
+  share of "supply the missing edges" is (a) an upper bound or Breaks against cuems-utils in
+  its OWN control file, and (b) running the demonstration. The other repos' edges belong to
+  their own 010 flows.
 ```
 
 ---
