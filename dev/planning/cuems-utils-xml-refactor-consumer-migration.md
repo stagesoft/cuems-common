@@ -202,12 +202,22 @@ listed only so it is tracked, not fixed here.
 
 ### 0.7 Spec-kit: not instantiated here, and whether it should be
 
-**Measured state.** No `.specify/`, no `.claude/skills/speckit-*`, no `specs/`
-in this repository. The `specify` CLI (1.0.4) *is* installed, so §2's
-`specify init --here --integration claude --script sh --force` runs as written.
-It would add `.specify/` (templates, scripts, workflows, `memory/constitution.md`)
-and eleven `.claude/skills/speckit-*` — about 30 tracked files and ~400 KB, which
-is exactly what `../cuems-nodeconf` and `../cuems-utils` carry and commit.
+**Measured state — DONE 2026-09-15** (`41b085b`). The scaffold is installed:
+`specify init --here --force --non-interactive --integration claude --script sh`
+(CLI 1.0.4) added `.specify/` (bash scripts, templates, workflows, the unfilled
+`memory/constitution.md`) and ten `.claude/skills/speckit-*` — 30 files, ~380 KB,
+the same footprint `../cuems-nodeconf` and `../cuems-utils` carry. It touched no
+tracked file, and `debian/install` names every shipped path explicitly, so none
+of it reaches a `.deb`. `specs/` is still empty: no feature has been created.
+
+⚠️ **The command names in §§3-8 below are stale.** CLI 1.0.4 installs the chain
+as **skills with hyphens** — `/speckit-constitution`, `/speckit-specify`,
+`/speckit-clarify`, `/speckit-plan`, `/speckit-tasks`, `/speckit-checklist`,
+`/speckit-analyze`, `/speckit-implement` — not the dotted `/speckit.constitution`
+spelling those prompts were written against. The prompt *bodies* are unaffected;
+only the invocation changed. There is also a `/speckit-converge` (assess the tree
+and append the remainder as tasks) and a `/speckit-taskstoissues` that the
+prompts predate.
 
 **The upstream process expects it.**
 `../cuems-utils/specs/planning/xml-rebuild/010-consumer-prompts/README.md` is
