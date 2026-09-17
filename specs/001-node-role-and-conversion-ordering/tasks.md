@@ -37,9 +37,9 @@ these scripts have no `.py` extension and are not a package.
 
 **Purpose**: pin the vocabulary and build the fixtures every US1 task is checked against.
 
-- [ ] T001 Write `specs/001-node-role-and-conversion-ordering/contracts/avahi-txt.md` — this repository's half of the pinned vocabulary: key `node_role`, values `controller`/`node`/`firstrun`, filenames `cuems.service.{firstrun,controller,node}`, two records per template (`_cuems_nodeconf._tcp:9000` and `_cuems_osc._tcp:9090`), `uuid` untouched; state which files this repository owns and which belong to flow 04
-- [ ] T002 [P] Add live-discovery-file fixtures under `tests/fixtures/avahi/`: a pristine copy of each shipped template, a hand-edited variant (extra record, reordered lines, a comment, odd whitespace), an already-migrated file, an unreadable/unrelated file, and a file carrying the retired key in a shape the rewrite must refuse
-- [ ] T003 [P] Add a converted-and-unconverted `network_map.xml` fixture pair under `tests/fixtures/maps/` for the ordering test, reusing the document shape already inlined in `tests/test_controller_resolution.py`
+- [X] T001 Write `specs/001-node-role-and-conversion-ordering/contracts/avahi-txt.md` — this repository's half of the pinned vocabulary: key `node_role`, values `controller`/`node`/`firstrun`, filenames `cuems.service.{firstrun,controller,node}`, two records per template (`_cuems_nodeconf._tcp:9000` and `_cuems_osc._tcp:9090`), `uuid` untouched; state which files this repository owns and which belong to flow 04
+- [X] T002 [P] Add live-discovery-file fixtures under `tests/fixtures/avahi/`: a pristine copy of each shipped template, a hand-edited variant (extra record, reordered lines, a comment, odd whitespace), an already-migrated file, an unreadable/unrelated file, and a file carrying the retired key in a shape the rewrite must refuse
+- [X] T003 [P] Add a converted-and-unconverted `network_map.xml` fixture pair under `tests/fixtures/maps/` for the ordering test, reusing the document shape already inlined in `tests/test_controller_resolution.py`
 
 ---
 
@@ -51,7 +51,7 @@ repository.
 **⚠️ CRITICAL**: T004 blocks every file edit in Phase 3. Editing a template before the
 vocabulary is cross-checked is how a half-renamed cluster gets built.
 
-- [ ] T004 Cross-check `specs/001-node-role-and-conversion-ordering/contracts/avahi-txt.md` against `../cuems-nodeconf/specs/001-network-map-object-adoption/contracts/avahi-txt.md` — key, all three values and all three filenames must agree exactly (FR-009, SC-003); record the compared revision of the counterpart in this repository's contract file
+- [X] T004 Cross-check `specs/001-node-role-and-conversion-ordering/contracts/avahi-txt.md` against `../cuems-nodeconf/specs/001-network-map-object-adoption/contracts/avahi-txt.md` — key, all three values and all three filenames must agree exactly (FR-009, SC-003); record the compared revision of the counterpart in this repository's contract file
 
 ---
 
