@@ -138,13 +138,15 @@ fi
 #
 # There is nothing else to sequence it against. This postinst carries no
 # debhelper substitution token (only debian/preinst does) — and must never
-# spell that token out, not even in a comment, because dh_installdeb replaces it
-# wherever it appears — so dh_installsystemd injects no service restarts into it, and nothing here restarts a service that reads the
-# map — the engines, the editor and cuems-nodeconf are enabled, never started
-# or restarted, by this script. They read the converted map the next time they
+# spell that token out, not even in a comment, because dh_installdeb replaces
+# it wherever it appears — so dh_installsystemd injects no service restarts
+# into it, and nothing here restarts a service that reads the map — the
+# engines, the editor and cuems-nodeconf are enabled, never started or
+# restarted, by this script. They read the converted map the next time they
 # start: at reboot, or when an operator restarts them. What this script does
-# restart or reload is listed in docs/upgrade-ordering.md; if that ever grows to
-# include a map reader, this decision must be revisited and the record updated.
+# restart or reload is listed in docs/upgrade-ordering.md; if that ever grows
+# to include a map reader, this decision must be revisited and the record
+# updated.
 #
 # WHICH FILES. /etc/cuems/network_map.xml is a conffile that operators (and
 # cuems-nodeconf, when enabled) edit, so on a live host it is usually locally
@@ -395,8 +397,10 @@ if [ -f /etc/rsyncd.secrets ]; then
     chmod 600 /etc/rsyncd.secrets
 fi
 
-if [ -f /etc/sudoers.d/99-cuems ]; then
-    chmod 440 /etc/sudoers.d/99-cuems
+# 99-cuems was retired whole in 1.3.0-23 (see the rm_conffile block near the
+# top); its rules live in 99-cuems-avahi now.
+if [ -f /etc/sudoers.d/99-cuems-avahi ]; then
+    chmod 440 /etc/sudoers.d/99-cuems-avahi
 fi
 
 if [ -f /etc/sudoers.d/50-cuems-admin ]; then

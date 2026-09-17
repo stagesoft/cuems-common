@@ -203,11 +203,13 @@ Pipewire, pipewire-pulse, and wireplumber are **masked system-wide** via `/etc/s
 
 | Script | Language | Role |
 |---|---|---|
-| `cuems-config-node` | Python 3 | Reads the MAC address of `ethernet0` and generates a new UUID. In `test` mode writes modified files to the current directory for inspection; in `write` mode applies them to the system. Files modified: `/etc/cuems/settings.xml` (mac + uuid elements), `/usr/share/cuems/cuems.service.{firstrun,master,slave}` (uuid TXT records), `/etc/avahi/avahi-daemon.conf` (host-name, IPv4/IPv6 flags, deny-interfaces), `/etc/hostname`, `/etc/hosts`. |
+| `cuems-config-node` | Python 3 | Reads the MAC address of `ethernet0` and generates a new UUID. In `test` mode writes modified files to the current directory for inspection; in `write` mode applies them to the system. Files modified: `/etc/cuems/settings.xml` (mac + uuid elements), `/usr/share/cuems/cuems.service.{firstrun,controller,node}` (uuid TXT records), `/etc/avahi/avahi-daemon.conf` (host-name, IPv4/IPv6 flags, deny-interfaces), `/etc/hostname`, `/etc/hosts`. |
+| `cuems-migrate-network-map` | Python 3 | Converts a `network_map.xml` from the retired `<node_type>` element to `<node_role>`, in place, with a timestamped `.bak` backup. Run by `postinst` over the live map and the `.dpkg-dist`/`.dpkg-old` copies a conffile prompt leaves. Always exits 0; prints `converted`, `already converted`, `absent` or `refused` with the reason. |
+| `cuems-migrate-avahi-service` | Python 3 | Migrates the live Avahi discovery file (default `/etc/avahi/services/cuems.service`) from the retired `node_type=` TXT key to `node_role=`. Rewrites only those records — every other byte kept — after writing `<path>.<timestamp>.bak` (never `*.service`, pruned to five). Refuses a file it cannot map, whole, and says why. Run by `postinst`; run it by hand on hosts deployed by file copy. Always exits 0. |
 | `cuems-hdmi-audio-map` | Python 3 | Detects the runtime DRM connector → GPU CRTC → ALSA device mapping via direct DRM ioctls on `/dev/dri/card0`. Generates a three-slot `multi_hdmi` PCM definition in `/etc/asound.conf` so JACK always uses a stable 6-channel device regardless of boot-time connector assignment. Accepts `--dry-run` / `-n` to print the config without writing it. |
 | `cuems-ola-profile` | bash | Enables OLA DMX hardware profiles by toggling `/etc/ola/*.conf` files and restarting `olad`. Profiles: `pro` (Enttec USB Pro / DMXking), `opendmx` (Enttec Open DMX, FTDI-based), `artnet` (network-only), `sacn` (network-only). Handles the `ftdi_sio` kernel module blacklist required by the `opendmx` profile. After applying, lists enabled plugins with supported hardware models. |
 | `cuems-healthcheck` | bash | Polls `systemctl is-active` for the core CUEMS services, checks disk usage against a 90 % threshold, and logs results to `/var/log/cuems-health.log`. Exits 0 when all checks pass, 1 when any check fails. |
-| `cuems-cluster-poweroff` | bash | Orderly cluster power-off, run as the `ExecStop=` of `cuems-cluster-poweroff.service` so it fires during a poweroff transition (power button via logind, or `systemctl poweroff`). Projectors off over PJLink → cluster node(s) off over SSH → wait until really down → hand back to systemd. Drives the installed `cuems-power-bridge` library, so it duplicates no protocol logic and honours that host's `power-bridge.conf`. Skips on a reboot, self-excludes this host from the node list, and is idempotent. Gated by `enabled=` in `/etc/cuems/cluster-poweroff.conf` (ships `false`). Replaced the retired `cuems-stop`. |
+| `cuems-cluster-poweroff` | bash | Orderly cluster power-off, run as the `ExecStop=` of `cuems-cluster-poweroff.service` so it fires during a poweroff transition (power button via logind, or `systemctl poweroff`). Projectors off over PJLink → cluster node(s) off over SSH → wait until really down → hand back to systemd. Drives the installed `cuems-power-bridge` library, so it duplicates no protocol logic and honours that host's `power-bridge.conf`. Skips on a reboot, self-excludes this host from the node list, and is idempotent. Gated by `enabled=` in `/etc/cuems/cluster-poweroff.conf` (ships `false`). Replaced the retired `cuems-stop`. **Known issue since 1.3.0-23:** it selects nodes through `cuems-power-bridge`, whose parser still uses the retired `node_type` vocabulary that the network-map conversion removed — it can report success having powered off no nodes. Verify nodes are off until `cuems-power-bridge` is fixed (`docs/upgrade-verification.md` §7). |
 | `cuems-displays-on` | bash | Boot-time confirmation that the projectors actually came on: polls the bridge's `GET /status` and re-issues `POST /poweron` until every display reports `on`. Exists because the bridge's own `projector_power_on_on_start` gets one attempt with a ~4 s retry budget while lamp cooldown is tens of seconds. Gated by `enabled=` **and** `projector_power_on_on_start`. |
 
 ### Internal Helpers — `/usr/lib/cuems/bin`
@@ -509,7 +511,7 @@ The `preinst` script creates the `cuems` system user and group, assigns it to `v
 2. Reloads systemd daemon.
 3. Enables `loginctl linger` for the `cuems` user (prevents systemd-logind from destroying IPC resources on logout).
 4. Stops any running pipewire/wireplumber instances across all logged-in users so the `/dev/null` masks take effect immediately.
-5. Sets `600` permissions on `/etc/rsyncd.secrets` and `440` on `/etc/sudoers.d/99-cuems`.
+5. Sets `600` permissions on `/etc/rsyncd.secrets` and `440` on `/etc/sudoers.d/99-cuems-avahi` (which replaced `99-cuems` in 1.3.0-23).
 
 After installation, enable the appropriate systemd target for each machine's role:
 
@@ -529,6 +531,24 @@ The controller role activates automatically once `/etc/cuems/master.lock` exists
 ```bash
 sudo systemctl enable --now cuems-controller.path
 ```
+
+### Upgrading
+
+A CUEMS cluster is upgraded **as a unit** — every host to the same release, in one planned
+operation, never mid-show. What an upgrade restarts, and in what order it converts files, is
+recorded in [`docs/upgrade-ordering.md`](docs/upgrade-ordering.md); the checks to run on a
+controller plus a node afterwards are in [`docs/upgrade-verification.md`](docs/upgrade-verification.md).
+
+**An upgrade never rewrites an operator's project documents.** Converting a project library to a
+newer document format is an operator command owned by `cuems-utils`, not something this package
+runs. A library nobody converts keeps loading, because `cuems-utils` converts an old document in
+memory when it reads it.
+
+`/etc/cuems/network_map.xml` ships with an **empty** node list. On a host whose map was edited, the
+upgrade asks about that conffile: keeping your version is the default and keeps the topology;
+taking the maintainer's version leaves an empty map and moves yours, converted, to
+`network_map.xml.dpkg-old`. A complete example node entry is at
+`/usr/share/doc/cuems-common/network_map.xml.example`.
 
 ### Build from Source
 
@@ -584,7 +604,25 @@ cuems-common/
 
 ### Running the test suite
 
-The test scripts require a live systemd environment and the package installed. They can be run from the repository root:
+The Python test suite needs no installed package and no root:
+
+```bash
+uv run --with pytest --with lxml --with xmlschema==3.4.3 python -m pytest tests/ -q
+
+# Fail instead of skipping when a system tool a test needs (visudo, dpkg) is missing:
+CUEMS_REQUIRE_TOOLS=1 uv run --with pytest --with lxml --with xmlschema==3.4.3 python -m pytest tests/ -q
+```
+
+The out-of-order installation demonstration builds this package and the previous release, and
+replays install scenarios inside an unprivileged `mmdebstrap --mode=unshare` bookworm system
+(needs `mmdebstrap`, `uidmap`, `equivs` and network access; writes
+`specs/001-node-role-and-conversion-ordering/evidence/out-of-order-refusal.txt`):
+
+```bash
+tests/packaging/release-gate-demo.sh
+```
+
+The shell test scripts below require a live systemd environment and the package installed. They can be run from the repository root:
 
 ```bash
 # Validate systemd unit file syntax and structure:

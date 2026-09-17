@@ -75,3 +75,12 @@ def test_old_sudoers_file_is_retired_whole():
             r"dpkg-maintscript-helper rm_conffile\s+\\?\s*/etc/sudoers\.d/99-cuems\s+\S+~\s+cuems-common",
             text,
         ), f"debian/{script} lacks the rm_conffile for /etc/sudoers.d/99-cuems"
+
+
+def test_no_maintainer_script_still_manages_the_retired_file_as_live():
+    """Besides its rm_conffile lines, nothing may still treat 99-cuems as a live file
+    (a leftover chmod on it would be dead code pointing the wrong way)."""
+    for script in ("preinst", "postinst", "postrm"):
+        for n, line in enumerate((REPO_ROOT / "debian" / script).read_text(encoding="utf-8").splitlines(), 1):
+            if re.search(r"/etc/sudoers\.d/99-cuems(?![-\w.])", line) and not line.lstrip().startswith("#"):
+                assert "rm_conffile" in line, f"debian/{script}:{n} still manages 99-cuems: {line.strip()}"
