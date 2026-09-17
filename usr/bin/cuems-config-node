@@ -61,7 +61,7 @@ else:
 ##### /usr/share/cuems/cuems.service.*
 print(f'Modifying /usr/share/cuems/cuems.service.*')
 
-service_files = ['cuems.service.firstrun', 'cuems.service.master', 'cuems.service.slave']
+service_files = ['cuems.service.firstrun', 'cuems.service.controller', 'cuems.service.node']
 
 for filename in service_files:
     et = xml.etree.ElementTree.parse(f'/usr/share/cuems/{filename}')

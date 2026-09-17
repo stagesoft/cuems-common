@@ -1,0 +1,14 @@
+# CUEMS sudo configuration - Avahi discovery file management
+#
+# Replaces 99-cuems (retired whole in 1.3.0-23 via rm_conffile). The rules moved
+# to a file that had never been shipped because dpkg keeps a locally modified
+# conffile: renaming rules inside 99-cuems would never have reached a host that
+# had edited it, and sudoers matches a command string literally. A new file
+# installs unconditionally.
+#
+# The template names follow the discovery vocabulary (node_role): controller,
+# node, firstrun. See specs/001-node-role-and-conversion-ordering/contracts/avahi-txt.md.
+cuems ALL=(root) NOPASSWD: /bin/systemctl reload avahi-daemon.service
+cuems ALL=(root) NOPASSWD: /usr/bin/cp /usr/share/cuems/cuems.service.firstrun /etc/avahi/services/cuems.service
+cuems ALL=(root) NOPASSWD: /usr/bin/cp /usr/share/cuems/cuems.service.controller /etc/avahi/services/cuems.service
+cuems ALL=(root) NOPASSWD: /usr/bin/cp /usr/share/cuems/cuems.service.node /etc/avahi/services/cuems.service

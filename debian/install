@@ -49,6 +49,7 @@ usr/share/cuems/hostapd/hostapd.conf.template usr/share/cuems/hostapd/
 # Python scripts (executable)
 usr/bin/cuems-config-node usr/bin/
 usr/bin/cuems-migrate-network-map usr/bin/
+usr/bin/cuems-migrate-avahi-service usr/bin/
 
 # System scripts
 usr/bin/cuems-cluster-poweroff usr/bin/
@@ -164,7 +165,7 @@ etc/systemd/journald.conf.d/cuems.conf etc/systemd/journald.conf.d/
 # compiled-in default, so it changes nothing — it states the contract.
 etc/systemd/logind.conf.d/10-cuems-power-button.conf etc/systemd/logind.conf.d/
 etc/rsyslog.d/cuems.conf etc/rsyslog.d/
-etc/sudoers.d/99-cuems etc/sudoers.d/
+etc/sudoers.d/99-cuems-avahi etc/sudoers.d/
 etc/sudoers.d/50-cuems-admin etc/sudoers.d/
 
 # SSH server hardening (drop-in; main /etc/ssh/sshd_config left untouched

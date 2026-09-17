@@ -20,3 +20,6 @@ __pycache__/
 *.buildinfo
 *.dsc
 *.tar.*
+
+# pytest
+.pytest_cache/

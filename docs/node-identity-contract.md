@@ -75,6 +75,24 @@ An operator finding an explicit `hwaddress ether` line on a venue box is looking
 at the second state. It is correct and was proven; it is simply not what a
 template can carry.
 
+## Discovery TXT record
+
+A host announces its role over mDNS in `/etc/avahi/services/cuems.service`, as a TXT record on
+both `_cuems_nodeconf._tcp` (port 9000) and `_cuems_osc._tcp` (port 9090):
+
+| TXT record | Values |
+|---|---|
+| `node_role` | `controller`, `node`, `firstrun` — the same vocabulary as `<node_role>` below |
+| `uuid` | the node's `uuid` |
+
+The record was renamed from the retired `node_type=master|slave|firstrun` together with
+`cuems-nodeconf`, as one cutover; the pinned vocabulary is
+`specs/001-node-role-and-conversion-ordering/contracts/avahi-txt.md`. The live file is created by
+copying `/usr/share/cuems/cuems.service.{firstrun,controller,node}` and is shipped by no package,
+so the package upgrade migrates it with `cuems-migrate-avahi-service` (backup beside it as
+`cuems.service.<timestamp>.bak`); on a host the package manager never configures, run that
+command by hand.
+
 ## The `node_type` -> `node_role` migration (feature 007)
 
 `network_map.xml` documents written before this change carry `<node_type>`

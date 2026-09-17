@@ -49,6 +49,23 @@ if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
         /etc/default/grub.d/cuems-display.cfg 1.3.0-19~ cuems-common -- "$@"
 fi
 
+# Retire /etc/sudoers.d/99-cuems WHOLE (1.3.0-23). Its four rules — the avahi
+# reload and the three template `cp` rules — moved to 99-cuems-avahi when the
+# discovery templates were renamed (master/slave -> controller/node). Editing
+# the rules in place was rejected: dpkg keeps a locally modified conffile, so
+# renamed rules would never reach a host that had touched the file, and sudoers
+# matches a command literally — the role flip would silently lose its privilege
+# there. A never-shipped file installs unconditionally instead, and this retires
+# the old one. Safe because sudo's #includedir skips any name containing a dot:
+# the .dpkg-backup/.dpkg-bak a modified copy becomes is inert, and an unmodified
+# copy is removed. Package-owned policy, not host-owned live state, so plain
+# rm_conffile is the right tool here (constitution VI). Hand-written for the
+# reason at the top of debian/postinst; the same line is needed in preinst,
+# postinst and postrm.
+if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
+    dpkg-maintscript-helper rm_conffile /etc/sudoers.d/99-cuems 1.3.0-23~ cuems-common -- "$@"
+fi
+
 # /etc/network/interfaces and /etc/network/interfaces.cuems were shipped by
 # versions old enough that dpkg still records them as `obsolete` conffiles on
 # every host that came through the divert -> postinst-cp transition — verified
@@ -105,6 +122,10 @@ if [ -f /usr/bin/cuems-migrate-network-map ]; then
     chmod +x /usr/bin/cuems-migrate-network-map
 fi
 
+if [ -f /usr/bin/cuems-migrate-avahi-service ]; then
+    chmod +x /usr/bin/cuems-migrate-avahi-service
+fi
+
 # =========================================================================
 # network_map.xml node_type -> node_role conversion (feature 007, M3)
 # =========================================================================
@@ -130,6 +151,35 @@ if [ -x /usr/bin/cuems-migrate-network-map ]; then
     for f in /etc/cuems/network_map.xml /etc/cuems/network_map.xml.dpkg-new; do
         [ -f "$f" ] && /usr/bin/cuems-migrate-network-map "$f" || true
     done
+fi
+
+# =========================================================================
+# Live Avahi discovery file: node_type= -> node_role= (feature 001, FR-004)
+# =========================================================================
+# The discovery TXT key was renamed together with cuems-nodeconf, and the
+# templates under /usr/share/cuems/ carry the new key. That alone changes
+# nothing on a deployed host: /etc/avahi/services/cuems.service is shipped by
+# no package — it was created by copying a template — so without this step the
+# host keeps announcing node_type=, and a node_role listener discovers nothing.
+#
+# Independent of the network-map conversion above (different file, different
+# reader), and nothing in this script reads the discovery file, so its position
+# here is free; it sits beside the other conversion for readability.
+#
+# Targeted key rewrite with a byte-exact backup; refuses a file it cannot map
+# whole and says why; always exits 0 (and `|| true` besides). avahi-daemon is
+# reloaded only when the file actually changed and only if it is running: a
+# reload re-reads static service files and re-announces them, and a daemon
+# that is not running reads the file when it starts.
+if [ -x /usr/bin/cuems-migrate-avahi-service ] && [ -f /etc/avahi/services/cuems.service ]; then
+    _before=$(md5sum < /etc/avahi/services/cuems.service 2>/dev/null || true)
+    /usr/bin/cuems-migrate-avahi-service /etc/avahi/services/cuems.service || true
+    _after=$(md5sum < /etc/avahi/services/cuems.service 2>/dev/null || true)
+    if [ "$_before" != "$_after" ] && command -v systemctl >/dev/null 2>&1 \
+       && systemctl is-active --quiet avahi-daemon.service 2>/dev/null; then
+        systemctl reload avahi-daemon.service >/dev/null 2>&1 || true
+    fi
+    unset _before _after
 fi
 
 # Verify Python wrapper exists (provided by cuems-utils package)

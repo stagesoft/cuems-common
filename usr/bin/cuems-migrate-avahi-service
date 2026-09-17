@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Migrate a host's live Avahi discovery file from ``node_type=`` to ``node_role=``.
+
+The discovery TXT key was renamed as one cutover across cuems-common and
+cuems-nodeconf (contract: ``specs/001-node-role-and-conversion-ordering/
+contracts/avahi-txt.md``). Renaming the shipped templates does not reach a
+running host: ``/etc/avahi/services/cuems.service`` is created by *copying* a
+template and is shipped by no package, so every host already deployed would go
+on announcing the retired key — and a listener reading ``node_role`` discovers
+nothing from it, silently. This tool brings that live file across.
+
+Runs from ``debian/postinst`` on upgrade, and by hand on hosts the package
+manager never configures (file-copy deployment). Stdlib only: it runs from
+``/usr/bin``, where the shared venv is not importable.
+
+**Targeted key rewrite, on bytes.** Only records of exactly the shape
+``<txt-record>node_type=VALUE</txt-record>`` are rewritten; every other byte —
+operator edits, comments, element order, whitespace, line endings — is left
+unchanged, and the document is never re-serialised.
+
+======================  ===============
+found                   written
+======================  ===============
+``node_type=master``    ``node_role=controller``
+``node_type=slave``     ``node_role=node``
+``node_type=firstrun``  ``node_role=firstrun``
+*any other value*       **the whole file is refused**
+======================  ===============
+
+A file is also refused whole when the retired key appears anywhere outside that
+exact record shape, so a file is never left half-converted.
+
+Before any rewrite the original bytes are written to
+``<path>.<UTC timestamp>.bak`` — a name that does not end in ``.service``, so
+avahi-daemon never loads it — and backups are pruned to the newest five. The new
+content is written to a temporary file (also not ``*.service``) and moved into
+place atomically, keeping the original's mode and ownership.
+
+Outcomes are always one of four, and the exit status is always 0: an upgrade
+must never fail over a discovery file.
+"""
+
+from __future__ import annotations
+
+import argparse
+import glob
+import os
+import re
+import shutil
+from dataclasses import dataclass
+from datetime import datetime, timezone
+
+DEFAULT_PATH = "/etc/avahi/services/cuems.service"
+
+_VALUE_MAP = {
+    b"master": b"controller",
+    b"slave": b"node",
+    b"firstrun": b"firstrun",
+}
+_ACCEPTED = sorted(v.decode() for v in _VALUE_MAP)
+
+_RETIRED_KEY = b"node_type"
+_RECORD_RE = re.compile(rb"<txt-record>node_type=([^<]*)</txt-record>")
+
+#: Same shape as cuems-migrate-network-map's backups: <path>.<stamp>.bak, which
+#: never ends in ".service".
+_BACKUP_STAMP_FMT = ".%Y%m%dT%H%M%SZ"
+_KEEP_BACKUPS = 5
+
+
+@dataclass(frozen=True)
+class Outcome:
+    """One of exactly four distinguishable results."""
+
+    status: str  # "converted" | "already_current" | "absent" | "refused"
+    path: str
+    records_converted: int = 0
+    backup_path: str | None = None
+    message: str = ""
+
+    def render(self) -> str:
+        if self.status == "absent":
+            return f"absent: {self.path} does not exist; nothing to migrate"
+        if self.status == "already_current":
+            return f"already current: {self.path} carries no node_type TXT record"
+        if self.status == "refused":
+            return f"refused: {self.path} — {self.message}"
+        return (
+            f"converted: {self.path} — {self.records_converted} record(s) to node_role, "
+            f"backup at {self.backup_path}"
+        )
+
+
+def _prune_old_backups(path: str, *, keep: int = _KEEP_BACKUPS) -> None:
+    existing = sorted(glob.glob(f"{glob.escape(path)}.*.bak"))
+    for stale in existing[:-keep] if len(existing) > keep else []:
+        try:
+            os.remove(stale)
+        except OSError:
+            pass
+
+
+def _backup_path(path: str) -> str:
+    base = f"{path}{datetime.now(timezone.utc).strftime(_BACKUP_STAMP_FMT)}"
+    candidate, n = f"{base}.bak", 1
+    while os.path.exists(candidate):  # two conversions within one second
+        candidate, n = f"{base}.{n}.bak", n + 1
+    return candidate
+
+
+def _write_atomically(path: str, data: bytes) -> None:
+    """Replace ``path`` with ``data`` without a reader ever seeing a partial file."""
+    directory = os.path.dirname(os.path.abspath(path))
+    tmp = os.path.join(directory, f".{os.path.basename(path)}.tmp.{os.getpid()}")
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        shutil.copymode(path, tmp)
+        st = os.stat(path)
+        try:
+            os.chown(tmp, st.st_uid, st.st_gid)
+        except PermissionError:
+            pass  # not root: ownership is already the caller's, as the original's must be
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+def migrate(path: str) -> Outcome:
+    """Migrate ``path`` in place, or explain why nothing was written. Never raises."""
+    if not os.path.lexists(path):
+        return Outcome(status="absent", path=path)
+
+    try:
+        with open(path, "rb") as fh:
+            original = fh.read()
+    except OSError as e:
+        return Outcome(
+            status="refused",
+            path=path,
+            message=f"cannot read it ({e.strerror}); fix its permissions and re-run this command",
+        )
+
+    occurrences = original.count(_RETIRED_KEY)
+    if occurrences == 0:
+        return Outcome(status="already_current", path=path)
+
+    matches = list(_RECORD_RE.finditer(original))
+    if len(matches) != occurrences:
+        return Outcome(
+            status="refused",
+            path=path,
+            message=(
+                f"it carries node_type {occurrences} time(s) but only {len(matches)} in the "
+                "form <txt-record>node_type=VALUE</txt-record>; edit it by hand to "
+                "node_role=controller|node|firstrun and re-run"
+            ),
+        )
+
+    for match in matches:
+        if match.group(1) not in _VALUE_MAP:
+            found = match.group(1).decode("utf-8", errors="replace")
+            return Outcome(
+                status="refused",
+                path=path,
+                message=(
+                    f"it has node_type={found!r}, not one of the accepted values {_ACCEPTED}; "
+                    "nothing was changed — edit the value and re-run"
+                ),
+            )
+
+    migrated = _RECORD_RE.sub(lambda m: b"<txt-record>node_role=" + _VALUE_MAP[m.group(1)] + b"</txt-record>", original)
+
+    backup = _backup_path(path)
+    try:
+        with open(backup, "wb") as fh:
+            fh.write(original)
+        _write_atomically(path, migrated)
+    except OSError as e:
+        return Outcome(
+            status="refused",
+            path=path,
+            message=f"could not write ({e.strerror}); the file is unchanged",
+        )
+    _prune_old_backups(path)
+
+    return Outcome(
+        status="converted",
+        path=path,
+        records_converted=len(matches),
+        backup_path=backup,
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Migrate an Avahi discovery file's TXT key from node_type= to node_role=.",
+    )
+    parser.add_argument(
+        "path",
+        nargs="?",
+        default=DEFAULT_PATH,
+        help=f"the live discovery file (default: {DEFAULT_PATH})",
+    )
+    args = parser.parse_args(argv)
+    print(migrate(args.path).render())
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
