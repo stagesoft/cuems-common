@@ -65,24 +65,28 @@ files.
 
 ## Constitution Check
 
-*GATE: passes. Re-checked after the clarification session.*
+*GATE: passes for Principles I, II, III, V and VI after the 2026-09-17 analysis remediation.
+**Principle IV has an open decision** — analysis findings C2/I1, see below.*
 
 | Principle | How this feature satisfies it |
 |---|---|
 | **I — upgrades on a live machine** | Every new `postinst` step is guarded and cannot fail the upgrade (FR-006). No unbounded work is added to the upgrade: OOS-1 keeps the library conversion out of it entirely. The file-copy host, which never runs `postinst`, is addressed by documentation and named in Edge Cases. |
-| **II — conversions back up, repeat, never fail** | FR-006/FR-007 make the live-file migration idempotent and non-fatal; FR-007a makes refusal explicit and reported. The rewrite is textual, so an unrecognised file is never re-serialised. |
+| **II — conversions back up, repeat, never fail** | FR-006 makes the live-file migration idempotent and non-fatal; **FR-006a** adds the byte-exact timestamped backup and its retention bound, which the first draft of this plan claimed without the spec requiring it; FR-007a makes refusal explicit and reported; **FR-007b** makes an unrecognised value or an inconsistent record pair a whole-file refusal that names the value and the accepted set. The rewrite is textual, so a file is never re-serialised. |
 | **III — ordering authority** | US2 exists for this: FR-013 forbids deferring a decision to a feature number, FR-012 requires the order be asserted by a test rather than claimed by a comment, FR-014 requires the record to state what this package does and does not restart. |
-| **IV — mechanical gate** | FR-016/016a/016b give the bound its real form, verified by version comparison rather than by reading; FR-018 makes the demonstration a deliverable; FR-019 records other repositories' edges as theirs. |
+| **IV — mechanical gate** | ⚠️ **OPEN.** FR-018 makes the demonstration a deliverable and FR-019 records other repositories' edges as theirs, now including the discovery cutover's reverse edge. But the bound itself is unresolved: measured with `dpkg --compare-versions`, the tilde floor FR-016a prescribes (`>= 0.1.0~rc16`) admits `0.1.0rc15` and `0.1.0rc5`, weakening the one working edge against the library (analysis C2), and no tilde spelling the library could adopt sorts above its already-published `0.1.0rcN` versions without either an epoch or a version jump (analysis I1). Pending decision. |
 | **V — downgrade unsupported** | Unchanged and restated in Assumptions. No reverse conversion is introduced. |
-| **VI — owned, retired, signed** | FR-003a delivers the privilege in a *new* file precisely because a modified conffile is kept; FR-003b requires the dead rules' retirement to use the established `rm_conffile` discipline. FR-020 requires the changelog entry. |
+| **VI — owned, retired, signed** | FR-003a delivers the privilege in a *new* file precisely because a modified conffile is kept; FR-003b retires the old file **whole** via `rm_conffile` in all three maintainer scripts — an in-place edit could not reach a kept, modified copy — relying on the privilege system skipping dotted include names; FR-003c syntax-checks every shipped privilege file. FR-020 requires the changelog entry. |
 
-**Testing gate** (constitution, Testing Gate section): tests cover the live-file migration
-including the unrecognised-file case, the retired key's absence, the ordering assertion, and the
-existing conversion's four cases. The manual half — the discovery daemon's live behaviour, the
+**Testing gate** (constitution, Testing Gate section): tests cover the live-file migration's
+four owed cases — happy path, idempotence, whole-file refusal of an unrecognised value, backup
+fidelity — plus byte-preservation and the unreadable-file case; the retired key's absence and the
+new key's presence; a syntax check of every shipped sudoers file; the ordering assertion; the
+version bounds by comparison; and the existing conversion's four cases. The manual half — the discovery daemon's live behaviour, the
 sudoers privilege, conffile prompts, dpkg's refusal — is FR-021's written procedure, performed on
 a controller plus at least one node.
 
-No violations. The Complexity Tracking table is therefore empty.
+No violations in I, II, III, V or VI. **IV is not a violation but an unresolved decision**: it
+must be settled before `/speckit-implement` reaches US3, and it does not block US1 or US2.
 
 ## Project Structure
 
@@ -93,7 +97,10 @@ specs/001-node-role-and-conversion-ordering/
 ├── spec.md                    # the specification, with its Clarifications session
 ├── plan.md                    # this file
 ├── contracts/
-│   └── avahi-txt.md           # this repository's half of the pinned vocabulary (to be written)
+│   ├── avahi-txt.md           # this repository's half of the pinned vocabulary (T001)
+│   └── release-gate.md        # cross-repo deliverables this repository cannot perform (T026)
+├── evidence/
+│   └── out-of-order-refusal.txt   # the observed dpkg refusal, both directions attempted (T027)
 ├── checklists/
 │   └── requirements.md        # spec quality checklist, 16/16
 └── tasks.md                   # /speckit-tasks output
@@ -106,35 +113,43 @@ Deliberately absent: `research.md`, `data-model.md`, `quickstart.md` — see the
 ```text
 etc/
 ├── avahi/services/cuems.service          # in-repo copy of the live file; NOT shipped (FR-004)
-├── sudoers.d/99-cuems                    # conffile; its three role-flip rules become inert
-└── sudoers.d/<new file>                  # FR-003a: the rules that name the renamed templates
+├── sudoers.d/99-cuems                    # RETIRED WHOLE via rm_conffile (FR-003b)
+└── sudoers.d/99-cuems-avahi              # new: all four rules, reload included (FR-003a)
 usr/
 ├── share/cuems/cuems.service.firstrun    # TXT records only
 ├── share/cuems/cuems.service.master      # → cuems.service.controller (rename)
 ├── share/cuems/cuems.service.slave       # → cuems.service.node (rename)
 ├── bin/cuems-config-node                 # :64 hardcodes the three template names
-└── lib/cuems/bin/<live-file migration>   # new helper, invoked from postinst
+└── bin/cuems-migrate-avahi-service       # new, operator-runnable (FR-021a); called from postinst
 debian/
-├── postinst                              # ordering record; the live-file migration call
-├── control                               # FR-016 bounds; existing Breaks preserved
-├── install                               # new sudoers file + new helper (templates ship by glob)
+├── preinst                               # rm_conffile for 99-cuems (FR-003b)
+├── postinst                              # ordering record; migration call; rm_conffile
+├── postrm                                # rm_conffile for 99-cuems (FR-003b)
+├── control                               # FR-016 bounds (pending C2/I1); existing Breaks kept
+├── install                               # new sudoers file + new tool (templates ship by glob)
 └── changelog                             # FR-020
 tests/
 ├── test_network_map_conversion.py        # existing
 ├── test_controller_resolution.py         # existing
 ├── test_schema_mirror.py                 # existing
-├── test_avahi_vocabulary.py              # new: retired key absent from shipped/owned files
-├── test_avahi_live_migration.py          # new: rewrite, idempotence, byte-preservation, refusal
-└── test_postinst_ordering.py             # new: conversion precedes its readers
-docs/                                     # node-identity contract + the upgrade procedure
+├── test_avahi_vocabulary.py              # new: retired key absent, new key present (FR-011)
+├── test_avahi_live_migration.py          # new: four cases + byte-preservation + whole refusal
+├── test_template_consumers.py            # new: every literal template reference resolves
+├── test_sudoers_syntax.py                # new: visudo -cf over etc/sudoers.d/ (FR-003c)
+├── test_postinst_ordering.py             # new: conversion precedes its readers; no deferrals
+└── test_version_bounds.py                # new: bounds verified by dpkg comparison (FR-016a)
+docs/
+├── node-identity-contract.md             # discovery vocabulary update
+├── upgrade-ordering.md                   # new: the ordering record (FR-014, FR-015)
+└── upgrade-verification.md               # new: manual procedure + file-copy equivalents (FR-021/021a)
 README.md                                 # 6 occurrences of the retired key
 ```
 
 **Structure Decision**: no new top-level layout. The package's existing shape — `etc/`,
 `usr/`, `debian/`, `tests/`, `docs/` mirrored into the installed filesystem by
-`debian/install` — is unchanged. The only structural addition is one helper under
-`usr/lib/cuems/bin/` and one sudoers file, both placed the way this package already places
-such things.
+`debian/install` — is unchanged. The only structural additions are one operator tool under `usr/bin/` — beside its
+sibling `cuems-migrate-network-map`, because FR-021a requires operators on file-copy hosts to
+run it by hand — and one sudoers file, which replaces `99-cuems` rather than joining it.
 
 ## Sequencing
 

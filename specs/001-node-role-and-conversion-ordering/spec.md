@@ -136,10 +136,12 @@ disposable environment, capture the refusal.
   packages are deployed by copying files, so `postinst` never runs: the live discovery
   migration does not happen there and the host's package database reports the old version.
   Addressed by documentation — the manual equivalent of every `postinst` step this feature
-  adds — not by mechanism.
+  adds — not by mechanism (FR-021a).
 - **A half-renamed cluster**, in either direction. The package relationship must make it
   unreachable; if it is reached anyway, the log must name the unexpected value and the
-  accepted set.
+  accepted set. Only one direction is this package's to enforce: its `Breaks:` refuses an
+  un-renamed discovery daemon, while refusing a renamed daemon beside an un-renamed version of
+  this package needs a relationship in the daemon's own package (FR-019).
 - **A locally modified privileged-command file.** It is a conffile, so a host that modified it
   keeps the old rules through the upgrade — and those rules name the templates literally.
   Resolved by FR-003a: the working rules arrive in a file that has never been shipped, which
@@ -171,9 +173,18 @@ disposable environment, capture the refusal.
   package manager. The rules naming the renamed templates MUST therefore be delivered in a file
   that has not been shipped before, so that delivering them cannot depend on resolving a
   conflict in an existing one.
-- **FR-003b**: The rules left behind in the previously shipped file MUST be inert — they may
-  name only paths that no longer exist — and the feature MUST record how and when that file's
-  dead rules are retired, using this package's established conffile-retirement discipline.
+- **FR-003b**: The previously shipped privileged-command file MUST be retired **whole**, not
+  edited. Every rule it still carries — including the discovery-daemon reload rule and the rule
+  for the template whose name does not change — moves into the new file (FR-003a), so no rule
+  is left behind or duplicated across files. The old file is then retired with this package's
+  established conffile-retirement discipline in all three maintainer scripts. A partial edit
+  cannot satisfy this requirement: on a host whose copy was locally modified, the package
+  manager keeps that copy, so rules removed only from the shipped version would survive there
+  indefinitely. Retirement renames a modified copy to a backup name, and the privilege system
+  skips include files whose names contain a dot, so no retired rule stays active on any host.
+- **FR-003c**: Every privileged-command file this package ships MUST pass the privilege
+  system's own syntax check as part of the test suite, so a malformed rule is caught before it
+  reaches a host where it affects every privileged command.
 - **FR-004**: The package upgrade MUST bring an already-deployed host's **live** discovery file
   to the new vocabulary. A rename confined to the shipped templates does not satisfy this
   requirement, because the live file is not shipped by this package.
@@ -182,6 +193,12 @@ disposable environment, capture the refusal.
   to be.
 - **FR-006**: The live-file migration MUST be idempotent, MUST NOT fail the upgrade, and MUST
   report which of its outcomes occurred.
+- **FR-006a**: Before any rewrite, the migration MUST write a timestamped backup that
+  reproduces the pre-migration bytes exactly (Constitution II). The backup's name MUST NOT end
+  in `.service`, so the discovery daemon never loads it as a second service definition.
+  Accumulation MUST be bounded by a stated retention policy — following the network-map
+  conversion's precedent of keeping the newest five — and a run that rewrites nothing writes no
+  backup.
 - **FR-007**: The migration MUST be a **targeted key rewrite**: it rewrites the retired TXT
   records in place — mapping the retired role words to the pinned values — and leaves every
   other byte of the file unchanged, including operator edits, comments, ordering and
@@ -190,6 +207,11 @@ disposable environment, capture the refusal.
 - **FR-007a**: A file the migration cannot rewrite — unreadable, or carrying the retired key in
   a shape the rewrite does not match — MUST be left untouched and reported to the operator with
   its path and the action to take. Never silently rewritten, never silently skipped.
+- **FR-007b**: A file carrying a retired-key value outside the accepted set (`master`, `slave`,
+  `firstrun`), or whose records would convert inconsistently — one record mapped, another
+  refused — MUST be refused **whole** (Constitution II): left byte-identical, with the offending
+  value and the accepted set named in the report. The migration never produces a partially
+  converted file.
 - **FR-008**: After the upgrade the host MUST be announcing the new vocabulary without a
   reboot; the discovery daemon is made to see the change.
 - **FR-009**: This repository's half MUST be reviewed and ready to merge in the same window as
@@ -198,7 +220,8 @@ disposable environment, capture the refusal.
 - **FR-010**: Documentation describing the discovery records — this repository's README and its
   node-identity contract — MUST carry the new vocabulary when the feature lands.
 - **FR-011**: A test MUST fail if any shipped or owned file reintroduces the retired key, so a
-  later edit cannot silently undo the cutover.
+  later edit cannot silently undo the cutover — and MUST fail if any shipped template lacks the
+  new key in either of its two service types, so a deleted record cannot pass as a clean one.
 
 ### Functional Requirements — ordering (US2)
 
@@ -206,7 +229,10 @@ disposable environment, capture the refusal.
   every in-package reader of either, MUST be stated in the maintainer script at the point of
   decision, with the reason — and MUST be verified by a test rather than asserted by a comment.
 - **FR-013**: No maintainer script may defer a decision to a feature number. Existing deferrals
-  MUST be resolved by deciding, or restated as a condition that can be checked.
+  MUST be resolved by deciding, or restated as a condition that can be checked. A **deferral**
+  is a statement postponing a decision — "deferred to feature N", "until feature N", "left for
+  feature N" and their equivalents. A provenance label naming the feature that introduced a
+  block, such as `(feature 007, M3)`, is not a deferral and remains allowed.
 - **FR-014**: The ordering record MUST state what this package does and does not restart during
   an upgrade, and MUST be corrected if that behaviour changes.
 - **FR-015**: The feature MUST state explicitly whether a cluster may be upgraded host-by-host
@@ -236,7 +262,11 @@ disposable environment, capture the refusal.
   — versions, command, output — and stored with the feature.
 - **FR-019**: Where another repository is missing its own constraint — or owes a release rule
   this package's bounds depend on (FR-016b) — this feature MUST record it as that repository's
-  deliverable rather than attempting to enforce it from here.
+  deliverable rather than attempting to enforce it from here. This explicitly includes the
+  **reverse edge of the discovery cutover**: the discovery daemon's package currently declares
+  only a floor against this package that every current version satisfies, so a renamed daemon
+  installs beside an un-renamed version of this package. Only a relationship in the daemon's own
+  package can refuse that combination.
 
 ### Functional Requirements — release discipline
 
@@ -246,6 +276,10 @@ disposable environment, capture the refusal.
   tests cannot: the discovery daemon's live behaviour, the privileged-command rules, the
   conffile prompts, and the package manager's refusal — performed on a controller plus at least
   one node.
+- **FR-021a**: The upgrade documentation MUST give the manual equivalent of every
+  maintainer-script step this feature adds, for hosts the package manager never configures. The
+  live-file migration MUST therefore be runnable by an operator by hand, as an operator-facing
+  command, not only from the maintainer script.
 - **FR-022**: The upgrade documentation MUST state this package's position on the project
   library (see OOS-1) so an operator knows the upgrade does not touch their show data.
 - **FR-023**: The excluded power-off defect (OOS-2) MUST be reported with evidence, and its
@@ -338,8 +372,10 @@ its operator-visible symptom, a deliverable of this feature.
   comparison — including that the floor admits the library's final release and that the ceiling
   excludes the next minor — rather than by inspection of the string.
 - **SC-010**: The test suite passes and covers: the config conversion's four cases (happy path,
-  idempotence, whole-document refusal, backup fidelity), the retired key's absence, the
-  live-file migration including the unrecognised-file case, and the ordering assertion.
+  idempotence, whole-document refusal, backup fidelity); the **same four cases for the live-file
+  migration**, plus its byte-preservation and unreadable-file cases; the retired key's absence
+  and the new key's presence; the syntax check of every shipped privileged-command file; and
+  the ordering assertion.
 - **SC-011**: The upgrade-verification procedure has been performed on a controller plus at
   least one node, and its record names the versions installed and what was observed.
 - **SC-012**: An operator reading the upgrade documentation can state, before upgrading, that
@@ -355,7 +391,7 @@ its operator-visible symptom, a deliverable of this feature.
   supported, consistent with the node-model migration's position.
 - The node-configuration daemon remains disabled cluster-wide for the lifetime of this feature.
   That is what makes it acceptable for this package's upgrade to migrate a live discovery file
-  it does not own (Q2): nothing else will.
+  it does not own (FR-004): nothing else will.
 - Downgrade remains unsupported. No reverse conversion exists or is introduced; the only path
   back is the backup a conversion writes.
 - The paired repository's contract is the authority for the discovery vocabulary. If it moves,
