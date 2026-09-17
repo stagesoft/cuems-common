@@ -46,9 +46,12 @@ consumer of the discovery files; `cuems-nodeconf` as the paired half of the cuto
 `/usr/share/cuems/`, `/etc/sudoers.d/`. Conffiles where dpkg owns them, plain files where it
 does not.
 
-**Testing**: `pytest`, three files under `tests/`, 23 tests. Run with
-`uv run --with pytest --with lxml python -m pytest tests/ -q` — the default interpreter has no
-pytest. Plus a written manual upgrade check for what tests structurally cannot cover.
+**Testing**: `pytest`, three files under `tests/` today, 23 tests. Run with
+`uv run --with pytest --with lxml --with xmlschema==3.4.3 python -m pytest tests/ -q` once T030
+lands (`xmlschema` pinned to `cuems-utils`' version) — the default interpreter has no pytest.
+Tests that need a system tool resolve it themselves, including `/usr/sbin`, and fail rather
+than skip when `CUEMS_REQUIRE_TOOLS=1`. The out-of-order install demonstration runs in an
+unprivileged `mmdebstrap --mode=unshare` rootfs with `equivs` stubs for counterpart packages. Plus a written manual upgrade check for what tests structurally cannot cover.
 
 **Target Platform**: Debian 12 (bookworm) CUEMS hosts, controller and node roles.
 
@@ -148,7 +151,11 @@ tests/
 ├── test_postinst_ordering.py             # new: conversion precedes its readers; no deferrals
 ├── test_version_bounds.py                # new: bounds verified by dpkg comparison (FR-016a)
 ├── test_shipped_network_map.py           # new: shipped map valid, zero nodes (FR-024)
-└── test_network_map_example.py           # new: example valid, one complete node (FR-026)
+├── test_network_map_example.py           # new: example valid, one complete node (FR-026)
+├── test_documented_validation.py         # new: the documented xmlschema command works (T030)
+└── packaging/
+    ├── release-gate-demo.sh              # new: mmdebstrap unshare demonstration (T027/T028)
+    └── stubs/                            # new: equivs control files for counterpart versions
 docs/
 ├── node-identity-contract.md             # discovery vocabulary update
 ├── upgrade-ordering.md                   # new: the ordering record (FR-014, FR-015)
@@ -171,8 +178,8 @@ run it by hand — and one sudoers file, which replaces `99-cuems` rather than j
 2. **US2 and US3 are independent of flow 04** and can land in any order relative to it, but
    nothing releases until every 010 flow lands (D27).
 3. **Phase 7 is independent of flow 04** and of US1/US3. Its one internal coupling is to US2:
-   the node-map loop fix (T044) edits the `debian/postinst` block the ordering task (T021)
-   rewrites, and its record (T045, T047) lands in US2's `docs/upgrade-ordering.md`.
+   the node-map loop fix (T045) edits the `debian/postinst` block the ordering task (T021)
+   rewrites, and its record (T046, T048) lands in US2's `docs/upgrade-ordering.md`.
 4. **Within US1**: templates and their by-name consumers first, the live-file migration second,
    documentation third. The migration is the piece with no counterpart anywhere else, so it
    carries the most test weight.
