@@ -79,3 +79,45 @@ sequence it.
 
 The package relationships enforce what they can of this (`debian/control`: the `cuems-utils` bound
 and the `cuems-nodeconf` `Breaks:`); the rest is operational discipline, stated here.
+
+## 4. A node whose map names no controller
+
+The package ships `/etc/cuems/network_map.xml` with an **empty** `<node_list/>` (feature 001,
+FR-024). A fresh install before provisioning has that map, and so does a host that answered the
+conffile prompt with the maintainer's version (its own topology is then at
+`network_map.xml.dpkg-old`, already converted by `postinst` — restoring it is a copy).
+
+On such a node — **designed outcome, not a fault**:
+
+| Reader | What happens | In `systemctl --failed`? |
+|---|---|---|
+| `chrony.service` (hook `cuems-write-chrony-source`) | installs the client config, removes its own `sources.d/cuems-master.sources`, logs `WARNING: … names no controller`, exits 0; chrony runs **with no cluster time source** | no |
+| `systemd-journal-upload.service` (`ExecCondition` `cuems-log-collector-url --check`) | the condition logs the same warning and exits 1, so systemd **skips** the unit | no |
+
+Provisioning the map — from `/usr/share/doc/cuems-common/network_map.xml.example` — and restarting
+those two units ends it. A map that is *missing*, *unparseable*, or names a controller with an empty
+`<ip>` still fails both units loudly, as before: those are faults.
+
+Before feature 001, the shipped map carried a placeholder controller at `192.168.1.10`. Both readers
+silently resolved to that address, which nothing answers, and chrony ran pointed at it.
+
+## 5. Recorded, not done: stop shipping the map as a conffile
+
+Feature 001 **empties** the shipped map rather than **de-registering** it. Emptying removes the
+damage — taking the maintainer's version can no longer install a wrong topology. De-registering
+would remove the prompt itself, by treating `network_map.xml` the way this package already treats
+`/etc/avahi/services/cuems.service`: a live, host-owned file kept in the repository but not shipped,
+with `postinst` installing a starter only when the path is absent.
+
+The smaller change came first because it fixes the harm with one file's content and no maintainer
+script mechanics, in a release that already carries a discovery cutover.
+
+**The only acceptable mechanism for the larger change** — constitution Principle VI, 1.0.1:
+
+- **Not** a bare `dpkg-maintscript-helper rm_conffile`. On a modified copy it moves the live file to
+  `.dpkg-bak`; on an unmodified one it deletes it. For the file that holds a cluster's topology,
+  that is the `1.3.0-20` outcome for `/etc/network/interfaces`, which left hosts with no network at
+  their next reboot.
+- **The `1.3.0-22` pattern instead**: snapshot the live file in `debian/preinst`, de-register the
+  conffile, and in `debian/postinst` restore the snapshot **only if the path is empty** — exactly
+  how `/etc/network/interfaces` is handled today (see the preinst/postinst blocks for that file).

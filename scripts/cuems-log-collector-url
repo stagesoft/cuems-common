@@ -11,10 +11,23 @@ Fails LOUDLY (non-zero exit + stderr) so systemctl status surfaces
 the root cause when something's off — never silently produces an
 empty/stale env file.
 
+**A map that names no controller is not "something off"**: it is a node
+whose map has not been provisioned yet (the package ships network_map.xml
+with an empty node list), or a host that took the maintainer's version of
+that conffile. Then this logs a WARNING naming the map and exits 0 without
+writing the env file (feature 001, FR-025).
+
+That alone would not keep the unit from failing — ExecStart consumes ${URL}
+— so ``--check`` exists for the unit's ExecCondition: a read-only test that
+exits 1 (systemd skips the unit without marking it failed) only when the map
+names no controller, and exits 0 otherwise, including when the map is missing
+or broken, so ExecStartPre still runs and fails loudly with the real error.
+
 Same role-detection source of truth as cuems-engine's NNG dial
 (BaseEngine.get_controller_ip): network_map.xml is authoritative.
 """
 
+import argparse
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -29,7 +42,46 @@ def die(msg: str, *, code: int = 1) -> None:
     sys.exit(code)
 
 
-def main() -> None:
+def warn_no_controller() -> None:
+    print(
+        f"cuems-log-collector-url: WARNING: {NETWORK_MAP} names no controller — "
+        "journal upload is skipped until the map is provisioned "
+        "(see /usr/share/doc/cuems-common/network_map.xml.example)",
+        file=sys.stderr,
+    )
+
+
+def names_a_controller(root: ET.Element) -> bool:
+    """True if any element named node_role (in any namespace) says controller."""
+    return any(
+        el.tag.rsplit("}", 1)[-1] == "node_role" and (el.text or "").strip() == "controller"
+        for el in root.iter()
+    )
+
+
+def check() -> None:
+    """ExecCondition mode: exit 1 only when the map names no controller."""
+    try:
+        root = ET.parse(NETWORK_MAP).getroot()
+    except (OSError, ET.ParseError):
+        sys.exit(0)  # let ExecStartPre run and report the real error
+    if not names_a_controller(root):
+        warn_no_controller()
+        sys.exit(1)
+    sys.exit(0)
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Resolve the CUEMS log collector URL.")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="read-only: exit 1 if the map names no controller, 0 otherwise",
+    )
+    args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+    if args.check:
+        check()
+
     if not NETWORK_MAP.exists():
         die(f"{NETWORK_MAP} not found — is /etc/cuems populated for this role?")
 
@@ -39,6 +91,10 @@ def main() -> None:
         die(f"failed to parse {NETWORK_MAP}: {e}")
 
     root = tree.getroot()
+    if not names_a_controller(root):
+        warn_no_controller()
+        return
+
     # Inner elements are unprefixed in the live schema (only the root
     # carries xmlns:cms). If that changes, find() returns None — print
     # the actual root tag and first child so the operator can see why.

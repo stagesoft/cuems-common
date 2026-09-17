@@ -40,13 +40,14 @@ A map mixing a recognised and an unrecognised value is refused whole — never
 half-converted, since a document carrying both vocabularies is something no
 requirement describes and no test can pin (M3).
 
-**Invoked from `debian/postinst` on every path a conffile might actually be
-live at**: `/etc/cuems/network_map.xml` and, if dpkg left one behind because
-an operator chose to keep local modifications during the conffile prompt,
-`/etc/cuems/network_map.xml.dpkg-new` — `convert()` itself is path-agnostic
-(it operates on whatever string it is given), so handling that sibling is
-`postinst`'s responsibility (which path it invokes this script on), not a
-special case in the conversion logic here.
+**Invoked from `debian/postinst` on every copy dpkg leaves when it runs**:
+`/etc/cuems/network_map.xml`, `network_map.xml.dpkg-dist` (the maintainer's
+version, when the operator kept theirs at the conffile prompt) and
+`network_map.xml.dpkg-old` (the operator's own topology, when they took the
+maintainer's). dpkg resolves the prompt before postinst runs, so a `.dpkg-new`
+copy never exists at that point. `convert()` itself is path-agnostic (it
+operates on whatever string it is given), so which copies to convert is
+`postinst`'s responsibility, not a special case in the conversion logic here.
 """
 
 from __future__ import annotations

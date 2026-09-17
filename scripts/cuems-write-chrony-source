@@ -26,9 +26,18 @@ On slave:
     /etc/chrony/sources.d/cuems-master.sources with one line:
         server <master-ip> iburst minpoll 4 maxpoll 6
 
-Fails LOUDLY (stderr + non-zero exit) on parse failures so
-`systemctl status chrony` surfaces the root cause. The script name is
-historical — it now does more than just sources.d.
+On a node whose map names NO controller (a fresh install before the map is
+provisioned — the package ships network_map.xml with an empty node list — or a
+host that took the maintainer's version of that conffile): installs the client
+config, removes its own cuems-master.sources if present, logs a WARNING naming
+the map, and exits 0. chrony then runs with no cluster time source instead of
+failing to start; provisioning the map ends the warning.
+
+Fails LOUDLY (stderr + non-zero exit) on everything else that is wrong — a
+missing or unparseable map, a controller entry with an empty <ip>, or a map that
+names a controller the search expression cannot reach — so `systemctl status
+chrony` surfaces the root cause. The script name is historical — it now does
+more than just sources.d.
 """
 
 import shutil
@@ -55,6 +64,10 @@ def log(msg: str) -> None:
     print(f"cuems-write-chrony-source: {msg}", file=sys.stderr)
 
 
+def warn(msg: str) -> None:
+    print(f"cuems-write-chrony-source: WARNING: {msg}", file=sys.stderr)
+
+
 def install_template(src: Path, dst: Path) -> None:
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -78,7 +91,16 @@ def apply_master() -> None:
             die(f"failed to remove {SOURCES_FILE}: {e}")
 
 
-def read_master_ip() -> str:
+def _names_a_controller(root: ET.Element) -> bool:
+    """True if any element named node_role (in any namespace) says controller."""
+    return any(
+        el.tag.rsplit("}", 1)[-1] == "node_role" and (el.text or "").strip() == "controller"
+        for el in root.iter()
+    )
+
+
+def read_master_ip() -> str | None:
+    """The controller's IP, or None when the map names no controller at all."""
     if not NETWORK_MAP.exists():
         die(f"{NETWORK_MAP} not found — is /etc/cuems populated for this role?")
     try:
@@ -87,6 +109,8 @@ def read_master_ip() -> str:
         die(f"failed to parse {NETWORK_MAP}: {e}")
     root = tree.getroot()
     elem = root.find("./node_list/node[node_role='controller']/ip")
+    if elem is None and not _names_a_controller(root):
+        return None
     if elem is None:
         first_child = list(root)[0].tag if list(root) else "<none>"
         die(
@@ -110,6 +134,19 @@ def apply_slave() -> None:
     log(f"installed {CLIENT_TEMPLATE.name} -> {CUEMS_CONF}")
 
     master_ip = read_master_ip()
+    if master_ip is None:
+        if SOURCES_FILE.exists():
+            try:
+                SOURCES_FILE.unlink()
+                log(f"removed {SOURCES_FILE} (the map names no controller)")
+            except OSError as e:
+                die(f"failed to remove {SOURCES_FILE}: {e}")
+        warn(
+            f"{NETWORK_MAP} names no controller — chrony runs with no cluster time "
+            "source until the map is provisioned (see /usr/share/doc/cuems-common/"
+            "network_map.xml.example)"
+        )
+        return
     line = f"server {master_ip} iburst minpoll 4 maxpoll 6\n"
     try:
         SOURCES_FILE.parent.mkdir(parents=True, exist_ok=True)

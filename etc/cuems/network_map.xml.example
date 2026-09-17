@@ -1,0 +1,40 @@
+<?xml version='1.0' encoding='utf-8'?>
+<!--
+  Example /etc/cuems/network_map.xml with ONE node entry, to copy when
+  hand-authoring a map while cuems-nodeconf is disabled.
+
+  Every value below is illustrative: replace each one with the real host's.
+  Field meanings, stability and ownership are documented in
+  docs/node-identity-contract.md ("Identity model") in the cuems-common source
+  repository; that document is not installed on hosts. Validate the result
+  against /etc/cuems/network_map.xsd before restarting anything that reads it.
+
+  The installed package ships /etc/cuems/network_map.xml with an EMPTY
+  <node_list/> on purpose: a shipped placeholder node would be installed over
+  a live topology by anyone taking the maintainer's version of that conffile.
+-->
+<cms:CuemsNetworkMap xmlns:cms="https://stagelab.coop/cuems/"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <node_list>
+        <node>
+            <!-- required. Stable primary key for the hardware's life; every consumer keys nodes by it. -->
+            <uuid>00000000-0000-4000-8000-000000000000</uuid>
+            <!-- required. The MAC of one of the host's NICs, lowercase hex, no separators. -->
+            <mac>000000000000</mac>
+            <!-- required. The mDNS service name: <mac>._cuems_nodeconf._tcp.local. -->
+            <name>000000000000._cuems_nodeconf._tcp.local.</name>
+            <!-- required. controller | node | firstrun. Exactly one controller per cluster. -->
+            <node_role>node</node_role>
+            <!-- required. The address the host answers on. -->
+            <ip>192.0.2.10</ip>
+            <!-- optional. True once the node is adopted into the cluster. -->
+            <adopted>True</adopted>
+            <!-- optional. Discovery-pass snapshot, not runtime liveness. -->
+            <online>False</online>
+            <!-- optional. controller, or nodeNN for a node. -->
+            <role_id>node01</role_id>
+            <!-- optional. Free-form human label. -->
+            <alias>example stage-left node</alias>
+        </node>
+    </node_list>
+</cms:CuemsNetworkMap>

@@ -17,6 +17,7 @@ Run with:
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -125,53 +126,67 @@ def test_all_four_outcomes_are_distinguishable(netmap_file, tmp_path):
     assert len(renders) == 4
 
 
-# -- T047: the .dpkg-new / .dpkg-dist sibling --------------------------------
+# -- T047 / feature 001 FR-027: the copies dpkg really leaves ---------------
+#
+# dpkg resolves a conffile prompt BEFORE postinst runs. Keep-local leaves the
+# maintainer's version at <file>.dpkg-dist; take-maintainer moves the
+# operator's own map to <file>.dpkg-old. A .dpkg-new exists only while
+# unpacking, never when postinst runs — the loop used to wait for it.
+
+DPKG_COPIES = ("network_map.xml", "network_map.xml.dpkg-dist", "network_map.xml.dpkg-old")
 
 
-def test_conversion_works_on_a_dpkg_new_sibling_path(netmap_file):
-    """convert() is path-agnostic — a .dpkg-new suffix is just part of the
-    path string, so the same conversion logic applies unmodified. This is
-    what makes postinst's "run the script on both candidate paths" strategy
-    (debian/postinst) sufficient without a special case in the script."""
-    path = netmap_file(name="network_map.xml.dpkg-new")
+def _postinst_loop(tmp_path: Path):
+    outcomes = {}
+    for name in DPKG_COPIES:
+        candidate = tmp_path / name
+        if candidate.exists():
+            outcomes[name] = migrate.convert(str(candidate))
+    return outcomes
+
+
+def test_conversion_works_on_the_dpkg_old_copy(netmap_file):
+    """Take-maintainer: the operator's real topology sits at .dpkg-old and must
+    be converted, so restoring it is a copy rather than a conversion."""
+    path = netmap_file(name="network_map.xml.dpkg-old")
     outcome = migrate.convert(str(path))
     assert outcome.status == "converted"
     assert "<node_role>controller</node_role>" in path.read_text()
 
 
-def test_postinst_converts_both_the_live_file_and_its_dpkg_new_sibling(tmp_path):
-    """Simulates postinst's loop: both /etc/cuems/network_map.xml and a
-    .dpkg-new sibling present at once (an operator kept local modifications
-    at the prompt, leaving the packaged default proposed alongside it) are
-    each converted independently."""
-    live = tmp_path / "network_map.xml"
-    live.write_text(_doc("0367f391-ebf4-48b2-9f26-000000000001", "NodeType.master"))
-    dpkg_new = tmp_path / "network_map.xml.dpkg-new"
-    dpkg_new.write_text(_doc("0367f391-ebf4-48b2-9f26-000000000002", "NodeType.slave"))
+def test_postinst_loop_converts_all_three_copies(tmp_path):
+    for i, name in enumerate(DPKG_COPIES, 1):
+        (tmp_path / name).write_text(_doc(f"0367f391-ebf4-48b2-9f26-00000000000{i}", "NodeType.master"))
 
-    for candidate in (live, dpkg_new):
-        if candidate.exists():
-            migrate.convert(str(candidate))
+    outcomes = _postinst_loop(tmp_path)
 
-    assert "<node_role>controller</node_role>" in live.read_text()
-    assert "<node_role>node</node_role>" in dpkg_new.read_text()
+    assert set(outcomes) == set(DPKG_COPIES)
+    for name in DPKG_COPIES:
+        assert "<node_role>controller</node_role>" in (tmp_path / name).read_text()
 
 
-def test_postinst_loop_is_a_noop_when_no_dpkg_new_sibling_exists(tmp_path):
-    """The common case — no conffile prompt happened, so only the live file
-    exists. postinst's `[ -f "$f" ]` guard (debian/postinst) must not fail
-    or fabricate a .dpkg-new outcome."""
-    live = tmp_path / "network_map.xml"
-    live.write_text(_doc("0367f391-ebf4-48b2-9f26-000000000001", "NodeType.master"))
-    dpkg_new = tmp_path / "network_map.xml.dpkg-new"
-    assert not dpkg_new.exists()
+@pytest.mark.parametrize("present", [("network_map.xml",), ("network_map.xml", "network_map.xml.dpkg-old")])
+def test_postinst_loop_is_a_noop_for_absent_copies(tmp_path, present):
+    for name in present:
+        (tmp_path / name).write_text(_doc("0367f391-ebf4-48b2-9f26-000000000001", "NodeType.master"))
 
-    results = []
-    for candidate in (live, dpkg_new):
-        if candidate.exists():
-            results.append(migrate.convert(str(candidate)))
-    assert len(results) == 1
-    assert results[0].status == "converted"
+    outcomes = _postinst_loop(tmp_path)
+
+    assert set(outcomes) == set(present)
+    assert all(o.status == "converted" for o in outcomes.values())
+    for name in set(DPKG_COPIES) - set(present):
+        assert not (tmp_path / name).exists()
+
+
+def test_debian_postinst_loop_names_exactly_those_three_paths():
+    text = (REPO_ROOT / "debian" / "postinst").read_text(encoding="utf-8")
+    loop = re.search(
+        r"^\s*for f in (.*?); do\s*\n\s*\[ -f \"\$f\" \] && /usr/bin/cuems-migrate-network-map",
+        text,
+        re.M,
+    )
+    assert loop, "network-map conversion loop not found in debian/postinst"
+    assert loop.group(1).split() == [f"/etc/cuems/{name}" for name in DPKG_COPIES]
 
 
 # -- T048: absent, already-converted, unparseable never fail the upgrade -----

@@ -382,6 +382,12 @@ Future work:
 
 ## During the transition (operator workflow with nodeconf disabled)
 
+**Starting from nothing.** The package ships `/etc/cuems/network_map.xml` with an **empty**
+`<node_list/>` — no placeholder node — so taking the maintainer's version of that conffile can never
+install a wrong topology over a live one. To hand-author an entry, copy the complete, schema-valid
+example shipped at `/usr/share/doc/cuems-common/network_map.xml.example`, replace every value with
+the real host's, and validate the result against `/etc/cuems/network_map.xsd`.
+
 While `cuems-nodeconf` is disabled cluster-wide, the operator manages
 the new identity fields by hand to enable `cuems-logs` semantic
 filters. See the project README and the plan archived at

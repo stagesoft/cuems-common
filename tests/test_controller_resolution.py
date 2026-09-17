@@ -37,6 +37,15 @@ CONVERTED_MAP = (
 )
 
 
+NO_CONTROLLER_MAP = (
+    "<?xml version='1.0' encoding='utf-8'?>\n"
+    '<cms:CuemsNetworkMap xmlns:cms="https://stagelab.coop/cuems/" '
+    'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+    "<node_list/>"
+    "</cms:CuemsNetworkMap>"
+)
+
+
 def _load(name: str, path: Path):
     loader = SourceFileLoader(name, str(path))
     spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -63,7 +72,7 @@ def test_cuems_log_collector_url_finds_the_controller_ip(tmp_path, monkeypatch, 
     module = _load("cuems_log_collector_url", REPO_ROOT / "scripts" / "cuems-log-collector-url")
     monkeypatch.setattr(module, "NETWORK_MAP", fixture)
     monkeypatch.setattr(module, "ENV_FILE", env_file)
-    module.main()
+    module.main([])
     assert env_file.read_text() == "URL=http://192.168.1.10:19532\n"
 
 
@@ -96,3 +105,72 @@ def test_cuems_logs_node_listing_identifies_the_controller(tmp_path):
     # Exactly one controller in the fixture — the multi-controller warning
     # must not fire.
     assert "WARNING" not in result.stdout
+
+
+# -- T038: a map that names no controller warns, it does not fail (FR-025, SC-015)
+
+
+def test_chrony_source_warns_and_removes_its_source_when_no_controller(tmp_path, monkeypatch, capsys):
+    fixture = tmp_path / "network_map.xml"
+    fixture.write_text(NO_CONTROLLER_MAP)
+    template = tmp_path / "chrony-client.conf.template"
+    template.write_text("# client\n")
+    sources = tmp_path / "sources.d" / "cuems-master.sources"
+    sources.parent.mkdir()
+    sources.write_text("server 192.168.1.10 iburst minpoll 4 maxpoll 6\n")
+
+    module = _load("cuems_write_chrony_source_nc", REPO_ROOT / "scripts" / "cuems-write-chrony-source")
+    monkeypatch.setattr(module, "NETWORK_MAP", fixture)
+    monkeypatch.setattr(module, "MASTER_MARKER", tmp_path / "master.ip")  # absent: node role
+    monkeypatch.setattr(module, "CLIENT_TEMPLATE", template)
+    monkeypatch.setattr(module, "CUEMS_CONF", tmp_path / "conf.d" / "cuems.conf")
+    monkeypatch.setattr(module, "SOURCES_FILE", sources)
+
+    module.main()  # returns normally: exit status 0
+
+    err = capsys.readouterr().err
+    assert "WARNING" in err and str(fixture) in err
+    assert not sources.exists()
+    assert (tmp_path / "conf.d" / "cuems.conf").read_text() == "# client\n"
+
+
+def test_chrony_source_still_errors_on_a_missing_map(tmp_path, monkeypatch):
+    module = _load("cuems_write_chrony_source_missing", REPO_ROOT / "scripts" / "cuems-write-chrony-source")
+    monkeypatch.setattr(module, "NETWORK_MAP", tmp_path / "absent.xml")
+    with pytest.raises(SystemExit) as exc:
+        module.read_master_ip()
+    assert exc.value.code != 0
+
+
+def test_log_collector_url_warns_and_writes_nothing_when_no_controller(tmp_path, monkeypatch, capsys):
+    fixture = tmp_path / "network_map.xml"
+    fixture.write_text(NO_CONTROLLER_MAP)
+    env_file = tmp_path / "url.env"
+
+    module = _load("cuems_log_collector_url_nc", REPO_ROOT / "scripts" / "cuems-log-collector-url")
+    monkeypatch.setattr(module, "NETWORK_MAP", fixture)
+    monkeypatch.setattr(module, "ENV_FILE", env_file)
+
+    module.main([])  # returns normally: exit status 0
+
+    err = capsys.readouterr().err
+    assert "WARNING" in err and str(fixture) in err
+    assert not env_file.exists()
+
+
+@pytest.mark.parametrize("document,expected", [(NO_CONTROLLER_MAP, 1), (CONVERTED_MAP, 0)])
+def test_log_collector_url_check_mode(tmp_path, monkeypatch, capsys, document, expected):
+    fixture = tmp_path / "network_map.xml"
+    fixture.write_text(document)
+    env_file = tmp_path / "url.env"
+
+    module = _load("cuems_log_collector_url_check", REPO_ROOT / "scripts" / "cuems-log-collector-url")
+    monkeypatch.setattr(module, "NETWORK_MAP", fixture)
+    monkeypatch.setattr(module, "ENV_FILE", env_file)
+
+    with pytest.raises(SystemExit) as exc:
+        module.main(["--check"])
+    assert exc.value.code == expected
+    assert not env_file.exists()  # --check only reads
+    if expected == 1:
+        assert "WARNING" in capsys.readouterr().err

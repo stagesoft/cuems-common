@@ -146,19 +146,25 @@ fi
 # restart or reload is listed in docs/upgrade-ordering.md; if that ever grows to
 # include a map reader, this decision must be revisited and the record updated.
 #
-# /etc/cuems/network_map.xml is a conffile that cuems-nodeconf rewrites on
-# every adoption, so on a live node it is always locally modified — dpkg has
-# already resolved the conffile prompt by the time postinst runs under
-# "configure", but may have left the proposed new version at
-# network_map.xml.dpkg-new if the operator chose to keep their local copy.
-# cuems-migrate-network-map's convert() is path-agnostic; converting both
-# candidate paths is what handles that sibling (T047).
+# WHICH FILES. /etc/cuems/network_map.xml is a conffile that operators (and
+# cuems-nodeconf, when enabled) edit, so on a live host it is usually locally
+# modified. dpkg resolves the conffile prompt BEFORE postinst runs, and leaves:
+#   - keep-local:       the operator's map stays live; the maintainer's version
+#                       is saved as network_map.xml.dpkg-dist
+#   - take-maintainer:  the shipped map (empty since feature 001) becomes live;
+#                       the operator's own topology is moved to
+#                       network_map.xml.dpkg-old
+# A .dpkg-new copy exists only while unpacking and never when postinst runs;
+# this loop used to wait for one, so a take-maintainer host's real topology was
+# left unconverted at .dpkg-old. Converting all three means restoring .dpkg-old
+# is a plain copy. An unmodified copy is replaced silently, with no prompt.
+# cuems-migrate-network-map's convert() is path-agnostic.
 #
 # Never fails the upgrade (M3): the script itself always exits 0, and this
 # call is `|| true` besides, in case the script is somehow missing or
 # unreadable on a partially-installed system.
 if [ -x /usr/bin/cuems-migrate-network-map ]; then
-    for f in /etc/cuems/network_map.xml /etc/cuems/network_map.xml.dpkg-new; do
+    for f in /etc/cuems/network_map.xml /etc/cuems/network_map.xml.dpkg-dist /etc/cuems/network_map.xml.dpkg-old; do
         [ -f "$f" ] && /usr/bin/cuems-migrate-network-map "$f" || true
     done
 fi

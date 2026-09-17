@@ -220,6 +220,7 @@ etc/cuems/gpu-pin.conf etc/cuems/
 # Multi-cluster identity example (not installed to /etc/cuems/ by default;
 # operator copies it manually when multi-cluster deployment is needed).
 etc/cuems/cluster.conf.example usr/share/doc/cuems-common/
+etc/cuems/network_map.xml.example usr/share/doc/cuems-common/
 
 # Shared data files
 usr/share/cuems/* usr/share/cuems/
