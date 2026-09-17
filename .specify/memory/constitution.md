@@ -1,5 +1,31 @@
 <!--
 SYNC IMPACT REPORT
+Version change: 1.0.1 → 1.0.2 (PATCH)
+Rationale: factual corrections after feature 001's implementation (1.3.0-23), raised by its
+task T030. No principle is added, removed or redefined.
+
+Modified sections:
+  - Testing Gate and Development Workflow — the suite invocation gains
+    `--with xmlschema==3.4.3` (tests now run the validation command operators are told to use,
+    over the xmlschema version cuems-utils pins); the stale "three test files and twenty-three
+    tests" count is replaced by a description that does not go out of date.
+  - III. This Package Is The Ordering Authority — its example deferral ("feature 008" in
+    debian/postinst) was resolved in 1.3.0-23; the example is kept, in the past tense.
+  - IV. The Gate Is Mechanical Or It Is Not A Gate — the cuems-utils floor-and-ceiling is now a
+    second enforced edge beside the cuems-nodeconf Breaks, and both have been observed refusing
+    (tests/packaging/release-gate-demo.sh).
+
+Added sections: none
+Removed sections: none
+Deferred placeholders: none
+
+Not done here, would be MINOR: codifying the tool-resolution rule (tests resolve system tools
+themselves and fail rather than skip under CUEMS_REQUIRE_TOOLS=1), and moving "dpkg refusal of
+an out-of-order install" from the manual half of the Testing Gate to a scripted demonstration.
+
+Templates reading this constitution at runtime were not modified.
+
+--- Previous report (1.0.1, 2026-09-17) ---
 Version change: 1.0.0 → 1.0.1 (PATCH)
 Rationale: clarification of Principle VI. Its conffile-retirement rule, read literally, applies
 `dpkg-maintscript-helper rm_conffile` to every retired conffile — including one that holds
@@ -106,9 +132,10 @@ decisions belong here, and they are **written down at the point of decision**, n
 inherited and never deferred to another repository's feature number.
 
 - A deferral MUST name what it is waiting for in terms that can be checked, not a feature
-  number that can be renumbered or closed. `debian/postinst`'s ordering comment still defers
-  to "feature 008" — a feature that closed and was renumbered — which is exactly the failure
-  this rule forbids.
+  number that can be renumbered or closed. `debian/postinst`'s ordering comment deferred to
+  "feature 008" — a feature that closed and was renumbered — from feature 007 until 1.3.0-23,
+  which is exactly the failure this rule forbids; `tests/test_postinst_ordering.py` now keeps
+  it from recurring.
 - Ordering claims MUST be stated against what this package actually does. This `postinst`
   carries **no `#DEBHELPER#` token** (only `debian/preinst` does), so `dh_installsystemd`
   generates nothing into it: units are enabled explicitly, and no map-reading CUEMS service is
@@ -123,8 +150,9 @@ Versioned dependencies and `Breaks:` are how this ecosystem refuses an out-of-or
 Prose in a migration guide is not enforcement.
 
 - A cross-package ordering requirement MUST be expressed in `debian/control`. This package
-  holds the ecosystem's only mechanically enforced edge today
-  (`Breaks: cuems-nodeconf (<< 0.1.0-8)`), and that is the pattern, not the exception.
+  holds the ecosystem's mechanically enforced edges — `Breaks: cuems-nodeconf (<< 0.1.0-8)` and
+  `cuems-utils (>= 0.1.0rc16), cuems-utils (<< 0.1.1~)` — and that is the pattern, not the
+  exception.
 - A **lower bound cannot express "refuse a library that moved past me"**. Where the
   requirement is an upper bound, it MUST be written as one — a `Breaks:` or a version ceiling
   — not approximated with a floor.
@@ -197,8 +225,9 @@ What `dpkg` remembers about this package is this package's problem.
 
 ## Testing Gate and Development Workflow
 
-This repository has no Python packaging, three test files and twenty-three tests. The gate is
-stated so it can actually be met, because a rule that gets waived is worse than no rule.
+This repository has no Python packaging; its tests are a pytest suite under `tests/` that needs
+no installed package and no root. The gate is stated so it can actually be met, because a rule
+that gets waived is worse than no rule.
 
 **Covered by tests — required.** Shell and Python tools under `usr/bin/` and
 `usr/lib/cuems/bin/`, conversion scripts, and anything that parses or rewrites a config
@@ -210,11 +239,13 @@ skipping — not failing — when the sibling checkout is absent.
 Run them with:
 
 ```
-uv run --with pytest --with lxml python -m pytest tests/ -q
+uv run --with pytest --with lxml --with xmlschema==3.4.3 python -m pytest tests/ -q
 ```
 
 The default interpreter on a development machine may have no pytest; that invocation is the
 one this repository is known to pass under, and it is what "tests are green" means here.
+`xmlschema` is pinned to the version `cuems-utils` pins, because the suite runs the validation
+command the upgrade documentation tells operators to use against that library.
 
 **Not covered by tests — required as a written manual procedure.** systemd unit ordering,
 `dh_installsystemd` behaviour, conffile prompts, `dpkg` refusal of an out-of-order install,
@@ -253,4 +284,4 @@ document disagree, this document wins and the planning document is corrected.
 - Runtime development guidance — the role model, the field notes, the gotchas — lives in
   `CLAUDE.md` and is kept current; this constitution governs, `CLAUDE.md` informs.
 
-**Version**: 1.0.1 | **Ratified**: 2026-09-15 | **Last Amended**: 2026-09-17
+**Version**: 1.0.2 | **Ratified**: 2026-09-15 | **Last Amended**: 2026-09-17
