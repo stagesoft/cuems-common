@@ -1,5 +1,26 @@
 <!--
 SYNC IMPACT REPORT
+Version change: 1.0.0 → 1.0.1 (PATCH)
+Rationale: clarification of Principle VI. Its conffile-retirement rule, read literally, applies
+`dpkg-maintscript-helper rm_conffile` to every retired conffile — including one that holds
+host-owned live state, where that helper moves a modified live file aside and deletes an
+unmodified one. That is the 1.3.0-20 outcome Principle I already cites, and it surfaced again
+when feature 001's analysis found a task recording rm_conffile as the future path for
+network_map.xml. The amendment names the exception and the pattern that already exists in
+debian/preinst + debian/postinst for /etc/network/interfaces. No principle is removed or
+redefined, and the rule's scope for ordinary conffiles is unchanged — hence PATCH.
+
+Modified principles:
+  - VI. Every Shipped File Is Owned, Retired, And Signed — conffile retirement now excludes
+    host-owned live state, which is de-registered by snapshot and restore-if-absent instead.
+
+Added sections: none
+Removed sections: none
+Deferred placeholders: none
+
+Templates reading this constitution at runtime were not modified.
+
+--- Previous report (1.0.0, 2026-09-15) ---
 Version change: (none) → 1.0.0
 Rationale: initial ratification. No prior constitution existed in this repository;
 .specify/memory/constitution.md was the unfilled core template until today.
@@ -132,6 +153,14 @@ What `dpkg` remembers about this package is this package's problem.
   diverge with nothing in any log to say so. A retired conffile MUST be retired with
   `dpkg-maintscript-helper rm_conffile` in **all three** of `preinst`, `postinst` and
   `postrm`, hand-written for the reason recorded at the top of `debian/postinst`.
+- **Except a conffile that holds host-owned live state** — cluster topology, network
+  configuration, anything a host or operator writes after installation. `rm_conffile` moves a
+  modified copy to `.dpkg-bak` and deletes an unmodified one, so on such a file it removes the
+  host's live state: the 1.3.0-20 upgrade did exactly that to `/etc/network/interfaces`. Such a
+  file MUST be de-registered by **snapshotting it in `preinst`, de-registering it, and restoring
+  it in `postinst` only when the path is empty** — the pattern 1.3.0-22 adopted, and the only
+  acceptable one. The rule is about the file's role, not its location: being under `/etc` does
+  not make a file safe to retire.
 - A conffile is **not** an experiment surface. Trying something out by editing a shipped
   conffile on a host makes dpkg keep the local version on the next non-interactive install
   and say almost nothing — which reads as "the `.deb` didn't install".
@@ -224,4 +253,4 @@ document disagree, this document wins and the planning document is corrected.
 - Runtime development guidance — the role model, the field notes, the gotchas — lives in
   `CLAUDE.md` and is kept current; this constitution governs, `CLAUDE.md` informs.
 
-**Version**: 1.0.0 | **Ratified**: 2026-09-15 | **Last Amended**: 2026-09-15
+**Version**: 1.0.1 | **Ratified**: 2026-09-15 | **Last Amended**: 2026-09-17
