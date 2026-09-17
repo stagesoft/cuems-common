@@ -26,7 +26,14 @@ corrected against the tree on 2026-09-15 (§0.5 of the same document).
 
 - Q: How should the upgrade decide that a host's live `/etc/avahi/services/cuems.service` is safe to rewrite? → A: Targeted key rewrite of any file carrying the retired key — rewrite only the TXT records, leave every other byte unchanged.
 - Q: How should the role-flip privilege survive the template rename on hosts whose `99-cuems` conffile was locally modified? → A: Ship the rules in a NEW sudoers file naming the new templates; a new conffile installs unconditionally, so a kept local copy cannot block it. The old rules become inert.
-- Q: What upper bound should this package declare against `cuems-utils`? → A: Lock by minor release — `>= 0.1.0~rc16, << 0.1.1` — and make that bound mean something with a cross-repo rule: `cuems-utils` bumps the minor version for any schema change. Measured with `dpkg --compare-versions`: `0.1.0rc17 < 0.1.1` is true, so the ceiling alone does not constrain the rc line; and `0.1.0 < 0.1.0rc16` is true, so the pre-release spelling must become `~rc` or the floor refuses the real 0.1.0 release.
+- Q: What upper bound should this package declare against `cuems-utils`? → A: Lock by minor release — `>= 0.1.0~rc16, << 0.1.1` — and make that bound mean something with a cross-repo rule: `cuems-utils` bumps the minor version for any schema change. Measured with `dpkg --compare-versions`: `0.1.0rc17 < 0.1.1` is true, so the ceiling alone does not constrain the rc line; and `0.1.0 < 0.1.0rc16` is true, so the pre-release spelling must become `~rc` or the floor refuses the real 0.1.0 release. *(Superseded 2026-09-17 — the tilde floor this implied was measured to weaken the gate; see the next session.)*
+
+### Session 2026-09-17
+
+Opened by `/speckit-analyze` findings C2 and I1, which measured the 2026-09-15 answer as unworkable: a tilde floor (`>= 0.1.0~rc16`) admits `0.1.0rc15` and `0.1.0rc5`, and no tilde spelling cuems-utils could adopt sorts above its published `0.1.0rcN` packages without an epoch or a version jump — while an in-place `0.1.0~rc17` is refused by engine's and nodeconf's existing floors and is a downgrade to apt.
+
+- Q: How should cuems-utils reach a correct Debian pre-release spelling, and what floor does this package ship meanwhile? → A: **Stay `rcN`, tilde from 0.1.1.** cuems-utils keeps publishing `0.1.0rcN` packages for the rest of the 0.1.0 line, never publishes a bare `0.1.0` package, and first uses the tilde at `0.1.1~rc1`. This package ships `>= 0.1.0rc16, << 0.1.1~`. The accepted gap: the ceiling cannot catch a schema change inside the remaining rc line; the mirror's byte-identity test and D27 cover that window.
+- Q: The minor-bump rule makes the next schema change release 0.1.1, which cuems-utils' deprecation warnings promise as the removal release — how are they reconciled? → A: **Kept coupled.** The next schema change ships as 0.1.1 together with the removal of the deprecated surface; D27 already forbids release until every consumer flow has landed, so consumers are migrated by then regardless.
 
 ---
 
@@ -245,17 +252,25 @@ disposable environment, capture the refusal.
   shared library, including refusing a library version that has moved past what this package
   can read. A lower bound alone does not satisfy this requirement. The bound is **locked to the
   library's minor release** — a floor at the version this package's mirrored schema came from,
-  and a ceiling at the next minor.
-- **FR-016a**: The pre-release spelling in both bounds MUST sort **below** the corresponding
-  final release. Measured with `dpkg --compare-versions`: `0.1.0 < 0.1.0rc16` is true, so the
-  floor as written today would refuse the library's own `0.1.0` release. The bounds MUST use
-  the tilde form, and the feature MUST verify each bound's behaviour by comparison rather than
-  by reading.
-- **FR-016b**: A minor-release lock only enforces the schema coupling if the library bumps its
-  minor version whenever a schema changes. That rule MUST be recorded as a cross-repository
-  contract and carried to the library's own flow as its deliverable (FR-019), together with the
-  pre-release spelling change FR-016a requires. Until both are in place, this bound is
-  documented as partial rather than presented as complete.
+  and a ceiling that excludes every pre-release and release of the next minor:
+  `cuems-utils (>= 0.1.0rc16), cuems-utils (<< 0.1.1~)`.
+- **FR-016a**: Each bound's behaviour MUST be verified by version comparison rather than by
+  reading, against the versions that actually matter: the floor MUST refuse `0.1.0rc14` (the
+  newest published package) and `0.1.0rc15`, and admit `0.1.0rc16` and later `0.1.0rcN`; the
+  ceiling MUST admit `0.1.0rcN` and `0.1.0+final`, and exclude `0.1.1~rc1` and `0.1.1`. The
+  floor keeps the library's current non-tilde spelling **on purpose**: a tilde floor was
+  measured to admit every older `rcN`. A bare `0.1.0` is refused by these bounds, because it
+  sorts below every `rcN` — which enforces the library's no-bare-`0.1.0` rule (FR-016b) as a
+  side effect.
+- **FR-016b**: A minor-release lock only enforces the schema coupling if the library's versioning
+  cooperates. The following MUST be recorded as a cross-repository contract and carried to the
+  library's own flow as its deliverable (FR-019): (1) the rest of the 0.1.0 line publishes as
+  `0.1.0rcN`, never as a bare `0.1.0` — a final, if one is needed, is spelled `0.1.0+final`;
+  (2) the tilde spelling starts at `0.1.1~rc1` and is used from then on; (3) any schema change
+  bumps the minor; (4) the next minor, 0.1.1, is also the library's announced removal release
+  for its deprecated surface, and the two ship together. The bound is documented as **partial
+  within the 0.1.0 rc line** — a schema change there passes the ceiling, and is covered only by
+  the schema mirror's byte-identity test and D27 — and complete from 0.1.1 onward.
 - **FR-017**: The existing constraint against the node-configuration daemon's package MUST be
   preserved and MUST remain true for the versions this feature releases.
 - **FR-018**: An out-of-order installation MUST be attempted for real and the refusal captured
@@ -369,8 +384,8 @@ its operator-visible symptom, a deliverable of this feature.
 - **SC-009**: An out-of-order installation is refused by the package manager, with the refusal
   recorded as observed output.
 - **SC-009a**: Every version bound this package declares is verified by direct version
-  comparison — including that the floor admits the library's final release and that the ceiling
-  excludes the next minor — rather than by inspection of the string.
+  comparison rather than by inspection of the string: `0.1.0rc14`, `0.1.0rc15`, bare `0.1.0`,
+  `0.1.1~rc1` and `0.1.1` refused; `0.1.0rc16`, `0.1.0rc17` and `0.1.0+final` admitted.
 - **SC-010**: The test suite passes and covers: the config conversion's four cases (happy path,
   idempotence, whole-document refusal, backup fidelity); the **same four cases for the live-file
   migration**, plus its byte-preservation and unreadable-file cases; the retired key's absence
@@ -396,6 +411,10 @@ its operator-visible symptom, a deliverable of this feature.
   back is the backup a conversion writes.
 - The paired repository's contract is the authority for the discovery vocabulary. If it moves,
   this repository follows rather than negotiating a second spelling.
+- The shared library follows the versioning contract in FR-016b. Until it publishes a package
+  at or above `0.1.0rc16` — the newest published package on 2026-09-17 is `0.1.0rc14` — this
+  package's floor is unsatisfiable by any published library package; D27 already sequences the
+  library's release first.
 - The shared library's on-read conversion works as specified upstream. OOS-1's decision depends
   on it: if it did not work, skipping the batch conversion would not be safe.
 - Hosts deployed by file-copy rather than by the package manager exist and will not run

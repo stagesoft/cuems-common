@@ -65,15 +65,15 @@ files.
 
 ## Constitution Check
 
-*GATE: passes for Principles I, II, III, V and VI after the 2026-09-17 analysis remediation.
-**Principle IV has an open decision** — analysis findings C2/I1, see below.*
+*GATE: passes for all six principles after the 2026-09-17 analysis remediation and the
+C2/I1 decision recorded in the spec's Clarifications.*
 
 | Principle | How this feature satisfies it |
 |---|---|
 | **I — upgrades on a live machine** | Every new `postinst` step is guarded and cannot fail the upgrade (FR-006). No unbounded work is added to the upgrade: OOS-1 keeps the library conversion out of it entirely. The file-copy host, which never runs `postinst`, is addressed by documentation and named in Edge Cases. |
 | **II — conversions back up, repeat, never fail** | FR-006 makes the live-file migration idempotent and non-fatal; **FR-006a** adds the byte-exact timestamped backup and its retention bound, which the first draft of this plan claimed without the spec requiring it; FR-007a makes refusal explicit and reported; **FR-007b** makes an unrecognised value or an inconsistent record pair a whole-file refusal that names the value and the accepted set. The rewrite is textual, so a file is never re-serialised. |
 | **III — ordering authority** | US2 exists for this: FR-013 forbids deferring a decision to a feature number, FR-012 requires the order be asserted by a test rather than claimed by a comment, FR-014 requires the record to state what this package does and does not restart. |
-| **IV — mechanical gate** | ⚠️ **OPEN.** FR-018 makes the demonstration a deliverable and FR-019 records other repositories' edges as theirs, now including the discovery cutover's reverse edge. But the bound itself is unresolved: measured with `dpkg --compare-versions`, the tilde floor FR-016a prescribes (`>= 0.1.0~rc16`) admits `0.1.0rc15` and `0.1.0rc5`, weakening the one working edge against the library (analysis C2), and no tilde spelling the library could adopt sorts above its already-published `0.1.0rcN` versions without either an epoch or a version jump (analysis I1). Pending decision. |
+| **IV — mechanical gate** | FR-016 sets `>= 0.1.0rc16, << 0.1.1~`, and FR-016a verifies it by comparison against the versions that matter — so the floor keeps refusing `0.1.0rc15`, which a tilde floor would not (analysis C2). FR-016b records the library's versioning contract (rc through 0.1.0, tilde from 0.1.1, minor bump on schema change, coupled with the removal release), resolving I1 without an epoch or a consumer-wide rewrite. The one gap — a schema change inside the rc line passes the ceiling — is stated as accepted, not hidden, and is covered by the mirror test and D27. FR-018 makes the demonstration a deliverable; FR-019 records other repositories' edges, including the discovery cutover's reverse edge. |
 | **V — downgrade unsupported** | Unchanged and restated in Assumptions. No reverse conversion is introduced. |
 | **VI — owned, retired, signed** | FR-003a delivers the privilege in a *new* file precisely because a modified conffile is kept; FR-003b retires the old file **whole** via `rm_conffile` in all three maintainer scripts — an in-place edit could not reach a kept, modified copy — relying on the privilege system skipping dotted include names; FR-003c syntax-checks every shipped privilege file. FR-020 requires the changelog entry. |
 
@@ -85,8 +85,7 @@ version bounds by comparison; and the existing conversion's four cases. The manu
 sudoers privilege, conffile prompts, dpkg's refusal — is FR-021's written procedure, performed on
 a controller plus at least one node.
 
-No violations in I, II, III, V or VI. **IV is not a violation but an unresolved decision**: it
-must be settled before `/speckit-implement` reaches US3, and it does not block US1 or US2.
+No violations. The Complexity Tracking table is therefore empty.
 
 ## Project Structure
 
@@ -125,7 +124,7 @@ debian/
 ├── preinst                               # rm_conffile for 99-cuems (FR-003b)
 ├── postinst                              # ordering record; migration call; rm_conffile
 ├── postrm                                # rm_conffile for 99-cuems (FR-003b)
-├── control                               # FR-016 bounds (pending C2/I1); existing Breaks kept
+├── control                               # >= 0.1.0rc16, << 0.1.1~ (FR-016); Breaks kept
 ├── install                               # new sudoers file + new tool (templates ship by glob)
 └── changelog                             # FR-020
 tests/
