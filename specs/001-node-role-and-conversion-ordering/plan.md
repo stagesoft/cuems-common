@@ -25,7 +25,11 @@ filenames and, critically, a migration that reaches each host's **live**
 `/etc/avahi/services/cuems.service`, which this package does not ship — close the postinst
 ordering deferral by writing the decision down rather than re-sequencing anything, and give the
 release gate the one edge this repository can actually declare plus the demonstration that has
-been deferred twice. Two findings moved work out: the batch document conversion belongs to
+been deferred twice. A late addition, accepted 2026-09-17, stops the shipped `network_map.xml`
+from carrying a placeholder node that a take-maintainer conffile answer would install over a live
+topology, makes the two map readers warn instead of failing their units when no controller is
+named, and fixes the node-map conversion to reach the copies dpkg actually leaves. Two findings
+moved work out: the batch document conversion belongs to
 `cuems-utils` as an operator command, and the `cuems-cluster-poweroff` regression belongs to
 `cuems-power-bridge` and is reported, not fixed.
 
@@ -70,12 +74,12 @@ C2/I1 decision recorded in the spec's Clarifications.*
 
 | Principle | How this feature satisfies it |
 |---|---|
-| **I — upgrades on a live machine** | Every new `postinst` step is guarded and cannot fail the upgrade (FR-006). No unbounded work is added to the upgrade: OOS-1 keeps the library conversion out of it entirely. The file-copy host, which never runs `postinst`, is addressed by documentation and named in Edge Cases. |
-| **II — conversions back up, repeat, never fail** | FR-006 makes the live-file migration idempotent and non-fatal; **FR-006a** adds the byte-exact timestamped backup and its retention bound, which the first draft of this plan claimed without the spec requiring it; FR-007a makes refusal explicit and reported; **FR-007b** makes an unrecognised value or an inconsistent record pair a whole-file refusal that names the value and the accepted set. The rewrite is textual, so a file is never re-serialised. |
+| **I — upgrades on a live machine** | Every new `postinst` step is guarded and cannot fail the upgrade (FR-006). No unbounded work is added to the upgrade: OOS-1 keeps the library conversion out of it entirely. The file-copy host, which never runs `postinst`, is addressed by documentation and named in Edge Cases. FR-024 removes a shipped file's power to overwrite live topology with a wrong one; FR-025 keeps an unprovisioned node from failing two units at its next boot — damage that would otherwise appear after the upgrade, which this principle ranks worst. |
+| **II — conversions back up, repeat, never fail** | FR-006 makes the live-file migration idempotent and non-fatal; **FR-006a** adds the byte-exact timestamped backup and its retention bound, which the first draft of this plan claimed without the spec requiring it; FR-007a makes refusal explicit and reported; **FR-007b** makes an unrecognised value or an inconsistent record pair a whole-file refusal that names the value and the accepted set. The rewrite is textual, so a file is never re-serialised. **FR-027** makes the existing node-map conversion reach the copies dpkg actually leaves (`.dpkg-dist`, `.dpkg-old`) instead of a `.dpkg-new` that no longer exists when `postinst` runs. |
 | **III — ordering authority** | US2 exists for this: FR-013 forbids deferring a decision to a feature number, FR-012 requires the order be asserted by a test rather than claimed by a comment, FR-014 requires the record to state what this package does and does not restart. |
 | **IV — mechanical gate** | FR-016 sets `>= 0.1.0rc16, << 0.1.1~`, and FR-016a verifies it by comparison against the versions that matter — so the floor keeps refusing `0.1.0rc15`, which a tilde floor would not (analysis C2). FR-016b records the library's versioning contract (rc through 0.1.0, tilde from 0.1.1, minor bump on schema change, coupled with the removal release), resolving I1 without an epoch or a consumer-wide rewrite. The one gap — a schema change inside the rc line passes the ceiling — is stated as accepted, not hidden, and is covered by the mirror test and D27. FR-018 makes the demonstration a deliverable; FR-019 records other repositories' edges, including the discovery cutover's reverse edge. |
 | **V — downgrade unsupported** | Unchanged and restated in Assumptions. No reverse conversion is introduced. |
-| **VI — owned, retired, signed** | FR-003a delivers the privilege in a *new* file precisely because a modified conffile is kept; FR-003b retires the old file **whole** via `rm_conffile` in all three maintainer scripts — an in-place edit could not reach a kept, modified copy — relying on the privilege system skipping dotted include names; FR-003c syntax-checks every shipped privilege file. FR-020 requires the changelog entry. |
+| **VI — owned, retired, signed** | FR-003a delivers the privilege in a *new* file precisely because a modified conffile is kept; FR-003b retires the old file **whole** via `rm_conffile` in all three maintainer scripts — an in-place edit could not reach a kept, modified copy — relying on the privilege system skipping dotted include names; FR-003c syntax-checks every shipped privilege file. FR-028 forbids ever de-registering the node map by bare `rm_conffile` — the constitution's 1.0.1 amendment to this principle. FR-020 requires the changelog entry. |
 
 **Testing gate** (constitution, Testing Gate section): tests cover the live-file migration's
 four owed cases — happy path, idempotence, whole-file refusal of an unrecognised value, backup
@@ -112,6 +116,9 @@ Deliberately absent: `research.md`, `data-model.md`, `quickstart.md` — see the
 ```text
 etc/
 ├── avahi/services/cuems.service          # in-repo copy of the live file; NOT shipped (FR-004)
+├── cuems/network_map.xml                 # conffile, emptied: no placeholder node (FR-024)
+├── cuems/network_map.xml.example         # new: one node entry → /usr/share/doc/cuems-common/ (FR-026)
+├── systemd/system/systemd-journal-upload.service.d/cuems-target.conf   # ExecCondition (FR-025)
 ├── sudoers.d/99-cuems                    # RETIRED WHOLE via rm_conffile (FR-003b)
 └── sudoers.d/99-cuems-avahi              # new: all four rules, reload included (FR-003a)
 usr/
@@ -120,23 +127,28 @@ usr/
 ├── share/cuems/cuems.service.slave       # → cuems.service.node (rename)
 ├── bin/cuems-config-node                 # :64 hardcodes the three template names
 └── bin/cuems-migrate-avahi-service       # new, operator-runnable (FR-021a); called from postinst
+scripts/
+├── cuems-write-chrony-source             # no controller → warn, drop own source, exit 0 (FR-025)
+└── cuems-log-collector-url               # no controller → warn, exit 0; --check mode (FR-025)
 debian/
 ├── preinst                               # rm_conffile for 99-cuems (FR-003b)
-├── postinst                              # ordering record; migration call; rm_conffile
+├── postinst                              # ordering record; migration call; rm_conffile; loop fix (FR-027)
 ├── postrm                                # rm_conffile for 99-cuems (FR-003b)
 ├── control                               # >= 0.1.0rc16, << 0.1.1~ (FR-016); Breaks kept
 ├── install                               # new sudoers file + new tool (templates ship by glob)
 └── changelog                             # FR-020
 tests/
-├── test_network_map_conversion.py        # existing
-├── test_controller_resolution.py         # existing
+├── test_network_map_conversion.py        # existing; .dpkg-new cases → .dpkg-dist/.dpkg-old (FR-027)
+├── test_controller_resolution.py         # existing; + no-controller warning case (FR-025)
 ├── test_schema_mirror.py                 # existing
 ├── test_avahi_vocabulary.py              # new: retired key absent, new key present (FR-011)
 ├── test_avahi_live_migration.py          # new: four cases + byte-preservation + whole refusal
 ├── test_template_consumers.py            # new: every literal template reference resolves
 ├── test_sudoers_syntax.py                # new: visudo -cf over etc/sudoers.d/ (FR-003c)
 ├── test_postinst_ordering.py             # new: conversion precedes its readers; no deferrals
-└── test_version_bounds.py                # new: bounds verified by dpkg comparison (FR-016a)
+├── test_version_bounds.py                # new: bounds verified by dpkg comparison (FR-016a)
+├── test_shipped_network_map.py           # new: shipped map valid, zero nodes (FR-024)
+└── test_network_map_example.py           # new: example valid, one complete node (FR-026)
 docs/
 ├── node-identity-contract.md             # discovery vocabulary update
 ├── upgrade-ordering.md                   # new: the ordering record (FR-014, FR-015)
@@ -158,7 +170,10 @@ run it by hand — and one sudoers file, which replaces `99-cuems` rather than j
    repository's `contracts/avahi-txt.md` must exist and agree before that gate can clear.
 2. **US2 and US3 are independent of flow 04** and can land in any order relative to it, but
    nothing releases until every 010 flow lands (D27).
-3. **Within US1**: templates and their by-name consumers first, the live-file migration second,
+3. **Phase 7 is independent of flow 04** and of US1/US3. Its one internal coupling is to US2:
+   the node-map loop fix (T044) edits the `debian/postinst` block the ordering task (T021)
+   rewrites, and its record (T045, T047) lands in US2's `docs/upgrade-ordering.md`.
+4. **Within US1**: templates and their by-name consumers first, the live-file migration second,
    documentation third. The migration is the piece with no counterpart anywhere else, so it
    carries the most test weight.
 

@@ -33,6 +33,9 @@ corrected against the tree on 2026-09-15 (§0.5 of the same document).
 Opened by `/speckit-analyze` findings C2 and I1, which measured the 2026-09-15 answer as unworkable: a tilde floor (`>= 0.1.0~rc16`) admits `0.1.0rc15` and `0.1.0rc5`, and no tilde spelling cuems-utils could adopt sorts above its published `0.1.0rcN` packages without an epoch or a version jump — while an in-place `0.1.0~rc17` is refused by engine's and nodeconf's existing floors and is a downgrade to apt.
 
 - Q: How should cuems-utils reach a correct Debian pre-release spelling, and what floor does this package ship meanwhile? → A: **Stay `rcN`, tilde from 0.1.1.** cuems-utils keeps publishing `0.1.0rcN` packages for the rest of the 0.1.0 line, never publishes a bare `0.1.0` package, and first uses the tilde at `0.1.1~rc1`. This package ships `>= 0.1.0rc16, << 0.1.1~`. The accepted gap: the ceiling cannot catch a schema change inside the remaining rc line; the mirror's byte-identity test and D27 cover that window.
+- Q: Should the shipped `network_map.xml` stop carrying a placeholder node (raised from `cuems-nodeconf`'s self-node-seeding research, analysis U1)? → A: **Accepted.** The shipped map declares no nodes (FR-024); the phase that proposed it is part of this feature.
+- Q: What should the two map readers do on a node whose map names no controller (analysis U2)? → A: **Log a warning and exit 0** — never fail the unit. For the journal uploader, whose start line needs the URL the helper would have written, that means the service is skipped cleanly rather than started without a target (FR-025).
+- Q: With the placeholder gone, what do operators hand-author a node entry from (analysis G1)? → A: **Ship an example** — a complete, schema-valid node entry installed as documentation (FR-026).
 - Q: The minor-bump rule makes the next schema change release 0.1.1, which cuems-utils' deprecation warnings promise as the removal release — how are they reconciled? → A: **Kept coupled.** The next schema change ships as 0.1.1 together with the removal of the deprecated surface; D27 already forbids release until every consumer flow has landed, so consumers are migrated by then regardless.
 
 ---
@@ -160,6 +163,17 @@ disposable environment, capture the refusal.
 - **An upgrade interrupted between the template rename and the live-file migration.**
 - **A downgrade attempt** — unsupported by decision; the only path back is the backup.
 - **A node re-adopted after the cutover** whose on-disk template predates it.
+- **The node map's conffile prompt, answered keep-local.** The operator's topology stays live and
+  is converted in place; the maintainer's version is left beside it as `.dpkg-dist`.
+- **The same prompt, answered take-maintainer.** The live map becomes the shipped one — empty
+  under FR-024 — and the operator's real topology is moved to `.dpkg-old`. On a host upgrading
+  from before the node-role rename that copy is in the retired vocabulary; FR-027 converts it so
+  that restoring it is a copy, not a conversion the operator must know to run.
+- **An unmodified copy of the node map.** The package manager replaces it silently, with no
+  prompt: such a host gets the empty map without being asked.
+- **A node whose map names no controller** — a fresh install before provisioning, or a
+  take-maintainer host. Time sync runs with no cluster source and the journal uploader is
+  skipped, both with a warning, rather than either unit failing (FR-025).
 
 ---
 
@@ -300,6 +314,34 @@ disposable environment, capture the refusal.
 - **FR-023**: The excluded power-off defect (OOS-2) MUST be reported with evidence, and its
   operator-visible symptom stated where operators of a converted controller will encounter it.
 
+### Functional Requirements — the shipped node map
+
+- **FR-024**: The node map this package ships MUST declare **no** nodes. It stays shipped and a
+  conffile; only its content changes. Taking the maintainer's version at the conffile prompt
+  must yield an empty topology, never a wrong one — a placeholder controller at an address
+  nothing answers is the failure this requirement removes.
+- **FR-025**: On a host whose map names no controller, both readers that resolve one — the time
+  sync source writer and the journal uploader's URL resolver — MUST log a warning naming the map
+  and exit 0, never failing the unit they serve. The time-sync writer additionally removes the
+  cluster source file it generates, so the time daemon runs with no cluster source rather than a
+  stale one. The journal uploader MUST be skipped cleanly, not started without a target: its
+  start line consumes the URL the resolver writes, so a resolver that merely exits 0 would move
+  the failure from the start-up hook to the start line.
+- **FR-026**: A complete, schema-valid example node entry MUST be shipped as documentation, and
+  the node-identity contract MUST point to it, so an operator hand-authoring a map has a
+  template once the shipped map carries none.
+- **FR-027**: The node-map conversion MUST reach every copy the package manager actually leaves
+  when `postinst` runs: the live file, `.dpkg-dist` (the maintainer's version, when the operator
+  kept theirs) and `.dpkg-old` (the operator's own topology, when they took the maintainer's).
+  The prompt is resolved before `postinst` runs, so a `.dpkg-new` sibling does not exist at that
+  point and MUST NOT be what the conversion relies on. The upgrade documentation MUST give the
+  restore path from `.dpkg-old`.
+- **FR-028**: The ordering record MUST state why the node map remains a conffile for now, and
+  that any future de-registration of it MUST preserve the live file — a snapshot before
+  unpacking and a restore-if-absent after configuring, the path this package already uses for
+  `/etc/network/interfaces` — never a bare conffile retirement, which moves or deletes the live
+  topology.
+
 ### Key Entities
 
 - **Discovery announcement**: what a host publishes about itself on the local network — a key,
@@ -311,7 +353,10 @@ disposable environment, capture the refusal.
 - **Live discovery file**: the host's actual announcement. Not shipped by this package —
   created by copying a template — which is why it needs its own migration.
 - **Node map**: the controller's record of every node, keyed by uuid, carrying each node's
-  role. Converted by this package during upgrade; read by this package's own tools.
+  role. Converted by this package during upgrade; read by this package's own tools. Shipped as a
+  conffile with **no** nodes; the live copy is host state.
+- **Node entry example**: a complete, schema-valid node entry shipped as documentation, from
+  which an operator hand-authors a real one while the node-configuration daemon is disabled.
 - **Gate edge**: a package relationship that makes an unsupported combination uninstallable.
 
 ---
@@ -397,6 +442,11 @@ its operator-visible symptom, a deliverable of this feature.
   their project library will not be touched — and what to run if they want it converted.
 - **SC-013**: The power-off defect is reported against the package that owns it, with the
   evidence that reproduces it.
+- **SC-014**: The shipped node map declares zero nodes, and on a controller-plus-node upgrade
+  with the map's prompt answered keep-local on one host and take-maintainer on the other, both
+  hosts' real topology is intact or recoverable by a documented copy.
+- **SC-015**: On a node whose map names no controller, `systemctl --failed` lists neither the time
+  sync service nor the journal uploader, and each logged a warning naming the map.
 
 ---
 

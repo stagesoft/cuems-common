@@ -75,8 +75,8 @@ the new key and value, the node appears in the controller's discovery, and no fi
 ### Implementation for User Story 1
 
 - [ ] T009 [US1] `git mv usr/share/cuems/cuems.service.master usr/share/cuems/cuems.service.controller` and `git mv usr/share/cuems/cuems.service.slave usr/share/cuems/cuems.service.node`; no `debian/install` change is needed or wanted — they ship through the glob at `debian/install:224` (planning doc §0.5-B)
-- [ ] T010 [US1] Rewrite both TXT records in each of `usr/share/cuems/cuems.service.{firstrun,controller,node}` (lines 6 and 13) to `node_role=<firstrun|controller|node>`, leaving the `uuid` records untouched
-- [ ] T011 [P] [US1] Rewrite both TXT records in `etc/avahi/services/cuems.service` (lines 6 and 13) — the in-repo copy of the live file, which this package does not ship; keep it consistent so the repository does not contradict the hosts
+- [ ] T010 [US1] Rewrite both TXT records in each of `usr/share/cuems/cuems.service.{firstrun,controller,node}` (lines 6 and 13) to `node_role=<firstrun|controller|node>`, leaving the `uuid` records untouched (FR-001, FR-002)
+- [ ] T011 [P] [US1] Rewrite both TXT records in `etc/avahi/services/cuems.service` (lines 6 and 13) — the in-repo copy of the live file, which this package does not ship; keep it consistent so the repository does not contradict the hosts (FR-001)
 - [ ] T012 [US1] Add the new privileged-command file `etc/sudoers.d/99-cuems-avahi` carrying **all four** rules `99-cuems` carries today, updated: the `systemctl reload avahi-daemon.service` rule and the three `cp` rules for `cuems.service.firstrun`, `.controller` and `.node`. Add it to `debian/install`. A file never shipped before installs unconditionally, so a locally modified `99-cuems` cannot block the privilege; carrying every rule is what lets T013 retire the old file whole (FR-003a, FR-003b)
 - [ ] T013 [US1] Retire `etc/sudoers.d/99-cuems` **whole**: delete it from the repository and from `debian/install`, and add a hand-written `dpkg-maintscript-helper rm_conffile /etc/sudoers.d/99-cuems <this release>~ cuems-common -- "$@"` to `debian/preinst`, `debian/postinst` and `debian/postrm`, in the style of the existing acpid and grub-display retirement blocks. Record in the comment why an in-place edit was rejected (a kept, locally modified copy would retain the removed rules forever) and why the rename is safe (sudo's `#includedir` skips names containing a dot, so the `.dpkg-bak` a modified copy becomes is inert). Must land in the same commit as T012: shipping either alone leaves a window with no privilege or with duplicated rules (FR-003b, Constitution VI)
 - [ ] T014 [P] [US1] Update the hardcoded template list in `usr/bin/cuems-config-node:64` to the renamed files
@@ -137,12 +137,74 @@ disposable environment, capture the refusal.
 
 ## Phase 6: Polish and cross-cutting
 
-- [ ] T029 [P] Write `docs/upgrade-verification.md`: the manual procedure the tests structurally cannot cover — the discovery daemon's live behaviour, the role-flip privilege on a pristine and on a locally modified sudoers host, the conffile prompts, and the package manager's refusal — performed on a controller **plus at least one node**, recording versions installed and what was observed; **and** a section for hosts the package manager never configures (file-copy deployment), giving the manual equivalent of every maintainer-script step this feature adds: running `cuems-migrate-avahi-service`, installing `99-cuems-avahi` and moving `99-cuems` aside to a dotted name, and reloading `avahi-daemon` (FR-021, FR-021a, SC-011, Constitution Testing Gate)
+- [ ] T029 [P] Write `docs/upgrade-verification.md`: the manual procedure the tests structurally cannot cover — the discovery daemon's live behaviour, the role-flip privilege on a pristine and on a locally modified sudoers host, the conffile prompts, and the package manager's refusal — performed on a controller **plus at least one node**, recording versions installed and what was observed; **and** a section for hosts the package manager never configures (file-copy deployment), giving the manual equivalent of every maintainer-script step this feature adds: running `cuems-migrate-avahi-service`, installing `99-cuems-avahi` and moving `99-cuems` aside to a dotted name, and reloading `avahi-daemon` (FR-021, FR-021a, SC-011, Constitution Testing Gate). **Cover `/etc/cuems/network_map.xml`'s conffile prompt explicitly, answered BOTH ways**, stating what becomes of the live topology in each. dpkg prompts only when the shipped content changed since the installed version **and** the local copy was modified — which this release satisfies on every hand-edited host, because commit `9eb094d` already changed the shipped map. Keep-local: the topology stays live and is converted; the maintainer's copy sits at `.dpkg-dist`. Take-maintainer: the live map becomes the empty shipped one and the operator's topology is at `.dpkg-old`, already converted by FR-027 — give the restore command (copy `.dpkg-old` back, validate with `xmllint --schema`). An unmodified copy is replaced silently with no prompt; say so (FR-024, FR-027, SC-014)
 - [ ] T030 [P] State this package's position on the project library in `docs/upgrade-verification.md` and `README.md`: a CUEMS upgrade never rewrites an operator's project documents; the batch conversion is an operator command owned by `cuems-utils`, and a library nobody converts keeps loading because the shared library converts on read (FR-022, SC-012, OOS-1)
 - [ ] T031 [P] File the `cuems-power-bridge` defect report — the node-role findings written during this feature — against that repository, with the reproduction and the evidence, and note the operator-visible symptom where an operator of a converted controller will meet it: the orderly cluster power-off selects by a vocabulary this package's own conversion has removed, so it can report success having powered off nothing (FR-023, SC-013, OOS-2)
 - [ ] T032 Add the `debian/changelog` entry for this release in operator-observable terms: the discovery vocabulary changed and every host's live file is migrated on upgrade; the role-flip privilege moved to a new sudoers file and why; the version bounds tightened; what did **not** change (project libraries) (FR-020, Constitution VI)
 - [ ] T033 Run the full suite — `uv run --with pytest --with lxml python -m pytest tests/ -q` — and confirm every case named in SC-010 is present and passing
-- [ ] T034 Perform the T029 procedure on a controller plus at least one node and record the result; the feature is not done until this exists (SC-001, SC-004, SC-011)
+- [ ] T034 Perform the T029 procedure on a controller plus at least one node and record the result; the feature is not done until this exists (SC-001, SC-004, SC-011). **Answer `/etc/cuems/network_map.xml`'s conffile prompt both ways across the two hosts** — keep-local on one, take-maintainer on the other. Before upgrading, copy each host's map aside outside `/etc/cuems/`; after, record each host's resulting topology, restore the take-maintainer host from `.dpkg-old` by the T029 procedure, and confirm the restored map validates and matches the saved copy in content. SC-001 and SC-014 are demonstrated only if the cluster is intact, or recovered by the documented copy, under both answers. On the node, also confirm SC-015 against its map before provisioning (FR-024, FR-027)
+
+---
+
+## Phase 7: The shipped node map cannot destroy a live topology
+
+**Raised 2026-09-17 from `cuems-nodeconf`** (its feature 001 research,
+`specs/planning/09-self-node-seeding.md` §6), **accepted the same day** — see the spec's
+Clarifications, FR-024 to FR-028, SC-014 and SC-015. Not a user story: it protects SC-001 from a
+file this feature ships.
+
+**Why it belongs here.** `etc/cuems/network_map.xml` ships (`debian/install:203`) as a conffile
+carrying one placeholder node: uuid `0367f391-…-0001`, `node_role controller`, ip
+`192.168.1.10`, `adopted True`. dpkg offers the conffile prompt when the shipped content changed
+since the installed version **and** the local copy was modified. **This release already meets the
+first condition** — commit `9eb094d` converted the shipped map — so every hand-edited host is
+prompted, and an unmodified copy is replaced silently. Taking the maintainer's version replaces
+the cluster's topology with the placeholder: adopted state gone and a controller asserted at an
+address nothing answers. That is SC-001 failing, from a file this feature ships.
+
+Live today even without the prompt: on a host whose map has not been written yet, both readers
+that select the first `node_role='controller'` — `scripts/cuems-write-chrony-source` and
+`scripts/cuems-log-collector-url` — resolve to `192.168.1.10`. Latent: the engine's
+`_controller_ip_from_map` and `find_hosts` still match the pre-007 `NodeType.master` spelling
+and so reach nothing, but `find_hosts`' `Multiple controllers found in network map` guard
+becomes reachable the moment feature 010 migrates `CONTROLLER_NETWORK_FLAG`.
+
+Emptying the map makes both readers find no controller, which today makes each **fail its unit**:
+the chrony hook is `ExecStartPre=+` with no `-`, so `chrony.service` would not start on such a
+node, and the uploader's `ExecStart` consumes a URL that would never be written. FR-025 turns both
+into warnings.
+
+Separately, the postinst conversion loop has targeted `network_map.xml.dpkg-new` since feature 007.
+dpkg resolves the prompt before `postinst` runs, leaving `.dpkg-dist` or `.dpkg-old` instead, so
+on a take-maintainer host the operator's real topology is left unconverted at `.dpkg-old`. FR-027
+fixes that.
+
+### Tests (before implementation)
+
+- [ ] T035 [P] Add `tests/test_shipped_network_map.py`: the shipped `etc/cuems/network_map.xml` parses, validates against `etc/cuems/network_map.xsd`, and declares **no** `<node>` entries — so a placeholder host can never be reintroduced into a file that ships onto every node (FR-024, SC-014)
+- [ ] T036 [P] Add `tests/test_network_map_example.py`: the shipped example `etc/cuems/network_map.xml.example` validates against `etc/cuems/network_map.xsd` and carries exactly one complete `<node>` with every required field, and `docs/node-identity-contract.md` references its installed path (FR-026)
+- [ ] T037 [P] Extend `tests/test_controller_resolution.py` with the no-controller case for both helpers, against a map with an empty `<node_list/>`: each exits 0 and writes a warning naming the map to stderr; `cuems-write-chrony-source` removes a pre-existing `cuems-master.sources` and writes none; `cuems-log-collector-url` writes no `url.env`; and its `--check` mode exits 1 on that map and 0 on a map with a controller (FR-025, SC-015)
+- [ ] T038 [P] Extend `tests/test_network_map_conversion.py`: replace the `.dpkg-new` simulations (`test_conversion_works_on_a_dpkg_new_sibling_path`, `test_postinst_converts_both_the_live_file_and_its_dpkg_new_sibling`, `test_postinst_loop_is_a_noop_when_no_dpkg_new_sibling_exists`) with the names dpkg actually leaves: the loop converts the live file, `.dpkg-dist` and `.dpkg-old` together, and is a no-op for whichever are absent; and assert against `debian/postinst` itself that the loop names exactly those three paths (FR-027)
+
+### Implementation
+
+- [ ] T039 Empty the node list in `etc/cuems/network_map.xml`: replace the placeholder node with an empty `<node_list/>`, keeping the file shipped and a conffile — only its content changes. Measured 2026-09-17: an empty `<node_list/>` validates against `etc/cuems/network_map.xsd` (`node_list` and `node` both `minOccurs="0"`) (FR-024)
+- [ ] T040 [P] Add `etc/cuems/network_map.xml.example` — one complete, schema-valid node entry with obviously illustrative values and an XML comment per field pointing to the field table in `docs/node-identity-contract.md` — and install it to `usr/share/doc/cuems-common/` in `debian/install`, following `etc/cuems/cluster.conf.example`'s precedent at `debian/install:221`; add a pointer to it in `docs/node-identity-contract.md`'s hand-editing procedure (FR-026)
+- [ ] T041 [P] Change `scripts/cuems-write-chrony-source`'s node path: when the map names no controller, keep installing the client template, remove `cuems-master.sources` if present (its own generated file, the same cleanup `apply_master()` already performs), log a warning naming the map, and exit 0. Missing or unparseable map, and a controller with an empty `<ip>`, keep their existing errors — only "no controller" becomes a warning (FR-025)
+- [ ] T042 [P] Change `scripts/cuems-log-collector-url`: when the map names no controller, log a warning naming the map and exit 0 without writing `url.env`; add a read-only `--check` mode that exits 0 when a controller with an address exists and 1 otherwise, printing the same warning (FR-025)
+- [ ] T043 In `etc/systemd/system/systemd-journal-upload.service.d/cuems-target.conf`, add `ExecCondition=/usr/lib/cuems/bin/cuems-log-collector-url --check` before the existing `ExecStartPre`, with a comment: an `ExecCondition` exit of 1 skips the unit without marking it failed — the idiom `cuems-wifi.service` already uses with `check-ip.sh` — whereas an `ExecStartPre` that merely exits 0 would leave `ExecStart` running with an empty `${URL}`. While in the file, correct its stale `network_map.xml::node_type` comment to `node_role` (FR-025, SC-015)
+- [ ] T044 Fix the conversion loop in `debian/postinst` (the block T021 rewrites): convert `/etc/cuems/network_map.xml`, `.dpkg-dist` and `.dpkg-old`, drop `.dpkg-new`, and correct the comment that says a kept local copy leaves the maintainer's version at `.dpkg-new` — dpkg resolves the prompt before `postinst`, leaving `.dpkg-dist` (kept) or `.dpkg-old` (taken). Keep the `[ -x ]` guard and `|| true` (FR-027, Constitution II)
+- [ ] T045 Record the no-controller behaviour in `docs/upgrade-ordering.md` (T022's file): on a node whose map names no controller, chrony runs with no cluster source and the journal uploader is skipped, each with a warning, and neither appears in `systemctl --failed`; this is the designed outcome, and provisioning the map (from the T040 example) ends it (FR-025, SC-015)
+- [ ] T046 Extend the T032 `debian/changelog` entry — same entry, one release: the shipped `network_map.xml` no longer carries a placeholder node; an operator who takes the maintainer's version gets an empty topology, with their own preserved and converted at `.dpkg-old`; an unprovisioned node warns instead of failing chrony and the journal uploader; an example node entry ships under `/usr/share/doc/cuems-common/` (FR-020)
+
+### Follow-up, recorded not executed
+
+- [ ] T047 Record in `docs/upgrade-ordering.md` the follow-up this phase deliberately does **not** do: stop shipping `etc/cuems/network_map.xml` as a conffile, keeping an in-repo copy and letting `postinst` install a starter only when the file is absent — the class of object `etc/avahi/services/cuems.service` already is. State why the smaller change came first (emptying removes the damage; de-registering removes the prompt), and state the only acceptable mechanism: **not** a bare `dpkg-maintscript-helper rm_conffile`, which moves a modified live file to `.dpkg-bak` and deletes an unmodified one — the 1.3.0-20 outcome for `/etc/network/interfaces` — but the 1.3.0-22 pattern: snapshot in `debian/preinst`, deregister, restore-if-absent in `debian/postinst`, as that file now is (FR-028, Constitution I and VI)
+
+**Checkpoint**: the shipped map can no longer overwrite a live topology with a wrong one; a
+take-maintainer host keeps a converted, restorable copy of its own; an unprovisioned node warns
+instead of failing two units; and the prompt's remaining effect is documented and demonstrated
+by T034.
 
 ---
 
@@ -165,8 +227,14 @@ parallel with US1 once Phase 2 is complete.
 - T025 blocks T027; T027 blocks T028.
 - T032 and T034 come last: the changelog describes what shipped, and the manual check verifies it.
 - T031 is independent of everything — it can be filed at any point.
+- Phase 7 tests precede their implementation: T035 → T039; T036 → T040; T037 → T041, T042; T038 → T044.
+- T042 blocks T043: the `ExecCondition` calls the `--check` mode T042 adds.
+- T044 edits the same `debian/postinst` block T021 rewrites, so T044 follows T021 and is not parallel with it.
+- T045 and T047 touch `docs/upgrade-ordering.md`, so both follow T022 and are not parallel with each other.
+- T046 lands with T032 — one changelog entry, not two.
+- T039, T040 and T044 block the node-map case in T029 and T034: answering the prompt before they land documents the old behaviour.
 
-**Cross-repository**: T019 pairs with flow 04's T041/T042. Their merges are simultaneous (D33).
+**Cross-repository**: T019 pairs with flow 04's T041/T042 (cuems-nodeconf numbering). Their merges are simultaneous (D33).
 Nothing in the ecosystem releases until every 010 flow lands (D27).
 
 ## Parallel execution examples
@@ -184,6 +252,8 @@ ordered.
 
 **Polish** — T029, T030, T031 in parallel; T032 after them; T033 and T034 last.
 
+**Phase 7** — tests T035, T036, T037, T038 together; then T039, T040, T041, T042 in parallel (four different files); T043 after T042; T044 after T021; T045 after T022; T046 with T032; T047 after T045.
+
 ## Implementation strategy
 
 **MVP = User Story 1 alone.** It is the only story with a silent failure mode and the only one
@@ -196,6 +266,11 @@ test keeps it closed. No host-visible behaviour changes.
 **Increment 3 = US3.** The bound is one line; the demonstration is the deliverable. It gates the
 release rather than the code, so it can land last — but it must land before anything in the
 ecosystem is released (D27).
+
+**Phase 7 is cheapest now.** No task in this feature has started, and the change is a handful of
+small files plus their tests. After release it is far more expensive: every host that answered the prompt
+with the maintainer's version has a corrupted map, and removing a conffile's content later needs
+maintainer-script handling rather than an edit.
 
 **Do not batch the merge.** US1 merges in the same window as flow 04's half and only then; US2
 and US3 may merge independently.
