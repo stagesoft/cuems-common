@@ -172,7 +172,9 @@ run it by hand — and one sudoers file, which replaces `99-cuems` rather than j
 ## Sequencing
 
 1. **The cutover (US1) pairs with flow 04** (`../cuems-nodeconf`). Specs are separate because
-   the repositories are; the **merges are simultaneous** (D33). Flow 04's T041/T042 read this
+   the repositories are; the **merges are simultaneous** (D33). **Merge target: `rc_1`**
+   (decided 2026-09-18) — this branch is `rc_1` plus its own commits and is not behind it, so
+   the merge is a fast-forward; `main` is an ancestor of `rc_1` here. Flow 04's T041/T042 read this
    repository for a reviewed counterpart branch before either side merges, so this
    repository's `contracts/avahi-txt.md` must exist and agree before that gate can clear.
 2. **US2 and US3 are independent of flow 04** and can land in any order relative to it, but

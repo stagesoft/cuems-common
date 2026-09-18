@@ -37,7 +37,10 @@ OLD_REF="${OLD_REF:-rc_1}"
 MIRROR="${MIRROR:-http://deb.debian.org/debian}"
 
 UTILS_VERSIONS=(0.1.0rc14 0.1.0rc15 0.1.0rc16 0.1.1~rc1)
-NODECONF_VERSIONS=(0.1.0-7 0.1.0-8)
+NODECONF_PRE=0.1.0-7          # pre-cutover: no Breaks against cuems-common
+NODECONF_RENAMED=0.1.0-8      # renamed: Breaks: cuems-common (<< 1.3.0-23~)
+NODECONF_REPO="${NODECONF_REPO:-$REPO/../cuems-nodeconf}"
+NODECONF_REV="$(git -C "$NODECONF_REPO" rev-parse --short HEAD 2>/dev/null || true)"
 
 log() { printf '[release-gate] %s\n' "$*" >&2; }
 
@@ -75,14 +78,19 @@ OLD_VERSION="$(cd "$WORK/old/src" && dpkg-parsechangelog -SVersion)"
 cp "$WORK"/old/cuems-common_*_all.deb "$WORK/debs/cuems-common_old.deb"
 
 # --- 3. stubs ----------------------------------------------------------------
-build_stub() { # package version
-    local ctl="$WORK/stubs/$1_$2.ctl"
-    sed "s/@VERSION@/$2/" "$REPO/tests/packaging/stubs/$1.ctl" > "$ctl"
-    (cd "$WORK/stubs" && equivs-build "$ctl") > "$WORK/stubs/$1_$2.log" 2>&1
-    cp "$WORK/stubs/$1_$2_all.deb" "$WORK/debs/$1_$2.deb"
+build_stub() { # template package version
+    local ctl="$WORK/stubs/$2_$3.ctl"
+    sed "s/@VERSION@/$3/" "$REPO/tests/packaging/stubs/$1.ctl" > "$ctl"
+    (cd "$WORK/stubs" && equivs-build "$ctl") > "$WORK/stubs/$2_$3.log" 2>&1
+    cp "$WORK/stubs/$2_$3_all.deb" "$WORK/debs/$2_$3.deb"
 }
-for v in "${UTILS_VERSIONS[@]}"; do log "stub cuems-utils $v"; build_stub cuems-utils "$v"; done
-for v in "${NODECONF_VERSIONS[@]}"; do log "stub cuems-nodeconf $v"; build_stub cuems-nodeconf "$v"; done
+for v in "${UTILS_VERSIONS[@]}"; do log "stub cuems-utils $v"; build_stub cuems-utils cuems-utils "$v"; done
+# Two templates: the pre-cutover relationships and the renamed ones, each
+# mirroring ../cuems-nodeconf's real debian/control at that version.
+log "stub cuems-nodeconf ${NODECONF_PRE} (pre-cutover relationships)"
+build_stub cuems-nodeconf cuems-nodeconf "$NODECONF_PRE"
+log "stub cuems-nodeconf ${NODECONF_RENAMED} (renamed relationships, with the reverse guard)"
+build_stub cuems-nodeconf-renamed cuems-nodeconf "$NODECONF_RENAMED"
 
 # --- 4. the scenarios, run inside the disposable system ----------------------
 cat > "$WORK/debs/scenarios.sh" <<'SCENARIOS'
@@ -153,29 +161,39 @@ attempt A3 REFUSED "new cuems-common beside cuems-utils 0.1.1~rc1 (past the ceil
     $APT install $G/cuems-common_new.deb
 state "cuems-common must not be installed after three refusals" -- versions
 
-# Forward edge of the discovery cutover (FR-017): renamed cuems-common with an
-# un-renamed cuems-nodeconf.
 $APT --allow-downgrades install $G/cuems-utils_0.1.0rc16.deb > /dev/null 2>&1
-attempt B1 REFUSED "new cuems-common together with cuems-nodeconf 0.1.0-7 (un-renamed)" -- \
+
+# The discovery cutover, BOTH directions. Half-renamed is the state where a
+# publisher and a listener disagree about the TXT key and discovery silently
+# finds nothing; neither direction may be installable.
+attempt B1 REFUSED "renamed cuems-common together with pre-cutover cuems-nodeconf 0.1.0-7 — forward direction, by cuems-common's Breaks" -- \
     $APT install $G/cuems-common_new.deb $G/cuems-nodeconf_0.1.0-7.deb
+attempt C1 REFUSED "renamed cuems-nodeconf 0.1.0-8 together with un-renamed cuems-common 1.3.0-22 — reverse direction, by cuems-nodeconf's Breaks" -- \
+    $APT install $G/cuems-common_old.deb $G/cuems-nodeconf_0.1.0-8.deb
 state "still nothing installed" -- versions
 
-# Reverse edge (FR-019): renamed cuems-nodeconf with the un-renamed previous
-# release. Expected to be ACCEPTED today — cuems-nodeconf declares only
-# cuems-common (>= 1.0.0) — and recorded as the gap its own flow must close.
-attempt C1 ACCEPTED "previous cuems-common (un-renamed) together with cuems-nodeconf 0.1.0-8 — the reverse-edge GAP" -- \
-    $APT install $G/cuems-common_old.deb $G/cuems-nodeconf_0.1.0-8.deb
+# The field baseline: the pre-cutover pair, which is what a host actually runs
+# before this release.
+attempt D1 ACCEPTED "the pre-cutover pair: cuems-common 1.3.0-22 with cuems-nodeconf 0.1.0-7" -- \
+    $APT install $G/cuems-common_old.deb $G/cuems-nodeconf_0.1.0-7.deb
 state "installed: the previous release" -- versions
 
-# Correct order (T028): upgrade the previous release in place, on a host that
-# looks like a deployed controller — a live discovery file copied from the old
+# Half-upgrading that host, each way round, must be refused too.
+attempt E1 REFUSED "upgrade only cuems-common on the pre-cutover host (leaves an un-renamed daemon)" -- \
+    $APT install $G/cuems-common_new.deb
+attempt F1 REFUSED "upgrade only cuems-nodeconf on the pre-cutover host (leaves un-renamed templates)" -- \
+    $APT install $G/cuems-nodeconf_0.1.0-8.deb
+state "still the previous release" -- versions
+
+# The upgrade that is supported: both halves together, the cluster as a unit —
+# on a host that looks deployed: a live discovery file copied from the old
 # template, and an operator-modified 99-cuems sudoers file.
 cp /usr/share/cuems/cuems.service.master /etc/avahi/services/cuems.service
 echo "# operator note: edited on site" >> /etc/sudoers.d/99-cuems
 state "before upgrade: live discovery file" -- grep -n "txt-record" /etc/avahi/services/cuems.service
 state "before upgrade: sudoers.d" -- ls -1 /etc/sudoers.d
-attempt D1 ACCEPTED "upgrade previous -> new cuems-common, with cuems-utils 0.1.0rc16 and cuems-nodeconf 0.1.0-8 (correct order)" -- \
-    $APT install $G/cuems-common_new.deb
+attempt G1 ACCEPTED "upgrade BOTH halves together: cuems-common 1.3.0-23 with cuems-nodeconf 0.1.0-8" -- \
+    $APT install $G/cuems-common_new.deb $G/cuems-nodeconf_0.1.0-8.deb
 state "after upgrade: versions" -- versions
 state "after upgrade: live discovery file migrated" -- grep -n "txt-record" /etc/avahi/services/cuems.service
 state "after upgrade: its backup" -- sh -c 'ls -1 /etc/avahi/services/ ; for b in /etc/avahi/services/cuems.service.*.bak; do grep -c node_type "$b"; done'
@@ -183,8 +201,8 @@ state "after upgrade: sudoers.d (99-cuems retired, modified copy kept inert)" --
 state "after upgrade: sudo parses the whole configuration" -- visudo -c
 state "after upgrade: shipped templates" -- sh -c 'ls -1 /usr/share/cuems/cuems.service.*'
 
-# Forward edge on an upgraded host: take cuems-nodeconf back to 0.1.0-7.
-attempt E1 REFUSED "on the upgraded host, downgrade cuems-nodeconf to 0.1.0-7 (un-renamed)" -- \
+# And going back on the upgraded host is refused as well.
+attempt H1 REFUSED "on the upgraded host, downgrade cuems-nodeconf to 0.1.0-7 (un-renamed)" -- \
     $APT --allow-downgrades install $G/cuems-nodeconf_0.1.0-7.deb
 state "final versions" -- versions
 exit 0
@@ -211,7 +229,10 @@ mkdir -p "$(dirname "$OUT")"
     echo "# cuems-common new:  $NEW_VERSION (built from the working tree; +gatedemo1 marks a demo build)"
     echo "# cuems-common old:  $OLD_VERSION (built from $OLD_REF)"
     echo "# cuems-utils:       STUBS at ${UTILS_VERSIONS[*]}"
-    echo "# cuems-nodeconf:    STUBS at ${NODECONF_VERSIONS[*]} — Depends: cuems-common (>= 1.0.0), as the real package"
+    echo "# cuems-nodeconf:    STUBS at $NODECONF_PRE and $NODECONF_RENAMED, each mirroring the real"
+    echo "#                    debian/control at that version${NODECONF_REV:+ (../cuems-nodeconf $NODECONF_REV)}:"
+    echo "#                      $NODECONF_PRE     Depends: cuems-utils (>= 0.1.0rc5), cuems-common (>= 1.0.0)"
+    echo "#                      $NODECONF_RENAMED     + cuems-utils (>= 0.1.0rc16), (<< 0.1.1~), Breaks: cuems-common (<< 1.3.0-23~)"
     echo "# environment:       $(mmdebstrap --version), --mode=unshare --variant=apt, bookworm, $MIRROR"
     echo "#"
     echo "# The counterparts are equivs stubs: they carry versions and relationships only."
