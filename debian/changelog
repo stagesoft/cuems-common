@@ -51,10 +51,14 @@ cuems-common (1.3.0-23) UNRELEASED; urgency=medium
   * Not changed: an upgrade never rewrites project documents. Converting a
     project library is a cuems-utils operator command; old documents keep
     loading because cuems-utils converts them when it reads them.
-  * Known issue: on a controller, orderly cluster power-off may power off no
-    nodes while reporting success. cuems-cluster-poweroff selects nodes through
-    cuems-power-bridge, which still uses the retired node_type vocabulary.
-    Check that nodes are really off until cuems-power-bridge is fixed.
+  * The orderly cluster power-off defect that this entry previously carried as
+    a known issue is FIXED within this same candidate: cuems-power-bridge
+    0.3.1-1 replaced its private network-map parser, and cuems-cluster-poweroff
+    now selects through that package's topology adapter (see the entry above).
+    The two land together under the xml-refactor-merge-candidate tag, and the
+    reciprocal Breaks: pair refuses a mixed installation. Hardware verification
+    lives in the bridge's ledger, specs/002-cluster-poweroff-cli/checklists/
+    hardware-verification.md, not in this package's docs.
 
  -- Ion Reguera <ion@stagelab.coop>  Thu, 17 Sep 2026 16:19:38 +0000
 

@@ -135,14 +135,34 @@ document in memory when it reads it. Running the batch conversion is a choice fo
 operator picks; consult `cuems-utils`' own documentation for it. Confirm on the controller that no
 project file under the library changed its modification time during the upgrade.
 
-## 7. Known issue after this upgrade — orderly cluster power-off
+## 7. Orderly cluster power-off — fixed in this candidate, verified over there
 
-On a **controller** upgraded to this release, **orderly cluster power-off may power off no nodes**
-while reporting success. `cuems-cluster-poweroff` selects its targets through the
-`cuems-power-bridge` package, whose parser still selects by the retired `node_type` vocabulary —
-which this package's conversion has already removed from `network_map.xml`. Until
-`cuems-power-bridge` is fixed, check after a cluster power-off that the nodes are really off, and
-power off any that are not by hand. The defect is recorded in the `cuems-power-bridge` repository.
+This was a **known issue** while it lasted: `cuems-cluster-poweroff` selects its targets through
+`cuems-power-bridge`, whose parser filtered on the retired `node_type` vocabulary that this
+package's own conversion removes from `network_map.xml`. The selection matched nothing, so the
+controller powered itself off, armed the Shelly and cut mains with every node still running —
+and reported success.
+
+**It is fixed in this candidate.** `cuems-power-bridge` replaced that parser with the owning
+library's reading path, and the selection in `cuems-cluster-poweroff` now comes from the bridge's
+own topology adapter, so this hook and `POST /shutdown` cannot disagree about a cluster. Both
+halves land together: `cuems-common` 1.3.0-23 and `cuems-power-bridge` 0.3.1-1, under the shared
+`xml-refactor-merge-candidate` tag, with a reciprocal `Breaks:` pair so a mixed pair is refused
+rather than discovered part-way through a poweroff.
+
+**Do not re-verify it from here.** The checks that need a real cluster live on one ledger in the
+repository that owns the code:
+
+> `cuems-power-bridge`:
+> `specs/002-cluster-poweroff-cli/checklists/hardware-verification.md`
+
+Its §4 (power-off selects the adopted nodes), §5 (the boot readiness gate, verified
+**separately**) and §6 (an unconverted map must refuse and leave mains on) are the checks that
+retire this section. That ledger carries its own per-host record sheet and is meant to be worked
+in the same pass as this document and as `cuems-nodeconf`'s ledger.
+
+**What remains this document's business**: the conversion itself (§2), discovery (§3) and the
+privilege flip (§4) — the inputs the bridge then reads.
 
 ## 8. Hosts the package manager never configures (file-copy deployment)
 
