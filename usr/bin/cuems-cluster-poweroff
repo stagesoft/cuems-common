@@ -236,8 +236,9 @@ def local_addresses() -> set[str]:
 
 
 def own_uuid() -> str | None:
-    """This host's own node uuid from settings.xml (matches the network_map
-    NodeType.master entry). The one identifier that is stable by contract."""
+    """This host's own node uuid from settings.xml (matches the controller
+    entry in network_map.xml). The one identifier that is stable by
+    contract."""
     try:
         for el in ET.parse(cfg.settings_xml_path).getroot().iter():
             if el.tag.split("}", 1)[-1] == "uuid" and el.text and el.text.strip():
@@ -270,15 +271,38 @@ mine = local_addresses()
 my_uuid = own_uuid()
 my_names = {socket.gethostname().lower(), socket.getfqdn().lower()}
 
-targets: list[str] = []
-for n in network_map.parse(cfg.network_map_path):
-    if n.node_type != "NodeType.slave":
-        continue
-    if not n.avahi:
-        print(f"ERROR slave uuid={n.uuid} has no role_id/alias/hostname — skipped "
-              "(it will not power off cleanly)")
-        continue
+# Selection is the BRIDGE's, not ours: one implementation of "which nodes does
+# this controller power off", shared by POST /shutdown and by this ExecStop
+# hook, so the two can never disagree about a cluster (cuems-power-bridge
+# feature 001). It filters on node_role, honours <adopted>, resolves
+# role_id -> alias -> hostname and never uses <ip>.
+try:
+    nodes = network_map.load_nodes(cfg.settings_xml_path, cfg.network_map_path)
+    selection = network_map.shutdown_targets(
+        cfg.settings_xml_path, cfg.network_map_path, nodes=nodes,
+    )
+except network_map.TopologyError as e:
+    # The topology could not be read, so nothing is known about this cluster.
+    # Refuse rather than power the controller off over nodes nobody counted:
+    # exit non-zero so the transition logs it loudly.
+    print(f"ERROR topology unreadable, NOT powering off any node: {e}")
+    sys.exit(4)
 
+for skip in selection.skipped:
+    print(f"SKIPPED {skip.label}: {skip.reason.value}")
+
+if selection.found and not selection.targets:
+    if selection.adopted_count == 0:
+        print(f"ERROR {selection.found} node(s) in the map, none adopted — "
+              "not powering any off. Adopt them, or use the bridge's "
+              "POST /shutdown?force=1.")
+    else:
+        print(f"ERROR none of the {selection.adopted_count} adopted node(s) is "
+              "addressable (no role_id/alias/hostname) — not powering any off.")
+    sys.exit(4)
+
+targets: list[str] = []
+for n in [v for v in nodes if v.avahi in selection.targets]:
     reason = None
     if my_uuid and n.uuid == my_uuid:
         reason = f"uuid {n.uuid} is this host"

@@ -1,5 +1,18 @@
 cuems-common (1.3.0-23) UNRELEASED; urgency=medium
 
+  * cuems-cluster-poweroff: select nodes through cuems-power-bridge's topology
+    adapter instead of filtering on the retired node_type vocabulary. The
+    script's own loop compared n.node_type != "NodeType.slave", which after
+    this package's own network_map conversion matched NOTHING: stage 2 chose
+    zero targets, reported success, and the controller powered off with the
+    nodes still running. Selection now lives in one place (the bridge's
+    shutdown_targets), so this hook and POST /shutdown can never disagree
+    about a cluster; it honours <adopted> and refuses, exit 4, when the
+    topology cannot be read or yields no addressable target. Requires
+    cuems-power-bridge >= 0.3.1-1, expressed as Breaks: on older versions —
+    the pair upgrades together or dpkg refuses. Also corrects the stale
+    NodeType.master reference in own_uuid()'s docstring.
+
   * Discovery: the Avahi TXT key is renamed node_type= -> node_role=, with
     values controller, node and firstrun, together with cuems-nodeconf. The
     templates are now /usr/share/cuems/cuems.service.{firstrun,controller,node}

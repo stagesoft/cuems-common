@@ -48,7 +48,14 @@ Depends: ${misc:Depends},
 # feature a mandatory dependency of the package every node installs.
 Suggests: cuems-power-bridge
 Conflicts: network-manager
-Breaks: cuems-nodeconf (<< 0.1.0-8)
+# cuems-power-bridge Breaks: cuems-cluster-poweroff now selects nodes through
+# the bridge's topology adapter (network_map.load_nodes/shutdown_targets),
+# which older bridges do not have. The pair upgrades together or dpkg refuses,
+# rather than the mismatch surfacing as an AttributeError part-way through a
+# poweroff transaction. Suggests: above is deliberately left unversioned — a
+# host with no bridge at all stays supported.
+Breaks: cuems-nodeconf (<< 0.1.0-8),
+        cuems-power-bridge (<< 0.3.1-1)
 Description: CUEMS common configuration and systemd services
  This package contains systemd service files, configuration files,
  and scripts required for CUEMS operation.
