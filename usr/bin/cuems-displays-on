@@ -34,7 +34,6 @@ enabled=false
 displays_on_first_delay_s=60
 displays_on_interval_s=30
 displays_on_max_tries=20
-venv_python=/usr/lib/cuems/bin/python3
 bridge_url=http://127.0.0.1:8478
 
 # shellcheck source=/dev/null
@@ -52,13 +51,17 @@ esac
 for tool in curl jq; do
     command -v "$tool" >/dev/null 2>&1 || { log "ERROR $tool not installed — cannot confirm displays"; exit 0; }
 done
-[ -x "$venv_python" ] || { log "ERROR $venv_python missing — cuems-power-bridge not installed?"; exit 0; }
+command -v cuems-power-bridge-config >/dev/null 2>&1 || {
+    log "ERROR cuems-power-bridge-config not found — cuems-power-bridge not installed?"
+    exit 0
+}
 
-# Ask the library, not a sed of the conf: it applies the same
+# Ask the bridge's own query, not a sed of the conf: it applies the same
 # bundled-default-then-/etc layering the bridge itself uses, so we can never
-# disagree with the running service about what the flag is set to.
-on_start="$("$venv_python" -c \
-    'from cuemspowerbridge import config; print(str(config.load().projector_power_on_on_start).lower())' \
+# disagree with the running service about what the flag is set to. This package
+# imports none of that package's Python any more — argv and exit codes are the
+# whole boundary.
+on_start="$(cuems-power-bridge-config --get projector_power_on_on_start \
     2>/dev/null)" || on_start=unknown
 if [ "$on_start" != true ]; then
     log "projector_power_on_on_start=$on_start — boot power-on not requested on this host; nothing to confirm"
@@ -66,9 +69,10 @@ if [ "$on_start" != true ]; then
 fi
 
 # Read via a variable, never argv: a shared_token in a command line would be
-# visible to any local user through ps. Fed to curl over stdin with -K below.
-token="$("$venv_python" -c \
-    'from cuemspowerbridge import config; print(config.load().shared_token)' 2>/dev/null)" || token=""
+# visible to any local user through ps. The query takes the KEY as its
+# argument, never the value, so the token still never reaches a command line.
+# Fed to curl over stdin with -K below.
+token="$(cuems-power-bridge-config --get shared_token 2>/dev/null)" || token=""
 curl_cfg=""
 [ -n "$token" ] && curl_cfg="header = \"X-Auth-Token: $token\""
 

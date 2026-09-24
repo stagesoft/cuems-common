@@ -5,9 +5,11 @@
 # password prompt. Used by:
 #   - cuems-power-bridge (controller): local poweroff after arming Shelly
 #     hardware safety timer.
-#   - cuems-power-bridge SSH targets (nodes): each node-side cuems user
-#     runs `sudo /sbin/poweroff` when the controller's bridge SSHes in
-#     via the power-bridge.key keypair.
+#   - NOT the node side: the controller SSHes into nodes as cuems-admin
+#     (see 99-cuems-admin-poweroff), not as cuems, which is /usr/sbin/nologin.
+#     This rule is shipped on every host by policy and is simply unused on a
+#     node today. It becomes the node-side rule again when node power-off moves
+#     to the engine over NNG.
 #
 # Shipped on EVERY CUEMS host (controllers + nodes) by policy; harmless
 # on a host whose role doesn't actually invoke it.

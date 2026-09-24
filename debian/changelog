@@ -1,5 +1,27 @@
 cuems-common (1.3.0-23) UNRELEASED; urgency=medium
 
+  * cuems-cluster-poweroff: the two Python heredocs are GONE. The 221 lines of
+    cuems-power-bridge code they carried now live in that package, where they
+    are unit-tested, and this script invokes them as a module through
+    $venv_python — not a command on PATH — so the interpreter override and the
+    missing-bridge guard keep working and exactly one command still powers the
+    venue down. The stages are shared with the bridge's POST /shutdown, so the
+    wall switch and the API cannot disagree about a cluster. 381 -> 190 lines.
+    What stays here is what was always ours: the enabled= kill switch, the
+    poweroff-vs-reboot transaction check, stopping cuems-displays-on, the
+    per-stage timeouts, the ordering probe, nodes_off, and exiting 0 on every
+    path that runs during a transition. One flock is now held across BOTH
+    stages, closing the gap between them; an unavailable lock logs a warning
+    and proceeds, because it must not cost the venue its orderly shutdown.
+    A --force run — the manual path — additionally refuses while a project is
+    playing, with --while-playing to override; a poweroff transaction never
+    asks, so the venue can always be powered off mid-show.
+  * cuems-displays-on: asks cuems-power-bridge-config --get for the two values
+    it needs instead of importing that package's modules. No script in this
+    package imports cuems-power-bridge's Python any more.
+  * 99-cuems-poweroff: the header described node-side cuems users receiving the
+    bridge's SSH. The target has been cuems-admin since the hardening; corrected.
+
   * cuems-cluster-poweroff: select nodes through cuems-power-bridge's topology
     adapter instead of filtering on the retired node_type vocabulary. The
     script's own loop compared n.node_type != "NodeType.slave", which after

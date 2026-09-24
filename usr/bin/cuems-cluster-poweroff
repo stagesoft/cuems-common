@@ -57,7 +57,25 @@ venv_python=/usr/lib/cuems/bin/python3
 log() { echo "$*"; }
 
 force=no
-[ "${1:-}" = "--force" ] && force=yes
+while_playing=no
+for arg in "$@"; do
+    case "$arg" in
+        --force)         force=yes ;;
+        --while-playing) while_playing=yes ;;
+    esac
+done
+
+# The running-show guard applies to MANUAL runs only. A poweroff transaction
+# passes nothing here, so the helper never probes and the behaviour is exactly
+# what it has always been: the venue can always be powered off mid-show, which
+# is one of the wall switch's primary intents. A --force run is different — no
+# transition is under way, the operator is present, and the bridge is up to
+# answer — so it refuses while a project plays unless --while-playing is given.
+guard_args=""
+if [ "$force" = yes ]; then
+    guard_args="--refuse-if-running"
+    [ "$while_playing" = yes ] && guard_args="$guard_args --while-playing"
+fi
 
 # ---------------------------------------------------------------------------
 # Ordering probe — logged on EVERY path, including the skips.
@@ -118,63 +136,68 @@ if [ ! -x "$venv_python" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# One power-off at a time, for the whole SEQUENCE.
+# ---------------------------------------------------------------------------
+# Taken here and held until this script exits, so it spans BOTH stages and the
+# gap between them: the two stages are two processes, and a lock taken per
+# process would leave that gap open for another power-off to start in. The
+# helper is told --lock-held and takes nothing itself.
+#
+# The bridge's own POST /shutdown releases this lock before it triggers the
+# transition that runs us, so reaching here with it held means another power-off
+# is genuinely under way.
+LOCK=/run/cuems-power-bridge/shutdown.lock
+if exec 9>"$LOCK" 2>/dev/null; then
+    if ! flock -n 9; then
+        log "another cluster power-off is already in progress ($LOCK) — not running"
+        # A transaction must still exit 0: systemd is powering the box off and
+        # an ExecStop failure would fail the stop itself. A manual run says so.
+        [ "$force" = yes ] && exit 4
+        exit 0
+    fi
+else
+    # Deliberate: an unavailable lock must not cost the venue its orderly
+    # shutdown. The helper is still told --lock-held, so it does not refuse on
+    # a precondition either — better to power the cluster down unprotected and
+    # say so than to leave the nodes running because a tmpfiles rule is absent.
+    log "WARNING cannot open $LOCK — continuing WITHOUT the sequence lock"
+fi
+
+# ---------------------------------------------------------------------------
 # Stage 1 — displays OFF.
 # ---------------------------------------------------------------------------
 # Before the venue: the node feeds the projectors, so blanking the node first
 # would flash "no signal" on stage before the lamps cut.
 log "stage 1/2: displays off"
-if timeout "$projector_timeout_s" "$venv_python" -u - <<'PY' 2>&1 | while IFS= read -r l; do log "  $l"; done
-import asyncio, logging, sys
+# The sequence itself lives in cuems-power-bridge: one implementation, shared
+# with its POST /shutdown, so this hook and that endpoint cannot disagree about
+# a cluster. Invoked as a MODULE through "$venv_python" — not a command on
+# PATH — so the override above and the missing-interpreter guard both keep
+# working, and exactly one command still powers the venue down: this one.
+run_stage() {
+    timeout "$1" "$venv_python" -u -m cuemspowerbridge.scripts.cluster_poweroff \
+        "${@:2}" 2>&1 | while IFS= read -r l; do log "  $l"; done
+    return "${PIPESTATUS[0]}"
+}
 
-logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s", stream=sys.stdout)
-from cuemspowerbridge import config
-from cuemspowerbridge.displays.manager import DisplayManager
+# Exit-status translation. The helper reports 0 complete / 3 precondition /
+# 4 refused / 5 some node still up; this wrapper turns each into a log line and
+# still exits 0 on a transaction, because an ExecStop that fails would fail the
+# stop it belongs to. Stage 1 failing still continues to stage 2.
+explain() {
+    case "$1" in
+        0) : ;;
+        3) log "  WARNING $2: precondition failed (config or lock) — see above" ;;
+        4) log "  ERROR   $2: REFUSED — see above" ;;
+        5) log "  WARNING $2: finished with node(s) still up — see above" ;;
+        124) log "  WARNING $2: timed out after the stage budget" ;;
+        *) log "  WARNING $2: exited $1 (see above)" ;;
+    esac
+}
 
-try:
-    cfg = config.load()
-except Exception as e:                                     # validate() raises on any bad field
-    print(f"ERROR config load/validate failed: {e}", file=sys.stderr)
-    sys.exit(3)
+run_stage "$projector_timeout_s" --stage displays --lock-held $guard_args
+explain "$?" "stage 1"
 
-if not cfg.projector_power_off_on_shutdown:
-    print("projector_power_off_on_shutdown=false — leaving displays alone")
-    sys.exit(0)
-
-mgr = DisplayManager.from_config(cfg)
-if not mgr.configured:
-    print("no displays configured")
-    sys.exit(0)
-
-
-async def main() -> None:
-    # Query first, so a redundant pass is cheap and we never fire POWR 0 into a
-    # cooldown window (which answers ERR3 and logs an unconfirmed WARNING per
-    # device). This is what makes a bridge-driven /shutdown -- whose own step 10
-    # runs `sudo /sbin/poweroff`, i.e. a poweroff transaction that re-enters this
-    # script -- a fast no-op instead of a full second pass.
-    states = await mgr.status_all()
-    print("current: " + ", ".join(f"{d['name']}={d['power']}" for d in states))
-    if all(d["power"] in ("off", "cooldown") for d in states):
-        print("all displays already off/cooling — skipping POWR 0")
-        return
-    if all(d["power"] == "unknown" for d in states):
-        # Not one device answered a status query, so the fleet is unreachable:
-        # not cabled, wrong projector.N.host, or network standby disabled. POWR 0
-        # would then be 3 attempts plus backoff of near-certain failure —
-        # MEASURED at 19s on test2 — added to EVERY poweroff, achieving nothing.
-        # Skip, loudly. Deliberately requires ALL devices to be unknown: if even
-        # one answered, the fleet is reachable and every device still gets POWR 0,
-        # so a single flaky projector is never used as an excuse to skip the rest.
-        print("no display answered a status query — fleet unreachable, skipping POWR 0 "
-              "(check cabling, projector.N.host, and 'Standby Mode Communications = ON')")
-        return
-    await mgr.power_off_all()
-    print("after:   " + ", ".join(f"{d['name']}={d['power']}" for d in mgr.snapshot()))
-
-
-asyncio.run(main())
-PY
-then :; else log "  WARNING stage 1 exited non-zero (see above) — continuing to stage 2"; fi
 
 # ---------------------------------------------------------------------------
 # Stage 2 — cluster node(s) OFF.
@@ -201,181 +224,13 @@ case "$nodes_off" in
 esac
 
 log "stage 2/2: cluster nodes off (max wait ${node_wait_s}s)"
-if timeout "$((node_wait_s + 30))" "$venv_python" -u - "$node_wait_s" <<'PY' 2>&1 | while IFS= read -r l; do log "  $l"; done
-import asyncio, logging, socket, subprocess, sys
-import xml.etree.ElementTree as ET
+# --pre-pass keeps this path's own behaviour: one liveness probe first, then
+# SSH only the nodes that answered alive, so a node already down is never
+# waited for. POST /shutdown does not do that and must not start.
+run_stage "$((node_wait_s + 30))" --stage nodes --node-wait "$node_wait_s" \
+    --pre-pass --lock-held $guard_args
+explain "$?" "stage 2"
 
-logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s", stream=sys.stdout)
-from cuemspowerbridge import config, network_map, reachability
-from cuemspowerbridge.node_executor import SshTarget, poweroff_all
-
-node_wait_s = int(sys.argv[1])
-
-try:
-    cfg = config.load()
-except Exception as e:
-    print(f"ERROR config load/validate failed: {e}", file=sys.stderr)
-    sys.exit(3)
-
-
-def local_addresses() -> set[str]:
-    """Every address on this host, both families, as exact strings."""
-    addrs: set[str] = set()
-    try:
-        out = subprocess.run(["ip", "-o", "addr", "show"],
-                             capture_output=True, text=True, timeout=5).stdout
-    except Exception as e:
-        print(f"WARNING could not enumerate local addresses ({e})")
-        return addrs
-    for line in out.splitlines():
-        fields = line.split()
-        for i, tok in enumerate(fields):
-            if tok in ("inet", "inet6") and i + 1 < len(fields):
-                addrs.add(fields[i + 1].split("/")[0])
-    return addrs
-
-
-def own_uuid() -> str | None:
-    """This host's own node uuid from settings.xml (matches the controller
-    entry in network_map.xml). The one identifier that is stable by
-    contract."""
-    try:
-        for el in ET.parse(cfg.settings_xml_path).getroot().iter():
-            if el.tag.split("}", 1)[-1] == "uuid" and el.text and el.text.strip():
-                return el.text.strip()
-    except Exception:
-        pass
-    return None
-
-
-def resolve(name: str) -> set[str]:
-    """Resolve through NSS (so nss-mdns/avahi answers .local), both families."""
-    try:
-        return {ai[4][0] for ai in socket.getaddrinfo(name, None)}
-    except OSError:
-        return set()
-
-
-# --- self-exclusion --------------------------------------------------------
-# A standalone controller is its own node, and its network_map may carry a
-# self-entry. SSHing `sudo /sbin/poweroff` to yourself mid-transition is bad;
-# worse, a host can never observe ITSELF unreachable, so a missed self-entry
-# burns the whole node_wait_s on every single poweroff.
-#
-# Hostname matching alone is NOT enough here: cuems-nodeconf never ran on these
-# boxes, so it never called `hostnamectl set-hostname <role_id>` — the OS
-# hostname is e.g. "cupula1" while the avahi name is "node01.local". Hence uuid
-# first, then EXACT address-set membership (never a substring test: 10.16.10.1
-# is a substring of 10.16.10.10).
-mine = local_addresses()
-my_uuid = own_uuid()
-my_names = {socket.gethostname().lower(), socket.getfqdn().lower()}
-
-# Selection is the BRIDGE's, not ours: one implementation of "which nodes does
-# this controller power off", shared by POST /shutdown and by this ExecStop
-# hook, so the two can never disagree about a cluster (cuems-power-bridge
-# feature 001). It filters on node_role, honours <adopted>, resolves
-# role_id -> alias -> hostname and never uses <ip>.
-try:
-    nodes = network_map.load_nodes(cfg.settings_xml_path, cfg.network_map_path)
-    selection = network_map.shutdown_targets(
-        cfg.settings_xml_path, cfg.network_map_path, nodes=nodes,
-    )
-except network_map.TopologyError as e:
-    # The topology could not be read, so nothing is known about this cluster.
-    # Refuse rather than power the controller off over nodes nobody counted:
-    # exit non-zero so the transition logs it loudly.
-    print(f"ERROR topology unreadable, NOT powering off any node: {e}")
-    sys.exit(4)
-
-for skip in selection.skipped:
-    print(f"SKIPPED {skip.label}: {skip.reason.value}")
-
-if selection.found and not selection.targets:
-    if selection.adopted_count == 0:
-        print(f"ERROR {selection.found} node(s) in the map, none adopted — "
-              "not powering any off. Adopt them, or use the bridge's "
-              "POST /shutdown?force=1.")
-    else:
-        print(f"ERROR none of the {selection.adopted_count} adopted node(s) is "
-              "addressable (no role_id/alias/hostname) — not powering any off.")
-    sys.exit(4)
-
-targets: list[str] = []
-for n in [v for v in nodes if v.avahi in selection.targets]:
-    reason = None
-    if my_uuid and n.uuid == my_uuid:
-        reason = f"uuid {n.uuid} is this host"
-    else:
-        ips = resolve(n.avahi)
-        if not ips:
-            print(f"ERROR {n.avahi} does not resolve — skipped")
-            continue
-        shared = ips & mine
-        if shared:
-            reason = f"resolves to a local address ({', '.join(sorted(shared))})"
-        elif all(ip.startswith("127.") or ip == "::1" for ip in ips):
-            reason = "resolves to loopback"
-        elif n.avahi.split(".")[0].lower() in my_names or (n.role_id or "").lower() in my_names:
-            reason = "name is this host"
-    if reason:
-        print(f"SELF-EXCLUDED {n.avahi}: {reason}")
-        continue
-    targets.append(n.avahi)
-
-
-async def main() -> None:
-    if not targets:
-        print("no node targets — standalone controller, or all entries self-excluded")
-        return
-
-    # One liveness pass. confirm_failures=1 is load-bearing: at the default 3 a
-    # single pass leaves EVERY host unconfirmed and this would return them all.
-    #
-    # Silence the poller's own logger for this call only: a deliberate
-    # max_wait_s=0 probe makes it emit "timeout after 0.0s; stuck hosts: ..." at
-    # WARNING, which in a shutdown log reads like a fault when it is in fact the
-    # expected answer ("these hosts are alive"). The real wait below keeps its
-    # logging, where "confirmed down" is exactly what we want to see.
-    reach_log = logging.getLogger("cuemspowerbridge.reachability")
-    prev_level = reach_log.level
-    reach_log.setLevel(logging.ERROR)
-    try:
-        snap = await reachability.wait_until_all_down(
-            targets, interval_s=0.1, max_wait_s=0, confirm_failures=1)
-    finally:
-        reach_log.setLevel(prev_level)
-    alive = list(snap.stuck_hosts)
-    already = [h for h in targets if h not in alive]
-    if already:
-        print("already down: " + ", ".join(already))
-    if not alive:
-        print("all node(s) already down — skipping SSH fan-out")
-        return
-
-    print("powering off: " + ", ".join(alive))
-    await poweroff_all(
-        [SshTarget(host=h, user=cfg.ssh_user, key_path=cfg.ssh_key,
-                   poweroff_cmd=cfg.poweroff_cmd) for h in alive],
-        dry_run=cfg.dry_run,
-    )
-    if cfg.dry_run:
-        print("[dry_run] not waiting for nodes to go down")
-        return
-
-    # ssh returns 255 as a node drops — expected. The poll is the ack.
-    res = await reachability.wait_until_all_down(
-        alive, interval_s=2.0, max_wait_s=node_wait_s)
-    if res.timed_out:
-        print(f"WARNING timeout after {res.elapsed_s:.1f}s; still up: "
-              + ", ".join(res.stuck_hosts) + " — powering off anyway")
-    else:
-        print(f"all node(s) confirmed down in {res.elapsed_s:.1f}s")
-
-
-asyncio.run(main())
-PY
-then :; else log "  WARNING stage 2 exited non-zero (see above)"; fi
 
 log "orderly sequence complete — handing back to systemd"
 exit 0
