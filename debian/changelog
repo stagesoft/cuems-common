@@ -95,6 +95,18 @@ cuems-common (1.3.0-23) UNRELEASED; urgency=medium
     topology with it. Requires cuems-utils >= 0.1.0rc16, already the floor;
     cuems-utils Breaks: cuems-common (<< 1.3.0-23~) in the other direction.
 
+  * Node identity is no longer minted or announced by this package
+    (cuems-utils feature 011, D14). cuems-config-node minted a uuid1() and
+    wrote it into settings.xml and the three Avahi templates — a second
+    minter beside cuemsutils.tools.Uuid, and host identity living in
+    /usr/share where every upgrade reset it; the shipped templates carried a
+    real production controller's uuid. Both are retired: the tool keeps only
+    the OS-side identity chain, the templates carry the sentinel uuid, and
+    cuems-nodeconf renders the live record from /etc/cuems/settings.xml at
+    every start (its feature 003). The three sudoers cp rules for the
+    templates, used by nothing in production, are retired with them.
+    docs/node-identity-contract.md carries the derivation rule.
+
  -- Ion Reguera <ion@stagelab.coop>  Thu, 17 Sep 2026 16:19:38 +0000
 
 cuems-common (1.3.0-22) bookworm; urgency=medium

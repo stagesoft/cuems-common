@@ -42,21 +42,17 @@ def test_every_sudoers_reference_names_an_existing_template():
             assert ref in SHIPPED_TEMPLATES, f"{rules.name} names missing template {ref}"
 
 
-def test_config_node_names_only_existing_templates():
+def test_config_node_names_no_template_any_more():
+    """cuems-utils feature 011: the tool neither mints nor touches Avahi (D14)."""
     text = (REPO_ROOT / "usr" / "bin" / "cuems-config-node").read_text(encoding="utf-8")
-    listed = re.search(r"service_files\s*=\s*\[(.*?)\]", text, re.S).group(1)
-    refs = TEMPLATE_REF.findall(listed)
-    assert sorted(refs) == SHIPPED_TEMPLATES
+    assert not TEMPLATE_REF.findall(text)
 
 
-def test_new_sudoers_file_carries_every_rule_the_old_one_did():
+def test_new_sudoers_file_keeps_the_reload_rule_and_no_cp_rule():
     rules = NEW_SUDOERS.read_text(encoding="utf-8")
     assert "cuems ALL=(root) NOPASSWD: /bin/systemctl reload avahi-daemon.service" in rules
-    for template in SHIPPED_TEMPLATES:
-        assert (
-            f"cuems ALL=(root) NOPASSWD: /usr/bin/cp /usr/share/cuems/{template} "
-            "/etc/avahi/services/cuems.service"
-        ) in rules, f"no cp rule for {template}"
+    code = [l for l in rules.splitlines() if l and not l.startswith("#")]
+    assert not any("/usr/bin/cp " in l for l in code), "the template cp rules were retired in 1.3.0-23"
 
 
 def test_new_sudoers_name_is_one_sudo_will_read():

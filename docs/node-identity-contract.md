@@ -93,6 +93,41 @@ so the package upgrade migrates it with `cuems-migrate-avahi-service` (backup be
 `cuems.service.<timestamp>.bak`); on a host the package manager never configures, run that
 command by hand.
 
+### Where the `uuid=` value comes from (cuems-utils feature 011, D14)
+
+**The source is `/etc/cuems/settings.xml`** (`Settings/node/uuid`), whose sole writer is
+`cuems-init-node` (cuems-utils); the only uuid minter in the ecosystem is
+`cuemsutils.tools.Uuid`, which mints uuid4 and raises on anything else.
+
+**The record's sole writer is `cuems-nodeconf`**, which derives it from that file at every
+start and every role change by rendering the role template
+(`/usr/share/cuems/cuems.service.{firstrun,controller,node}`) with the node's uuid, and refuses
+to start on a node whose `settings.xml` is absent or carries the sentinel — an unprovisioned
+node announces nothing. Nothing else may set the value and nothing may hand-enter it.
+
+**The shipped templates carry the sentinel** `00000000-0000-0000-0000-000000000000` and are never
+rewritten by any tool: a host's identity never lives under `/usr/share`, where every upgrade of
+this package would reset it.
+
+**Retired in 1.3.0-23**, both live violations of this rule: `cuems-config-node` minted its own
+`uuid1()` and wrote it into `settings.xml` and the templates (a second minter), and the templates
+shipped with a real production controller's uuid, so an unmodified copy announced another node's
+identity. `cuems-config-node` keeps only the OS-side identity chain (hostname, `/etc/hosts`,
+`avahi-daemon.conf`).
+
+**The verifier is `cuems-init-node --check`**, the only thing that detects a drifted record: it
+reads the four identity locations and exits 0 coherent / 1 mismatch / 2 absent or unreadable /
+3 not provisioned. After any identity change (`cuems-init-node --force-new-identity`, feature
+012's re-mint), restart `cuems-nodeconf` and run `--check`.
+
+| Document | Sole writer | Created by |
+|---|---|---|
+| `/etc/cuems/settings.xml` | `cuems-init-node` | `cuems-utils` postinst (if absent) |
+| `/etc/cuems/network_map.xml` | this node's row: `cuems-init-node`; topology rows: `cuems-nodeconf` | `cuems-utils` postinst (if absent) |
+| `/etc/cuems/default_mappings.xml` | `cuems-init-node` (until feature 014) | `cuems-utils` postinst (if absent) |
+| `/etc/avahi/services/cuems.service` | `cuems-nodeconf` | `cuems-nodeconf` |
+| `/etc/cuems/*.xsd` | `cuems-utils` postinst, replaced on every configure | `cuems-utils` postinst |
+
 ## The `node_type` -> `node_role` migration (feature 007)
 
 `network_map.xml` documents written before this change carry `<node_type>`
@@ -247,7 +282,8 @@ sudo cuems-nodeconf apply-identity
 # 6. Reboot the affected nodes.
 sudo reboot
 
-# 7. After boot:
+# 7. After boot (and after ANY identity change: restart cuems-nodeconf, then
+#    `cuems-init-node --check` must exit 0):
 hostname                        # reflects the new role_id
 avahi-resolve -n controller.local  # only on the new controller
 cuems-logs --list-nodes         # coherent table

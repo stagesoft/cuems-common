@@ -88,7 +88,10 @@ def test_template_carries_the_new_key_in_both_service_types(rel, role):
         assert f"<txt-record>node_role={role}</txt-record>" in service, (
             f"{rel}: a service is missing <txt-record>node_role={role}</txt-record>"
         )
-        assert re.search(r"<txt-record>uuid=[^<]+</txt-record>", service), f"{rel}: uuid record missing"
+        assert "<txt-record>uuid=00000000-0000-0000-0000-000000000000</txt-record>" in service, (
+            f"{rel}: the shipped template must carry the sentinel uuid — identity is never package "
+            "content (cuems-utils feature 011, D14); cuems-nodeconf renders the real value from settings.xml"
+        )
     assert "node_type" not in text, f"{rel}: still carries the retired key"
 
 

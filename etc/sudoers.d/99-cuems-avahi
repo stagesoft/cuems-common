@@ -6,9 +6,9 @@
 # had edited it, and sudoers matches a command string literally. A new file
 # installs unconditionally.
 #
-# The template names follow the discovery vocabulary (node_role): controller,
-# node, firstrun. See specs/001-node-role-and-conversion-ordering/contracts/avahi-txt.md.
+# The three `cp` rules that copied a template over the live service file are
+# retired (1.3.0-23, cuems-utils feature 011): cuems-nodeconf runs as root and
+# renders the record from /etc/cuems/settings.xml itself, and nothing else in
+# production copied a template — the rules were privilege nobody used. The
+# reload rule stays. See specs/001-node-role-and-conversion-ordering/contracts/avahi-txt.md.
 cuems ALL=(root) NOPASSWD: /bin/systemctl reload avahi-daemon.service
-cuems ALL=(root) NOPASSWD: /usr/bin/cp /usr/share/cuems/cuems.service.firstrun /etc/avahi/services/cuems.service
-cuems ALL=(root) NOPASSWD: /usr/bin/cp /usr/share/cuems/cuems.service.controller /etc/avahi/services/cuems.service
-cuems ALL=(root) NOPASSWD: /usr/bin/cp /usr/share/cuems/cuems.service.node /etc/avahi/services/cuems.service

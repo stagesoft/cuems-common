@@ -1,23 +1,16 @@
 #!/usr/bin/env python3
 
-from uuid import uuid1
-import xmlschema
-import xmlschema.converters
 import netifaces
 from pprint import pprint
 import sys
-import xml.etree.ElementTree
 
 # Retrieve MAC address from 1st network interface
 mac = netifaces.ifaddresses('ethernet0')[netifaces.AF_LINK][0]['addr'].replace(':','').lower()
 
-# Generate a new uuid
-uuid = str(uuid1())
 
 print(f'Node info to configure:')
 print(f'===============================')
 print(f'1st MAC:\t\t{mac}')
-print(f'New UUID:\t\t{uuid}')
 print('')
 
 write_flag = False
@@ -34,49 +27,18 @@ else:
     print(f'\twrite will modify and/or create files in system and cuems dirs')
     exit()
 
-##### /etc/cuems/settings.xml
-print(f'Modifying /etc/cuems/settings.xml')
-
-# xs = xmlschema.XMLSchema11('/etc/cuems/settings.xsd')
-# xs.validate('/etc/cuems/settings.xml')
-
-et = xml.etree.ElementTree.parse('/etc/cuems/settings.xml')
-
-root = et.getroot()
-
-for mac_in_xml in root.iter('mac'):
-    mac_in_xml.text = mac
-
-for uuid_in_xml in root.iter('uuid'):
-    #uuid_in_xml.text = '0367f391-ebf4-48b2-9f26-000000000001'
-    uuid_in_xml.text = uuid
-
-if write_flag:
-    et.write('/etc/cuems/settings.xml')
-else:
-    et.write('settings.xml')
-
-# xs.validate('settings.xml')
-
-##### /usr/share/cuems/cuems.service.*
-print(f'Modifying /usr/share/cuems/cuems.service.*')
-
-service_files = ['cuems.service.firstrun', 'cuems.service.controller', 'cuems.service.node']
-
-for filename in service_files:
-    et = xml.etree.ElementTree.parse(f'/usr/share/cuems/{filename}')
-
-    root = et.getroot()
-
-    for txt_record_in_xml in root.iter('txt-record'):
-        if txt_record_in_xml.text[:5] == 'uuid=':
-            txt_record_in_xml.text = f'uuid={uuid}'
-
-    if write_flag:
-        et.write(f'/usr/share/cuems/{filename}')
-    else:
-        et.write(f'{filename}')
-
+##### Identity: NOT this tool's any more (cuems-utils feature 011, D13/D14)
+#
+# This tool used to mint a uuid1() here, write it into /etc/cuems/settings.xml
+# and rewrite the uuid= record of the three Avahi templates under
+# /usr/share/cuems — a second minter beside cuemsutils.tools.Uuid, and host
+# identity living in package content that every upgrade of this package reset.
+# Both are gone: cuems-init-node (cuems-utils) is the only minter and the sole
+# writer of settings.xml; the Avahi record is derived from settings.xml by
+# cuems-nodeconf at every start and role change, and the shipped templates
+# carry the sentinel uuid. What stays here is the OS-side identity chain below.
+print('Identity is owned by cuems-init-node (settings.xml) and announced by cuems-nodeconf;')
+print('this tool no longer touches either. Run `cuems-init-node --check` to verify a node.')
 
 ##### /etc/avahi/avahi-daemon.conf
 print(f'Modifying /etc/avahi/avahi-daemon.conf')
