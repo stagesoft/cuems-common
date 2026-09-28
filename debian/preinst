@@ -88,6 +88,29 @@ if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
 fi
 
 
+# /etc/cuems/network_map.{xml,xsd} stop being this package's conffiles (1.3.0-23;
+# cuems-utils feature 011, research R3). cuems-utils now installs the schema on
+# every configure and creates the map when absent; cuems-nodeconf and
+# cuems-init-node write it. rm_conffile is the right tool for the .xsd (package
+# content) and the WRONG tool for the .xml on its own: it moves the live file
+# aside — unmodified -> .dpkg-remove, DELETED in postinst; modified ->
+# .dpkg-backup -> .dpkg-bak — and the live map is the cluster topology. Same
+# hazard, same recipe as /etc/network/interfaces above: snapshot it here,
+# put it back in postinst once dpkg has dropped the conffile record. Leaving the
+# paths as obsolete conffiles instead was rejected: dpkg deletes obsolete
+# conffiles on purge, so a later `purge cuems-common` would have removed the
+# live topology.
+if [ -e /etc/cuems/network_map.xml ]; then
+    mkdir -p /var/backups
+    cp -a /etc/cuems/network_map.xml /var/backups/cuems-common.network_map.xml.presave
+fi
+if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
+    for _cf in /etc/cuems/network_map.xml /etc/cuems/network_map.xsd; do
+        dpkg-maintscript-helper rm_conffile "$_cf" 1.3.0-23~ cuems-common -- "$@"
+    done
+    unset _cf
+fi
+
 case "$1" in
     install|upgrade)
         # Create cuems system group if it doesn't exist

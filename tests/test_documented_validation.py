@@ -27,8 +27,22 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOC = REPO_ROOT / "docs" / "upgrade-verification.md"
-SCHEMA = REPO_ROOT / "etc" / "cuems" / "network_map.xsd"
-SHIPPED = REPO_ROOT / "etc" / "cuems" / "network_map.xml"
+#: The canonical schema lives in cuems-utils (feature 011, D4): this repository
+#: ships no mirror any more. Skips rather than fails when the sibling checkout
+#: is absent (a CI checkout of this repository alone) — unverifiable, not violated.
+CANONICAL = REPO_ROOT.parent / "cuems-utils" / "src" / "cuemsutils" / "xml" / "schemas" / "network_map.xsd"
+SCHEMA = CANONICAL
+_needs_sibling = pytest.mark.skipif(not CANONICAL.is_file(), reason="cuems-utils sibling checkout not found")
+#: The empty map cuems-common used to ship (byte-identical to the retired
+#: conffile), kept as a fixture: cuems-utils's postinst creates an equivalent
+#: when no map exists, and the documented command must still accept it.
+EMPTY_MAP = (
+    "<?xml version='1.0' encoding='utf-8'?>\n"
+    '<cms:CuemsNetworkMap xmlns:cms="https://stagelab.coop/cuems/"\n'
+    '    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n'
+    "    <node_list/>\n"
+    "</cms:CuemsNetworkMap>\n"
+)
 EXAMPLE = REPO_ROOT / "etc" / "cuems" / "network_map.xml.example"
 
 
@@ -65,13 +79,20 @@ def test_documented_command_has_the_expected_shape():
     assert argv[3:] == ["/etc/cuems/network_map.xsd", "/etc/cuems/network_map.xml"]
 
 
-@pytest.mark.parametrize("document", [SHIPPED, EXAMPLE], ids=["shipped-empty-map", "example"])
-def test_documented_command_accepts_valid_maps(document):
+@_needs_sibling
+@pytest.mark.parametrize("which", ["empty-map", "example"])
+def test_documented_command_accepts_valid_maps(which, tmp_path):
     _require_xmlschema()
+    if which == "example":
+        document = EXAMPLE
+    else:
+        document = tmp_path / "network_map.xml"
+        document.write_text(EMPTY_MAP, encoding="utf-8")
     result = _run(document)
     assert result.returncode == 0, result.stderr
 
 
+@_needs_sibling
 def test_documented_command_rejects_a_map_missing_a_required_field(tmp_path):
     _require_xmlschema()
     broken = tmp_path / "network_map.xml"

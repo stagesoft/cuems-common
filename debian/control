@@ -65,7 +65,8 @@ Description: CUEMS common configuration and systemd services
  .
  Package relationships that gate an out-of-order upgrade (feature 001):
  the cuems-utils bound is locked to the library's 0.1.0 line — a floor at
- the release this package's mirrored network_map.xsd came from, and a
+ the release that ships the six schemas to /etc/cuems (0.1.0rc16; this
+ package carried a mirrored network_map.xsd before 1.3.0-23), and a
  ceiling below every 0.1.1 pre-release and release — so a library that has
  moved on is refused rather than merely documented. The floor keeps the
  library's non-tilde 0.1.0rcN spelling on purpose (a tilde floor would admit

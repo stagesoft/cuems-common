@@ -13,15 +13,22 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
 from lxml import etree
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = REPO_ROOT / "etc" / "cuems" / "network_map.xml.example"
-SCHEMA = REPO_ROOT / "etc" / "cuems" / "network_map.xsd"
+#: The canonical schema lives in cuems-utils (feature 011, D4): this repository
+#: ships no mirror any more. Skips rather than fails when the sibling checkout
+#: is absent (a CI checkout of this repository alone) — unverifiable, not violated.
+CANONICAL = REPO_ROOT.parent / "cuems-utils" / "src" / "cuemsutils" / "xml" / "schemas" / "network_map.xsd"
+SCHEMA = CANONICAL
+_needs_sibling = pytest.mark.skipif(not CANONICAL.is_file(), reason="cuems-utils sibling checkout not found")
 INSTALLED = "/usr/share/doc/cuems-common/network_map.xml.example"
 REQUIRED = ("uuid", "mac", "name", "node_role", "ip")
 
 
+@_needs_sibling
 def test_example_is_schema_valid():
     schema = etree.XMLSchema(etree.parse(str(SCHEMA)))
     assert schema.validate(etree.parse(str(EXAMPLE))), schema.error_log

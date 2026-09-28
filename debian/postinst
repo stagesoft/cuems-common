@@ -127,6 +127,43 @@ if [ -f /usr/bin/cuems-migrate-avahi-service ]; then
 fi
 
 # =========================================================================
+# /etc/cuems/network_map.{xml,xsd}: custody transfer to cuems-utils (1.3.0-23)
+# =========================================================================
+# The postinst half of the rm_conffile started in preinst (all three scripts
+# carry the same line; the helper reads its phase from the environment). After
+# it, dpkg no longer records either path as this package's conffile — so a
+# later purge of this package cannot delete them — and the live map has been
+# moved aside: an unmodified copy is gone, a modified one sits at .dpkg-bak.
+# Put the snapshot preinst took back in place, remove only a .dpkg-bak that is
+# byte-identical to it (an older .dpkg-bak is the operator's), and reinstall
+# the schema from cuems-utils's pristine copy if the move took it — cuems-utils
+# is configured before this package (it is a dependency), so the copy exists.
+# This block runs BEFORE the conversion loop below, which must find the map.
+if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
+    for _cf in /etc/cuems/network_map.xml /etc/cuems/network_map.xsd; do
+        dpkg-maintscript-helper rm_conffile "$_cf" 1.3.0-23~ cuems-common -- "$@"
+    done
+    unset _cf
+fi
+_presave=/var/backups/cuems-common.network_map.xml.presave
+if [ -f "$_presave" ]; then
+    if [ ! -e /etc/cuems/network_map.xml ]; then
+        install -d -m 0755 /etc/cuems
+        cp -a "$_presave" /etc/cuems/network_map.xml
+    fi
+    if [ -f /etc/cuems/network_map.xml.dpkg-bak ] \
+       && cmp -s /etc/cuems/network_map.xml.dpkg-bak "$_presave"; then
+        rm -f /etc/cuems/network_map.xml.dpkg-bak
+    fi
+    rm -f "$_presave"
+fi
+unset _presave
+if [ ! -e /etc/cuems/network_map.xsd ] && [ -f /usr/share/cuems/schemas/network_map.xsd ]; then
+    install -m 0644 /usr/share/cuems/schemas/network_map.xsd /etc/cuems/network_map.xsd
+fi
+rm -f /etc/cuems/network_map.xsd.dpkg-bak
+
+# =========================================================================
 # network_map.xml node_type -> node_role conversion (feature 007, M3)
 # =========================================================================
 # ORDERING — decided here, and asserted by tests/test_postinst_ordering.py.

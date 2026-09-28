@@ -16,7 +16,7 @@ nodes across the cluster. It is consumed by:
 - `cuems-editor` (propagates identity fields to the WebSocket payload).
 - `cuems-frontend` (displays the operator-friendly label).
 
-The schema is enforced by `etc/cuems/network_map.xsd` (shipped in this
+The schema is enforced by `/etc/cuems/network_map.xsd` (shipped by `cuems-utils` since its 0.1.0rc16; before 1.3.0-23 a mirror lived in this
 repository).
 
 ## Identity model

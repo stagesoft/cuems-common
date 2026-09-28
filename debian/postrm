@@ -63,6 +63,16 @@ if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
 fi
 
 
+# /etc/cuems/network_map.{xml,xsd} custody transfer to cuems-utils (1.3.0-23):
+# the postrm half restores the conffiles if the upgrade is aborted. See
+# debian/preinst for why the .xml is also snapshotted.
+if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
+    for _cf in /etc/cuems/network_map.xml /etc/cuems/network_map.xsd; do
+        dpkg-maintscript-helper rm_conffile "$_cf" 1.3.0-23~ cuems-common -- "$@"
+    done
+    unset _cf
+fi
+
 # CUEMS Common package post-removal script.
 #
 # On `apt purge cuems-common`, clean up files that postinst generates

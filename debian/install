@@ -201,8 +201,13 @@ usr/share/doc/cuems-common/link-files.README usr/share/doc/cuems-common/
 etc/tmpfiles.d/jack-cuems.conf etc/tmpfiles.d/
 etc/tmpfiles.d/cuems-journal-remote.conf etc/tmpfiles.d/
 etc/logrotate.d/cuems etc/logrotate.d/
-etc/cuems/network_map.xml etc/cuems/
-etc/cuems/network_map.xsd etc/cuems/
+# etc/cuems/network_map.{xml,xsd} are NOT shipped any more (1.3.0-23, cuems-utils
+# feature 011, D4/D5). The schema is cuems-utils's package content, installed to
+# /etc/cuems on every configure of that package so it always matches the
+# installed library; the map is created by cuems-utils's postinst when absent
+# and written by cuems-nodeconf and cuems-init-node afterwards. Neither is a
+# conffile of any package. The custody transfer from this package's conffiles
+# lives in debian/{preinst,postinst,postrm}.
 # AP-network constants — single source of truth, sourced by check-ip.sh.
 # /etc/dhcp/dhcpd.conf cross-references it via header comment.
 etc/cuems/ap.conf etc/cuems/

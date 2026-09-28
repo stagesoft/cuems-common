@@ -82,6 +82,19 @@ cuems-common (1.3.0-23) UNRELEASED; urgency=medium
     lives in the bridge's ledger, specs/002-cluster-poweroff-cli/checklists/
     hardware-verification.md, not in this package's docs.
 
+  * /etc/cuems/network_map.xml and network_map.xsd are no longer this
+    package's conffiles (cuems-utils feature 011). cuems-utils ships all six
+    schemas to /etc/cuems and replaces them on every configure, so the
+    installed schema always matches the installed library; the map is
+    created by cuems-utils's postinst when absent and written by
+    cuems-nodeconf and cuems-init-node. The transfer keeps a live map
+    byte-identical: preinst snapshots it, rm_conffile drops the conffile
+    record, postinst restores the snapshot and reinstalls the schema from
+    /usr/share/cuems/schemas. An obsolete conffile left in place would have
+    been deleted on a later purge of this package, taking the cluster
+    topology with it. Requires cuems-utils >= 0.1.0rc16, already the floor;
+    cuems-utils Breaks: cuems-common (<< 1.3.0-23~) in the other direction.
+
  -- Ion Reguera <ion@stagelab.coop>  Thu, 17 Sep 2026 16:19:38 +0000
 
 cuems-common (1.3.0-22) bookworm; urgency=medium
