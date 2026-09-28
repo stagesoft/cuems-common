@@ -145,10 +145,22 @@ if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
     done
     unset _cf
 fi
+# MEASURED (cuems-utils feature 011, chroot lifecycle test, 2026-09-28): when
+# both packages are unpacked before either is configured — apt's normal shape —
+# dpkg parks the modified map at unpack and then configures cuems-utils FIRST,
+# whose postinst finds no map and creates a fresh one. A restore-if-absent here
+# would then keep that fresh map and drop the operator's topology. So the
+# snapshot wins whenever it holds node rows: anything written between preinst
+# and now is the window's own artefact (no service restarts the map in an
+# upgrade). An empty stub (no <node>) yields to the fresh map instead — that is
+# the one case where the window produced the better file.
 _presave=/var/backups/cuems-common.network_map.xml.presave
 if [ -f "$_presave" ]; then
-    if [ ! -e /etc/cuems/network_map.xml ]; then
-        install -d -m 0755 /etc/cuems
+    install -d -m 0755 /etc/cuems
+    if grep -q "<node>" "$_presave" 2>/dev/null; then
+        cmp -s "$_presave" /etc/cuems/network_map.xml 2>/dev/null \
+            || cp -a "$_presave" /etc/cuems/network_map.xml
+    elif [ ! -e /etc/cuems/network_map.xml ]; then
         cp -a "$_presave" /etc/cuems/network_map.xml
     fi
     if [ -f /etc/cuems/network_map.xml.dpkg-bak ] \

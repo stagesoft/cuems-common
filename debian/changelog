@@ -92,7 +92,12 @@ cuems-common (1.3.0-23) UNRELEASED; urgency=medium
     record, postinst restores the snapshot and reinstalls the schema from
     /usr/share/cuems/schemas. An obsolete conffile left in place would have
     been deleted on a later purge of this package, taking the cluster
-    topology with it. Requires cuems-utils >= 0.1.0rc16, already the floor;
+    topology with it. When both packages are unpacked before either is
+    configured (apt's normal shape), dpkg configures cuems-utils first and
+    its postinst creates a fresh map in the window, so the restore prefers
+    the snapshot whenever it holds node rows and lets only an empty stub
+    yield — measured in cuems-utils's chroot lifecycle test. Requires
+    cuems-utils >= 0.1.0rc16, already the floor;
     cuems-utils Breaks: cuems-common (<< 1.3.0-23~) in the other direction.
 
   * Node identity is no longer minted or announced by this package

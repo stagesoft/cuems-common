@@ -46,3 +46,15 @@ def test_postinst_restores_then_converts():
     convert = text.index("cuems-migrate-network-map \"$f\"")
     assert restore < convert and reinstall < convert, "the map must be back before the conversion loop"
     assert "cmp -s /etc/cuems/network_map.xml.dpkg-bak" in text, "only an identical .dpkg-bak is removed"
+
+
+def test_postinst_prefers_a_snapshot_that_holds_node_rows():
+    """Measured hole (cuems-utils feature 011): with both packages unpacked before
+    configuration, cuems-utils's postinst creates a fresh map in the window, so
+    restore-if-absent would drop the operator's topology. The snapshot wins
+    whenever it carries a <node>; only an empty stub yields to the fresh map."""
+    text = (DEBIAN / "postinst").read_text(encoding="utf-8")
+    block = text[text.index("_presave=/var/backups"):text.index("unset _presave")]
+    assert 'grep -q "<node>" "$_presave"' in block
+    assert "cp -a \"$_presave\" /etc/cuems/network_map.xml" in block
+    assert "elif [ ! -e /etc/cuems/network_map.xml ]" in block
