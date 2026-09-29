@@ -1,0 +1,500 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# cuems-net-mode — how a CUEMS controller brings up its network.
+# Operator-invoked. Never called from a unit; the postinst calls only
+# `apply --postinst`, which touches no service.
+set -uo pipefail
+trap 'echo "ERROR: interrupted; run \"cuems-net-mode status\" to see where the box was left." >&2; exit 1' INT TERM
+
+# shellcheck source=usr/lib/cuems/net-mode.sh
+. /usr/lib/cuems/net-mode.sh
+
+BIN=/usr/lib/cuems/bin
+TEMPLATE=/usr/share/cuems/net-mode.conf.default
+INTERFACES=/etc/network/interfaces
+DHCPD_DEFAULT=/etc/default/isc-dhcp-server
+HOOK_LINK=/etc/dhcp/dhclient-exit-hooks.d/cuems-fallback
+HOOK_TARGET=/usr/lib/cuems/dhclient-hooks/cuems-fallback
+# Marks the one `address` line this tool owns inside the bond0 stanza. On a
+# line of its own, above it: interfaces(5) has no end-of-line comments.
+MARK='# managed by cuems-net-mode: the address line below'
+
+usage() {
+    cat <<'EOF'
+Usage: cuems-net-mode status [--check]
+       cuems-net-mode apply [--fix-now]
+       cuems-net-mode <mode> [--yes]
+
+Modes:
+  auto                  the standard: lease if there is a DHCP server,
+                        192.168.6.1 if not (asking again every minute),
+                        WiFi AP if there is no cable. Arms the AP.
+  cable-dhcp            as auto, but never an AP
+  cable-static [ADDR]   fixed address on the cable (default 192.168.6.1/24),
+                        no DHCP client, never an AP
+  ap                    always the WiFi AP. Arms the AP.
+  manual                cuems-common does nothing: the site manages its own
+                        network and AP
+
+  status                mode, addresses, units, the three gates, warnings
+  status --check        prints nothing; exit 1 if something is inconsistent
+  apply                 reconcile isc-dhcp-server's interface list with the mode
+  apply --fix-now       also stop a DHCP server that is serving on the cable
+
+  --yes                 do not ask for confirmation
+EOF
+    exit "${1:-2}"
+}
+
+die()  { echo "ERROR: $*" >&2; exit 1; }
+need_root() { [ "$(id -u)" -eq 0 ] || die "this needs root (sudo cuems-net-mode $*)"; }
+
+unit_state() { timeout 10 systemctl is-active "$1" 2>/dev/null || true; }
+unit_enabled() { timeout 10 systemctl is-enabled "$1" 2>/dev/null || true; }
+
+dhcpd_pids() { pgrep -x dhcpd 2>/dev/null || true; }
+
+# The interface arguments of the running dhcpd, or `*` when it has none
+# (it then listens on every interface).
+dhcpd_running_ifaces() {
+    local pid arg out=""
+    local -a argv
+    for pid in $(dhcpd_pids); do
+        mapfile -d '' -t argv < "/proc/$pid/cmdline" 2>/dev/null || continue
+        local skip=no found=no
+        for arg in "${argv[@]:1}"; do
+            if [ "$skip" = yes ]; then skip=no; continue; fi
+            case "$arg" in
+                -cf|-lf|-pf|-p|-user|-group|-chroot|-tf|-play|-s) skip=yes ;;
+                -*) ;;
+                *) out="$out $arg"; found=yes ;;
+            esac
+        done
+        [ "$found" = yes ] || out="$out *"
+    done
+    echo "${out# }"
+}
+
+# A DHCP server that is serving the AP subnet on the cable: the defect of
+# 2026-09-29. True when dhcpd runs on bond0 (or everywhere) while bond0
+# carries an address inside that subnet.
+rogue_dhcpd() {
+    local ifaces
+    [ -n "$(dhcpd_pids)" ] || return 1
+    [ -n "$(ip -4 -o addr show dev bond0 to "$cuems_net_subnet" 2>/dev/null)" ] || return 1
+    ifaces=" $(dhcpd_running_ifaces) "
+    case "$ifaces" in
+        *" bond0 "*|*" * "*) return 0 ;;
+    esac
+    return 1
+}
+
+wait_dhcpd_gone() {
+    # The init script's `stop` returns before the process is gone.
+    for _ in $(seq 1 20); do
+        [ -z "$(dhcpd_pids)" ] && return 0
+        sleep 0.5
+    done
+    return 1
+}
+
+stanza_method() {
+    cat "$INTERFACES" /etc/network/interfaces.d/* 2>/dev/null \
+        | sed -n 's/^[[:space:]]*iface[[:space:]]\+bond0[[:space:]]\+inet[[:space:]]\+\([a-z0-9]\+\).*/\1/p' \
+        | head -n 1
+}
+
+gate() {
+    "$BIN/check-ip.sh" "$1" >/dev/null 2>&1
+    case $? in
+        0) echo "open" ;;
+        255) echo "CANNOT EVALUATE" ;;
+        *) echo "closed" ;;
+    esac
+}
+
+# Fills WARNINGS with one line per inconsistency. Only meaningful on a
+# controller in a mode other than manual.
+collect_warnings() {
+    WARNINGS=()
+    local v4 method
+    cuems_net_is_controller || return 0
+    [ "$cuems_net_mode" = manual ] && return 0
+
+    if rogue_dhcpd; then
+        WARNINGS+=("a DHCP server is serving $cuems_net_subnet on bond0, the cable: run 'cuems-net-mode apply --fix-now'")
+    fi
+    v4=$(cuems_net_conf_get "$DHCPD_DEFAULT" INTERFACESv4)
+    case " $v4 " in
+        "  "|*" bond0 "*)
+            WARNINGS+=("INTERFACESv4 in $DHCPD_DEFAULT is '${v4}': run 'cuems-net-mode apply'")
+            ;;
+    esac
+    if [ -z "$(cuems_net_routable bond0)" ] && [ -z "$(cuems_net_gw_elsewhere bond0)" ]; then
+        WARNINGS+=("bond0 has no IPv4 address and no interface carries $cuems_net_gw")
+    fi
+    if [ -d /sys/class/net/wifi0 ] && cuems_net_has wifi0 "$cuems_net_gw"; then
+        [ "$(unit_state hostapd.service)" = active ] \
+            || WARNINGS+=("wifi0 carries $cuems_net_gw but hostapd is not running")
+        [ "$(unit_state isc-dhcp-server.service)" = active ] \
+            || WARNINGS+=("the AP data path is up but isc-dhcp-server is not running")
+    fi
+    method=$(stanza_method)
+    if cuems_net_mode_wants_client; then
+        [ "$method" = dhcp ] \
+            || WARNINGS+=("NET_MODE=$cuems_net_mode but the bond0 stanza is 'inet ${method:-?}'")
+        if grep -qx 'bond0=bond0' /run/network/ifstate 2>/dev/null \
+           && ! "$BIN/cuems-bond0-dhclient" active-for >/dev/null 2>&1; then
+            WARNINGS+=("no dhclient owns bond0")
+        fi
+        [ -L "$HOOK_LINK" ] && [ -e "$HOOK_LINK" ] \
+            || WARNINGS+=("the dhclient exit hook $HOOK_LINK is missing")
+    fi
+    if [ "$cuems_net_mode" = cable-static ] \
+       && ! cuems_net_has bond0 "${cuems_net_static%%/*}"; then
+        WARNINGS+=("NET_MODE=cable-static but bond0 does not carry $cuems_net_static")
+    fi
+    case "$cuems_net_mode" in
+        auto|ap)
+            if [ "$cuems_net_armed" = yes ]; then
+                [ "$(unit_enabled cuems-wifi.service)" = enabled ] \
+                    || WARNINGS+=("the AP is armed but cuems-wifi.service is '$(unit_enabled cuems-wifi.service)'")
+                [ -d /sys/class/net/wifi0 ] \
+                    || WARNINGS+=("the AP is armed but this host has no wifi0")
+            fi
+            ;;
+    esac
+    [ "$(unit_enabled cuems-net-guard.timer)" = enabled ] \
+        || WARNINGS+=("cuems-net-guard.timer is '$(unit_enabled cuems-net-guard.timer)'")
+    return 0
+}
+
+do_status() {
+    local check=no w
+    [ "${1:-}" = --check ] && check=yes
+    [ -n "${1:-}" ] && [ "$check" = no ] && usage
+
+    if ! cuems_net_load; then
+        [ "$check" = yes ] && { cuems_net_is_controller && exit 1; exit 0; }
+        die "$cuems_net_ap_conf is missing or has no AP_GATEWAY/AP_SUBNET"
+    fi
+    collect_warnings
+
+    if [ "$check" = yes ]; then
+        [ "${#WARNINGS[@]}" -eq 0 ] && exit 0
+        exit 1
+    fi
+
+    if ! cuems_net_is_controller; then
+        echo "This host is not a controller (needs /etc/cuems/master.ip and bond0):"
+        echo "cuems-net-mode does not act on it."
+        exit 0
+    fi
+
+    echo "Mode:            $cuems_net_mode$([ -e "$cuems_net_mode_conf" ] || echo "  (no $cuems_net_mode_conf)")"
+    echo "AP armed:        $cuems_net_armed"
+    [ "$cuems_net_mode" = cable-static ] && echo "Static address:  $cuems_net_static"
+    echo "Fallback/AP:     ${cuems_net_gw}/${cuems_net_prefix}  (subnet $cuems_net_subnet)"
+    echo
+    echo "bond0:           $(ip -4 -o addr show dev bond0 2>/dev/null | awk '{printf "%s ", $4}')"
+    echo "wifi0:           $(ip -4 -o addr show dev wifi0 2>/dev/null | awk '{printf "%s ", $4}')$(cuems_net_enslaved wifi0 && echo "(bond slave)")"
+    echo "ethernet0 cable: $(cuems_net_carrier ethernet0)"
+    echo "bond0 stanza:    inet $(stanza_method)"
+    echo "dhclient:        $("$BIN/cuems-bond0-dhclient" status 2>/dev/null | head -n 1)"
+    echo
+    echo "cuems-wifi.service:     $(unit_state cuems-wifi.service), $(unit_enabled cuems-wifi.service)"
+    echo "isc-dhcp-server:        $(unit_state isc-dhcp-server.service)   INTERFACESv4=\"$(cuems_net_conf_get "$DHCPD_DEFAULT" INTERFACESv4)\"   running on: $(dhcpd_running_ifaces)"
+    echo "hostapd.service:        $(unit_state hostapd.service)"
+    echo "cuems-net-guard.timer:  $(unit_state cuems-net-guard.timer), $(unit_enabled cuems-net-guard.timer)"
+    echo
+    echo "Gates now:       ap=$(gate ap)  dhcpd=$(gate dhcpd)  hostapd=$(gate hostapd)"
+    echo
+    if [ "${#WARNINGS[@]}" -eq 0 ]; then
+        echo "No inconsistencies."
+    else
+        for w in "${WARNINGS[@]}"; do
+            echo "WARNING: $w"
+        done
+        exit 1
+    fi
+}
+
+set_interfaces_v4() {
+    local v4
+    [ -f "$DHCPD_DEFAULT" ] || return 0
+    v4=$(cuems_net_conf_get "$DHCPD_DEFAULT" INTERFACESv4)
+    case "$v4" in
+        ''|bond0) ;;
+        *) return 0 ;;      # wifi0 already, or a value the site chose
+    esac
+    [ -e "$DHCPD_DEFAULT.bak-cuems-net-mode" ] || cp -a "$DHCPD_DEFAULT" "$DHCPD_DEFAULT.bak-cuems-net-mode"
+    if grep -q '^[[:space:]]*INTERFACESv4=' "$DHCPD_DEFAULT"; then
+        sed -i 's/^[[:space:]]*INTERFACESv4=.*/INTERFACESv4="wifi0"/' "$DHCPD_DEFAULT"
+    else
+        echo 'INTERFACESv4="wifi0"' >> "$DHCPD_DEFAULT"
+    fi
+    echo "cuems-net-mode: INTERFACESv4 \"$v4\" -> \"wifi0\" in $DHCPD_DEFAULT (isc-dhcp-server never listens on the cable)"
+}
+
+# apply [--postinst|--fix-now]
+do_apply() {
+    local how="${1:-}"
+    case "$how" in
+        ''|--postinst|--fix-now) ;;
+        *) usage ;;
+    esac
+
+    if ! cuems_net_is_controller; then
+        [ "$how" = --postinst ] || echo "Not a controller: nothing to apply."
+        return 0
+    fi
+    if ! cuems_net_load; then
+        echo "WARNING: $cuems_net_ap_conf is missing or has no AP_GATEWAY/AP_SUBNET; nothing applied" >&2
+        [ "$how" = --postinst ] && return 0
+        return 1
+    fi
+    if [ "$cuems_net_mode" = manual ]; then
+        [ "$how" = --postinst ] || echo "NET_MODE=manual: nothing to apply."
+        return 0
+    fi
+
+    set_interfaces_v4
+
+    if rogue_dhcpd; then
+        if [ "$how" = --fix-now ]; then
+            echo "Stopping the DHCP server that is serving $cuems_net_subnet on bond0..."
+            timeout 30 systemctl stop isc-dhcp-server.service
+            if wait_dhcpd_gone; then
+                echo "  stopped."
+            else
+                echo "WARNING: dhcpd is still running: $(dhcpd_pids | tr '\n' ' ')" >&2
+                return 1
+            fi
+        else
+            echo "WARNING: a DHCP server is serving $cuems_net_subnet on bond0, the cable, right now." >&2
+            echo "WARNING: it keeps running until the next reboot or 'cuems-net-mode apply --fix-now'." >&2
+        fi
+    fi
+    return 0
+}
+
+write_conf() {   # MODE ARMED [STATIC]
+    local tmp
+    [ -r "$TEMPLATE" ] || die "$TEMPLATE is missing"
+    tmp=$(mktemp "${cuems_net_mode_conf}.XXXXXX") || die "cannot write next to $cuems_net_mode_conf"
+    sed -e "s/@@NET_MODE@@/$1/" -e "s/@@AP_ARMED@@/$2/" "$TEMPLATE" > "$tmp"
+    [ -n "${3:-}" ] && echo "CABLE_STATIC_ADDR=$3" >> "$tmp"
+    chmod 0644 "$tmp"
+    mv "$tmp" "$cuems_net_mode_conf"
+}
+
+# Rewrites only the `iface bond0 inet <method>` line and the single address
+# line this tool owns. Everything else in the stanza — bond-slaves, bond-mode,
+# the operator's comments — is left byte for byte.
+edit_stanza() {   # [--check] dhcp | static ADDR
+    local check=no method addr tmp backup n
+    if [ "$1" = --check ]; then check=yes; shift; fi
+    method="$1" addr="${2:-}"
+    tmp="$INTERFACES.cuems-net-mode.tmp"
+    awk -v method="$method" -v addr="$addr" -v mark="$MARK" '
+        index($0, mark) { owned = 1; next }
+        owned && /^[[:space:]]*address[[:space:]]/ { owned = 0; next }
+        { owned = 0 }
+        /^[[:space:]]*iface[[:space:]]+bond0[[:space:]]+inet[[:space:]]+(dhcp|static)([[:space:]]|$)/ {
+            print "iface bond0 inet " method
+            if (method == "static") {
+                print "\t" mark
+                print "\taddress " addr
+            }
+            done = 1
+            next
+        }
+        { print }
+        END { if (!done) exit 3 }
+    ' "$INTERFACES" > "$tmp" || { rm -f "$tmp"; die "no 'iface bond0 inet dhcp|static' line in $INTERFACES (a stanza under interfaces.d/ is the site's own); nothing was changed"; }
+
+    if ! ifquery -i "$tmp" bond0 >/dev/null 2>&1; then
+        rm -f "$tmp"
+        die "the edited $INTERFACES does not parse (ifquery); nothing was changed"
+    fi
+    if [ "$check" = yes ]; then
+        rm -f "$tmp"
+        return 0
+    fi
+    backup="$INTERFACES.bak-$(date +%Y%m%d-%H%M%S)"
+    # Two changes inside one second must not share a backup: the second would
+    # overwrite the only copy of the original.
+    n=1
+    while [ -e "$backup" ]; do
+        n=$((n + 1))
+        backup="${backup%.[0-9]*}.$n"
+    done
+    cp -a "$INTERFACES" "$backup" || { rm -f "$tmp"; die "cannot back up $INTERFACES"; }
+    chmod --reference="$INTERFACES" "$tmp"
+    mv "$tmp" "$INTERFACES"
+    echo "cuems-net-mode: bond0 stanza is now 'inet $method' (backup: $backup)."
+    echo "cuems-net-mode: the stanza itself takes effect at the next boot; until then the change is applied live, below."
+}
+
+confirm() {
+    local answer
+    [ "$ASSUME_YES" = yes ] && return 0
+    [ -t 0 ] || die "not a terminal: pass --yes to confirm"
+    read -r -p "Proceed? [y/N] " answer
+    case "$answer" in
+        y|Y|yes|YES) return 0 ;;
+    esac
+    echo "Nothing changed."
+    exit 0
+}
+
+do_mode() {   # MODE [ADDR]
+    local new="$1" addr="${2:-}" old method armed=no
+
+    need_root "$new"
+    cuems_net_is_controller \
+        || die "this host is not a controller (needs /etc/cuems/master.ip and bond0)"
+    cuems_net_load || die "$cuems_net_ap_conf is missing or has no AP_GATEWAY/AP_SUBNET"
+    old="$cuems_net_mode"
+    method=$(stanza_method)
+
+    case "$new" in
+        auto|ap) armed=yes ;;
+    esac
+    if [ "$new" = cable-static ]; then
+        [ -n "$addr" ] || addr="${cuems_net_gw}/${cuems_net_prefix}"
+        echo "$addr" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$' \
+            || die "'$addr' is not ADDRESS/PREFIX (for example 192.168.6.1/24)"
+    elif [ -n "$addr" ]; then
+        usage
+    fi
+
+    if [ "$armed" = yes ]; then
+        [ "$(unit_enabled cuems-wifi.service)" = masked ] \
+            && die "cuems-wifi.service is masked on this host; unmask it first, or use cable-dhcp"
+        [ -d /sys/class/net/wifi0 ] \
+            || echo "WARNING: this host has no wifi0; the AP cannot come up until it has one." >&2
+    fi
+    # A static stanza this tool did not write is the site's own.
+    if [ "$method" = static ] && ! grep -qF "$MARK" "$INTERFACES" && [ "$new" != manual ]; then
+        die "the bond0 stanza is 'inet static' and was not written by cuems-net-mode; this site is managed by hand (NET_MODE=manual)"
+    fi
+
+    echo "Network mode: $old -> $new"
+    case "$new" in
+        auto)         echo "  lease if a DHCP server answers, ${cuems_net_gw} if not, WiFi AP if there is no cable; AP armed" ;;
+        cable-dhcp)   echo "  lease if a DHCP server answers, ${cuems_net_gw} if not; never an AP" ;;
+        cable-static) echo "  bond0 fixed at $addr; no DHCP client; never an AP" ;;
+        ap)           echo "  WiFi AP always, on ${cuems_net_gw}; the cable still takes a lease; AP armed" ;;
+        manual)       echo "  cuems-common stops managing this host's network and AP" ;;
+    esac
+    echo
+    echo "  - the WiFi AP group (cuems-wifi.target) is stopped, and started again for auto/ap"
+    echo "  - an SSH or editor session that runs over an address which goes away will drop"
+    echo "  - a running show keeps playing: playback does not depend on bond0"
+    echo
+    confirm
+
+    # Everything that can refuse has to refuse BEFORE anything is stopped.
+    if [ "$new" = cable-static ]; then
+        edit_stanza --check static "$addr"
+    elif [ "$method" = static ] && [ "$new" != manual ]; then
+        edit_stanza --check dhcp
+    fi
+
+    # Stop the AP while the OLD mode is still in the conf file: cuems-ap-path
+    # does nothing in manual, so writing `manual` first would leave the
+    # gateway address on wifi0.
+    timeout 60 systemctl stop cuems-wifi.target cuems-wifi.service 2>/dev/null
+    wait_dhcpd_gone || echo "WARNING: dhcpd is still running: $(dhcpd_pids | tr '\n' ' ')" >&2
+
+    if [ "$new" = cable-static ]; then
+        edit_stanza static "$addr"
+    elif [ "$method" = static ] && [ "$new" != manual ]; then
+        edit_stanza dhcp
+    fi
+
+    if [ "$new" = cable-static ]; then
+        write_conf "$new" "$armed" "$addr"
+    else
+        write_conf "$new" "$armed"
+    fi
+    cuems_net_load
+
+    case "$new" in
+        cable-static)
+            "$BIN/cuems-bond0-dhclient" stop
+            ip -4 addr replace "$addr" dev bond0 || die "could not put $addr on bond0"
+            echo "cuems-net-mode: $addr is on bond0. Addresses that were already there are left in place"
+            echo "cuems-net-mode: and go at the end of their lease or at the next boot."
+            ;;
+        auto|cable-dhcp|ap)
+            if [ "$old" = cable-static ] || ! "$BIN/cuems-bond0-dhclient" active-for >/dev/null 2>&1; then
+                "$BIN/cuems-bond0-dhclient" start
+            fi
+            if [ "$old" = cable-static ]; then
+                echo "cuems-net-mode: the static address stays on bond0 until the next boot."
+            fi
+            ;;
+    esac
+
+    if [ "$new" != manual ]; then
+        do_apply
+        [ -L "$HOOK_LINK" ] || ln -sf "$HOOK_TARGET" "$HOOK_LINK"
+        timeout 10 systemctl enable cuems-net-guard.timer >/dev/null 2>&1
+        timeout 10 systemctl start cuems-net-guard.timer
+    fi
+    if [ "$armed" = yes ]; then
+        timeout 10 systemctl enable cuems-wifi.service >/dev/null 2>&1 \
+            || echo "WARNING: could not enable cuems-wifi.service" >&2
+        # Through the target, always: it is what orders address, dhcpd, hostapd.
+        timeout 60 systemctl start cuems-wifi.target \
+            || echo "WARNING: cuems-wifi.target did not start cleanly" >&2
+    fi
+
+    echo
+    do_status
+}
+
+ASSUME_YES=no
+ARGS=()
+for arg in "$@"; do
+    case "$arg" in
+        --yes|-y) ASSUME_YES=yes ;;
+        -h|--help) usage 0 ;;
+        *) ARGS+=("$arg") ;;
+    esac
+done
+[ "${#ARGS[@]}" -gt 0 ] || usage
+
+case "${ARGS[0]}" in
+    status)
+        [ "${#ARGS[@]}" -le 2 ] || usage
+        do_status "${ARGS[1]:-}"
+        ;;
+    apply)
+        [ "${#ARGS[@]}" -le 2 ] || usage
+        if [ "${ARGS[1]:-}" = --postinst ]; then
+            # Runs inside dpkg on every host, nodes included: whatever
+            # happens, it must not be the reason a package fails to configure.
+            do_apply --postinst || true
+            exit 0
+        fi
+        need_root apply
+        do_apply "${ARGS[1]:-}"
+        ;;
+    cable-static)
+        [ "${#ARGS[@]}" -le 2 ] || usage
+        do_mode cable-static "${ARGS[1]:-}"
+        ;;
+    auto|cable-dhcp|ap|manual)
+        [ "${#ARGS[@]}" -eq 1 ] || usage
+        do_mode "${ARGS[0]}"
+        ;;
+    *)
+        usage
+        ;;
+esac
