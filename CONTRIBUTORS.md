@@ -2,6 +2,7 @@
 ***
 SPDX-FileCopyrightText: 2025 Stagelab Coop SCCL
 SPDX-License-Identifier: GPL-3.0-or-later
+SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 ***
 -->
 
@@ -159,6 +160,8 @@ For all **Tier 2** changes, a spec must exist and be acknowledged before any imp
 4. **What is deferred** — if the change is incomplete by design, say so explicitly.
 
 A reviewer acknowledging the spec does not imply approval of the implementation. Implementation review happens separately in the PR.
+
+Specs and plans that live in the repository go in the top-level `Plans/` directory, named `YYYY-MM-DD-<topic>.md` (they were under `dev/planning/` until 1.3.0-23). A plan that was reviewed records the review and its verdict in the same file.
 
 ---
 
@@ -411,6 +414,8 @@ SPDX-License-Identifier: GPL-3.0-or-later
 <!-- SPDX-FileCopyrightText: <year> Stagelab Coop SCCL -->
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 ```
+
+Contributors are credited per file with `SPDX-FileContributor: Name <email>` lines after `SPDX-License-Identifier`, one per contributor, in the file's own comment syntax. Add yours to every file you create or modify; keep the ones already there.
 
 Use the current calendar year as `<year>`. Use `Stagelab Coop SCCL` as the copyright entity — do not substitute your personal name or employer.
 

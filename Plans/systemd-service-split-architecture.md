@@ -1,6 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
 SPDX-License-Identifier: GPL-3.0-or-later
+SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 -->
 
 # Splitting `etc/systemd/system/` out of cuems-common into component repos
