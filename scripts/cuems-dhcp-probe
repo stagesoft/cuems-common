@@ -27,6 +27,7 @@ address instead of 0.0.0.0. A packet socket sits below both, exactly where
 dhclient itself listens.
 """
 
+import errno
 import os
 import select
 import socket
@@ -150,7 +151,14 @@ def probe(iface):
                 return False
             if pending and now >= pending[0]:
                 pending.pop(0)
-                sock.sendto(frame, (iface, ETH_P_IP, 0, 1, BROADCAST_MAC))
+                try:
+                    sock.sendto(frame, (iface, ETH_P_IP, 0, 1, BROADCAST_MAC))
+                except OSError as err:
+                    # ENOBUFS is the queue refusing or dropping the frame (a
+                    # full queue, an egress filter). To the caller that is a
+                    # DISCOVER nobody answered, not a probe that cannot run.
+                    if err.errno != errno.ENOBUFS:
+                        raise
             deadline = min([WAIT_TOTAL] + pending[:1])
             ready, _, _ = select.select([sock], [], [], max(0.0, deadline - now))
             if not ready:

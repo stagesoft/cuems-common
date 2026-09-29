@@ -453,6 +453,14 @@ do_mode() {   # MODE [ADDR]
         # Through the target, always: it is what orders address, dhcpd, hostapd.
         timeout 60 systemctl start cuems-wifi.target \
             || echo "WARNING: cuems-wifi.target did not start cleanly" >&2
+        # The target is ordered BEFORE hostapd, so its start job returns while
+        # hostapd is still coming up. Give it the time before reporting.
+        if [ "$(gate hostapd)" = open ]; then
+            for _ in $(seq 1 30); do
+                [ "$(unit_state hostapd.service)" = active ] && break
+                sleep 0.5
+            done
+        fi
     fi
 
     echo

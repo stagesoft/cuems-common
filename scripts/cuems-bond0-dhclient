@@ -70,7 +70,7 @@ do_status() {
         echo "dhclient pid $pid on $IFACE, running for $(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ')s, parent $(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
     done
     if timeout 10 systemctl is-active --quiet "$UNIT.service" 2>/dev/null; then
-        echo "transient unit $UNIT.service is active"
+        echo "transient unit $UNIT.service is active" 2>/dev/null
     fi
     return 0
 }
