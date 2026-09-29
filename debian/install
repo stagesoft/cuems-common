@@ -10,6 +10,20 @@ scripts/wifi-auto.sh usr/lib/cuems/bin/
 scripts/cuems-log-collector-url usr/lib/cuems/bin/
 scripts/cuems-write-chrony-source usr/lib/cuems/bin/
 scripts/cuems-arm-wol usr/lib/cuems/bin/
+# Controller network modes (1.3.0-23): the AP data path, the DHCP client of
+# bond0 outside ifupdown, the once-a-minute guard and its DISCOVER-only probe.
+scripts/cuems-ap-path usr/lib/cuems/bin/
+scripts/cuems-bond0-dhclient usr/lib/cuems/bin/
+scripts/cuems-net-guard usr/lib/cuems/bin/
+scripts/cuems-dhcp-probe usr/lib/cuems/bin/
+# Shared state readers, sourced by all of the above, by check-ip.sh and by the
+# dhclient exit hook. Not executable: it is never run.
+usr/lib/cuems/net-mode.sh usr/lib/cuems/
+# dhclient exit hook. Shipped under /usr/lib and symlinked into
+# /etc/dhcp/dhclient-exit-hooks.d/ by the postinst: a file under /etc/ would be
+# a conffile, which a downgrade cannot take away and an upgrade may not replace.
+usr/lib/cuems/dhclient-hooks/cuems-fallback usr/lib/cuems/dhclient-hooks/
+usr/bin/cuems-net-mode usr/bin/
 usr/bin/cuems-healthcheck usr/bin/
 usr/lib/cuems/bin/cuems-extract-video-latency usr/lib/cuems/bin/
 usr/lib/cuems/bin/cuems-write-rtpmidid-config usr/lib/cuems/bin/
@@ -99,6 +113,9 @@ etc/systemd/system/olad.service lib/systemd/system/
 # has no MaxUse=/MaxFiles= of its own on systemd 252, so a timer is the only
 # bound — see the comment in systemd-journal-remote.service.d/.
 etc/systemd/system/cuems-journal-vacuum.service lib/systemd/system/
+# Controller network guard (1.3.0-23). Its timer comes in through the *.timer
+# glob below and is what the postinst enables.
+etc/systemd/system/cuems-net-guard.service lib/systemd/system/
 etc/systemd/system/*.path lib/systemd/system/
 etc/systemd/system/*.timer lib/systemd/system/
 # Systemd drop-in directories (package-provided overrides)

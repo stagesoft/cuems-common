@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 
 # CUEMS Debian Package Structure Verification Script
 # This script verifies that all files referenced in systemd units
@@ -46,8 +49,10 @@ extract_file_paths() {
         [[ -z "$line" ]] && continue
         
         # Extract file path (first argument after =)
-        if [[ "$line" =~ ^Exec(Start|Condition|Reload)= ]]; then
+        if [[ "$line" =~ ^Exec(Start|StartPre|StartPost|Stop|StopPost|Condition|Reload)= ]]; then
             local cmd=$(echo "$line" | cut -d'=' -f2- | awk '{print $1}')
+            # systemd's executable prefixes (-, +, !, :, @) are not part of the path
+            cmd="${cmd#"${cmd%%[!-+!:@]*}"}"
             
             # Skip systemd specifiers and built-in commands
             [[ "$cmd" =~ ^[@%\$] ]] && continue
@@ -77,6 +82,9 @@ check_package_file() {
     case "$file_path" in
         /usr/bin/xinit|/usr/bin/X|/usr/bin/rsync|/usr/sbin/hostapd|/usr/sbin/ip|/bin/kwin_wayland)
             return 0  # These come from system packages
+            ;;
+        /bin/sh|/usr/bin/rtpmidid|/lib/systemd/systemd-journal-*)
+            return 0  # Reached through the drop-ins and Exec*Pre/Post lines, also system packages
             ;;
         /usr/bin/python3|/usr/bin/python3.7|/usr/bin/python3.*)
             return 0  # Python comes from system
@@ -139,10 +147,10 @@ echo ""
 
 # Process all systemd unit files
 shopt -s nullglob
-for unit_file in "$SYSTEMD_DIR"/*.service "$SYSTEMD_DIR"/*.path; do
+for unit_file in "$SYSTEMD_DIR"/*.service "$SYSTEMD_DIR"/*.path "$SYSTEMD_DIR"/*.service.d/*.conf; do
     [ -f "$unit_file" ] || continue
     
-    unit_name=$(basename "$unit_file")
+    unit_name="${unit_file#"$SYSTEMD_DIR"/}"
     print_status "INFO" "Checking: $unit_name"
     
     # Extract file paths
@@ -170,6 +178,24 @@ else
     MISSING_FILES+=("scripts/check-ip.sh (should install to /usr/lib/cuems/bin/check-ip.sh)")
     print_status "FAIL" "check-ip.sh not found in scripts/"
 fi
+
+# Controller network modes (1.3.0-23). Every one of these must also have its
+# line in debian/install, or the unit that calls it fails at runtime only.
+for f in scripts/cuems-ap-path scripts/cuems-bond0-dhclient scripts/cuems-net-guard \
+         scripts/cuems-dhcp-probe usr/bin/cuems-net-mode usr/lib/cuems/net-mode.sh \
+         usr/lib/cuems/dhclient-hooks/cuems-fallback usr/share/cuems/net-mode.conf.default \
+         etc/systemd/system/cuems-net-guard.service etc/systemd/system/cuems-net-guard.timer; do
+    if [ ! -f "$PROJECT_ROOT/$f" ]; then
+        MISSING_FILES+=("$f")
+        print_status "FAIL" "$f not found"
+    elif [[ "$f" == usr/share/cuems/* || "$f" == *.timer ]] \
+         || grep -qE "^${f}[[:space:]]" "$PROJECT_ROOT/debian/install"; then
+        print_status "PASS" "$f exists and is installed by debian/install"
+    else
+        MISSING_FILES+=("$f (no line in debian/install)")
+        print_status "FAIL" "$f has no line in debian/install"
+    fi
+done
 
 # Check for other scripts that might need to be installed
 if [ -f "$PROJECT_ROOT/scripts/wifi-auto.sh" ]; then
