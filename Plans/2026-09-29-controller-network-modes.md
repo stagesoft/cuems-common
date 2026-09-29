@@ -457,8 +457,8 @@ does stop dhclient. The reviewer wrote and deleted one scratch file in `/tmp` on
 
 ## 18. Execution notes — 2026-09-29
 
-Implemented on `fix/controller-network-modes`. Built as `cuems-common_1.3.0-23_all.deb`. V1 and the
-build are done; V2–V10 are not (nothing has been installed on test2).
+Implemented on `fix/controller-network-modes`. Built as `cuems-common_1.3.0-23_all.deb`. V1, the build
+and V2–V8 are done (results in §19); V9 is running; V10 waits for someone at the taller.
 
 ### Deviations from v3, and why
 
@@ -500,7 +500,74 @@ build are done; V2–V10 are not (nothing has been installed on test2).
   bond0 outside `manual`; one high, three medium and five low, all addressed (X5, X8, X9, X11, X12 above
   and the stale pid file).
 
-### Not done
+### Decisions of §15, as taken by the user on 2026-09-29
 
-- (Commits: done, six signed commits `fda72f6..99609f0`; nothing pushed.)
-- V2–V10. Decisions 1–7 of §15 are still open.
+| # | Decision |
+|---|---|
+| 1 | nodeconf in the AP state: **evaluate** — done, see §19 "nodeconf". Open again, with a recommendation |
+| 2 | the AP keeps broadcasting after a cable lease arrives: **accepted** |
+| 3 | postinst rewrites `INTERFACESv4`: **accepted** |
+| 4 | the package enforces the fallback; `manual` is the opt-out: **accepted** |
+| 5 | test2 gets an inventory row, under its **current** UUID |
+| 6 | test and test3: **decide after test2** |
+| 7 | not decisions; see §19 for what the runs showed |
+
+## 19. Verification on test2 — 2026-09-29
+
+test2 went 1.3.0-21 → 1.3.0-23. Every run that cut access was started as a detached unit with a dead-man
+timer behind it. The observer sampled `ip -4 -o addr show dev bond0` once a second.
+
+| # | Result | What was seen |
+|---|---|---|
+| V2 | **pass** | `NET_MODE=auto`, `AP_ARMED=no`; `INTERFACESv4="wifi0"`; hook symlink present; `/etc/network/interfaces` byte-identical; hostapd and isc-dhcp-server list their `ExecCondition`, hostapd has no `Requisite`; prerm carries the debhelper snippet; no show process changed pid (apache reloaded, as §10 says) |
+| V3 | **pass**, one unrelated failure | dhcpd and hostapd `Skipped due to 'exec-condition'`, not failed; no "Dependency failed", no ordering cycle; bond0 = 10.16.10.3 only. The hook put 192.168.6.1 on bond0 at PREINIT and removed it at BOUND, 11 s later. `is-system-running` was `degraded` because of `accounts-daemon` ("Failed to set up mount namespacing: /run/systemd/seats"), a boot race with logind that has nothing to do with this package; it started on a manual restart |
+| V4 | **pass** | fallback 1 s after the flush; **0 of 278 samples** without a routable IPv4; dhcpd refused by its gate (`Result=exec-condition`). The message "refusing to serve DHCP on bond0" does not appear any more on an installed box: with `INTERFACESv4="wifi0"` bond0 is not even in the list, so the gate closes one step earlier |
+| V4b | **pass**, but did not test what it meant to | with only DHCP filtered the router still answered the ping, so the recorded lease was accepted. 0 of 266 samples without an address |
+| V4c | **pass** (added) | DHCP **and ICMP** filtered: the recorded lease was tried for 10 s, its router did not answer, it was flushed, and the static lease followed. This is the path of the incident. **0 of 320 samples** without a routable IPv4 |
+| V5 | **pass** | the guard logged the offer and bond0 was back on 10.16.10.3 within 11 s (V4) and 2 s (V4c) of the filter going away |
+| V6 | **pass** | run together with V4c, project `prova` playing: `engine_state` stayed `running` and node01 stayed reachable in every snapshot; no stop or unload in the engine journal. Audio never played in this project on this box ("No JACK server available"), which predates the test |
+| V7 | **pass** | `ifdown bond0; ifup bond0` released the transient client, `cuems-dhclient-bond0.service` was collected (`LoadState=not-found`), `--failed` empty, lease restored. Run detached with `setsid`, not from the console |
+| V8 | **pass** | `cuems-net-mode ap --yes`: hostapd `AP-ENABLED`, wifi0 = 192.168.6.1/24 and out of the bond, dhcpd running on `wifi0` only, forwarding 0 on wifi0, bond0 still 10.16.10.3, SSH intact, project still running. A reinstall of the package with the AP up left mode, arming and AP untouched. `auto --yes`: address off wifi0, wifi0 back in the bond, the three units skipped, none failed |
+| all | **pass** | no AppArmor denial in any run |
+
+dhcpd logged `receive_packet failed on wifi0: Network is down` once, while hostapd reconfigured the
+interface. Whether it still answers afterwards is only proven by a real client: **V10**.
+
+### Defects found by the runs, fixed in c1f9ea0
+
+- The probe exited 1 ("could not run") while the `tc` filter was on: `sendto` returns `ENOBUFS` when the
+  queue drops the frame. It is now an unanswered DISCOVER, and the guard stays silent.
+- `cuems-net-mode ap` printed "wifi0 carries 192.168.6.1 but hostapd is not running" and exited 1 with
+  the AP up: the target is ordered before hostapd, so its start job returns first. It now waits.
+
+### Left behind by the tests, not by the package
+
+- avahi-autoipd's 169.254.9.198 stayed on bond0 after its daemon was gone (its own enter hook kills the
+  daemon on PREINIT; the address survived the SIGKILL of the client that owned the hooks). Removed by
+  hand. Worth a look: it is the same transient the old gate tripped over (D4).
+- test2 is left in `auto` with **`AP_ARMED=yes`**, ready for V10. With a cable in, that changes nothing.
+
+### nodeconf (decision 1)
+
+Measured on test2 with the AP up and bond0 without IPv4 (DHCP and ICMP filtered):
+
+| nodeconf is … | what happens |
+|---|---|
+| already running | every tick: `get_ips timed out in resident loop; retrying next tick`. No map refresh, no alias re-publication. Engines and playback unaffected. Recovers by itself when bond0 gets an address |
+| (re)started in that state | `CRITICAL Could not find network interfaces within timeout`, exit with a core dump, `Restart=on-failure` every 10 s: **a crash loop for as long as bond0 has no IPv4**. Four restarts in the 75 s of the test. It came back on its own when the lease did |
+
+This is worse than §6 says. `get_ips()` (`CuemsNodeConf.py:335`) finds the cluster address on
+`ethernet1:avahi` and then keeps waiting for an IPv4 on bond0 that it only needs for the UI alias; after
+10 s it raises, and `run()` turns that into `sys.exit(-1)`.
+
+A cold boot without a cable gets past it, because nodeconf starts while bond0 still holds the fallback
+and the AP moves the address afterwards. Any later restart of nodeconf does not.
+
+Who is exposed: a controller with nodeconf enabled, the AP armed, and no lease on the cable. No fielded
+box is armed by an upgrade, so nothing in the field changes until someone arms one.
+
+Recommendation: fix it in `cuems-nodeconf`, not here. bond0 becomes optional once the cluster address is
+known, and the UI address falls back to wifi0 when bond0 has none. It is a few lines, it also makes
+nodeconf survive a bond0 that is simply slow, and it keeps the AP data path of this plan as reviewed.
+The alternative, keeping an address on bond0 while the AP is up, means the same address on two
+interfaces or a bridge, which is the design this plan rejected.
