@@ -502,6 +502,5 @@ build are done; V2–V10 are not (nothing has been installed on test2).
 
 ### Not done
 
-- Commits: GPG signing needs the passphrase and cannot prompt here. The tree is ready; the commits are
-  the user's to make.
+- (Commits: done, six signed commits `fda72f6..99609f0`; nothing pushed.)
 - V2–V10. Decisions 1–7 of §15 are still open.
