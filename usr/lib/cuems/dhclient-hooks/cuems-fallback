@@ -1,0 +1,77 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# dhclient exit hook: keeps the fallback address on bond0 exactly when bond0
+# has nothing better. Symlinked by the postinst into
+# /etc/dhcp/dhclient-exit-hooks.d/cuems-fallback — a symlink rather than a
+# conffile, so the prerm can take it away on a downgrade.
+#
+# SOURCED by /sbin/dhclient-script (dash) after every event, in one namespace
+# shared with the chrony, timesyncd, rfc3442 and avahi hooks. Therefore:
+#   - never `exit`, never `return` at top level, no `set -e` / `set -u`;
+#   - only `cuems_`-prefixed names;
+#   - the last command is `:`, so this hook can never be the reason
+#     dhclient-script reports a failure.
+#
+# It decides from the OBSERVED state of bond0 and not from dhclient-script's
+# status: run_hook() declares `exit_status` local, so every hook sees 0 there
+# whatever happened. Observing also covers the case that started this work — a
+# TIMEOUT whose recorded lease is rejected (the router does not answer the
+# ping) and flushed, which left bond0 without any IPv4 until the next lease in
+# the list was tried.
+#
+# /etc/dhcp/dhclient.conf, where the fallback lease itself is declared, is
+# operator-managed and is not read here. The address comes from ap.conf.
+#
+# $interface and $reason are set by dhclient for dhclient-script.
+# shellcheck disable=SC2154
+
+cuems_fb_run() {
+    local cuems_fb_addrs
+
+    # shellcheck source=usr/lib/cuems/net-mode.sh
+    . /usr/lib/cuems/net-mode.sh
+
+    cuems_net_is_controller || return 0
+    cuems_net_load || return 0
+    cuems_net_mode_wants_client || return 0
+
+    cuems_fb_addrs=$(cuems_net_routable bond0)
+
+    if [ -z "$cuems_fb_addrs" ]; then
+        # No routable IPv4 on bond0. Give it the fallback, unless the AP data
+        # path holds that address on wifi0: the same address on two
+        # interfaces would answer ARP for the AP's clients on the cable.
+        if [ -z "$(cuems_net_gw_elsewhere bond0)" ]; then
+            if ip -4 addr replace "${cuems_net_gw}/${cuems_net_prefix}" dev bond0; then
+                logger -t cuems-fallback -p daemon.notice \
+                    "bond0 has no IPv4 after $reason: fallback ${cuems_net_gw}/${cuems_net_prefix}"
+            fi
+        fi
+        return 0
+    fi
+
+    cuems_net_has bond0 "$cuems_net_gw" || return 0
+
+    # bond0 carries the fallback. It goes when there is a real lease next to
+    # it, or when another interface (wifi0, as the AP) carries it too.
+    if [ "$cuems_fb_addrs" != "$cuems_net_gw" ] \
+       || [ -n "$(cuems_net_gw_elsewhere bond0)" ]; then
+        if ip -4 addr del "${cuems_net_gw}/${cuems_net_prefix}" dev bond0; then
+            logger -t cuems-fallback -p daemon.notice \
+                "bond0 no longer needs the fallback ${cuems_net_gw} (after $reason)"
+        fi
+    fi
+    return 0
+}
+
+case "$interface:$reason" in
+    bond0:PREINIT|bond0:BOUND|bond0:RENEW|bond0:REBIND|bond0:REBOOT|\
+    bond0:EXPIRE|bond0:FAIL|bond0:RELEASE|bond0:STOP|bond0:TIMEOUT)
+        if [ -r /usr/lib/cuems/net-mode.sh ]; then
+            cuems_fb_run
+        fi
+        ;;
+esac
+:

@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+[Unit]
+Description=CUEMS controller network guard (fallback address, AP sanity, DHCP re-probe)
+# No Condition*= here, on purpose. The role check is the first thing the
+# script does (master.ip AND bond0, exit 0 otherwise). A condition would make
+# every run on a node a start that never activates, and OnUnitActiveSec= in
+# the timer is measured from the last ACTIVATION: the schedule of a unit that
+# never activates is not something to depend on across role flips.
+# Deliberately NOT PartOf=cuems-controller.target: keeping the box reachable
+# must not stop because the show stack was restarted.
+
+# No [Install] section on purpose: the schedule belongs to
+# cuems-net-guard.timer, which is what gets enabled. Run one pass by hand with
+# `systemctl start cuems-net-guard.service`.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/cuems/bin/cuems-net-guard
+# The probe waits 8 s and a dhclient restart up to ~10 s; every systemctl call
+# inside is --no-block under `timeout 10`.
+TimeoutStartSec=45s
+# State between runs (the AP-sanity counter, the AP retry stamp). Preserved,
+# because a oneshot's runtime directory is otherwise removed when it exits.
+RuntimeDirectory=cuems-net-guard
+RuntimeDirectoryPreserve=yes
+# One run a minute is 1440 "Starting"/"Finished" pairs a day. A quiet run must
+# be invisible; the script marks what matters as notice or warning.
+LogLevelMax=notice

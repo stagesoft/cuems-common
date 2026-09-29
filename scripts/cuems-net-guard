@@ -1,0 +1,176 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# Run once a minute by cuems-net-guard.timer, on a controller, in every mode
+# but `manual`. Four steps, each one there because a requirement cannot be met
+# without it:
+#
+#   1. never no IP     the exit hook only runs on dhclient events; an address
+#                      removed by anything else would stay gone.
+#   2. AP sanity       without it the gateway address stays on a wifi0 that is
+#                      not an AP, and the box is reachable through nothing.
+#   3. dhclient alive  a client killed for a restart whose start then failed
+#                      would never come back.
+#   4. re-probe        a client bound to the fallback lease sleeps until 2040,
+#                      and dhclient.conf is the operator's, not ours.
+#
+# A quiet run logs nothing. The unit caps its log level at `notice`, so only
+# the `<5>` / `<4>` lines below reach the journal.
+set -u
+
+# shellcheck source=usr/lib/cuems/net-mode.sh
+. /usr/lib/cuems/net-mode.sh
+
+STATE_DIR="${RUNTIME_DIRECTORY:-/run/cuems-net-guard}"
+BIN=/usr/lib/cuems/bin
+AP_RETRY_S=300
+CLIENT_SETTLE_S=180
+
+note() { echo "<5>cuems-net-guard: $*"; }
+warn() { echo "<4>cuems-net-guard: $*" >&2; }
+sc()   { timeout 10 systemctl --no-block "$@"; }
+active() { timeout 10 systemctl is-active --quiet "$1" 2>/dev/null; }
+
+cuems_net_is_controller || exit 0
+cuems_net_load || { warn "$cuems_net_ap_conf is missing or has no AP_GATEWAY/AP_SUBNET"; exit 0; }
+[ "$cuems_net_mode" = manual ] && exit 0
+mkdir -p "$STATE_DIR" 2>/dev/null
+
+gw_cidr="${cuems_net_gw}/${cuems_net_prefix}"
+
+# An ifup or ifdown in flight owns bond0: its dhclient is still in the
+# foreground, negotiating. Slow boots overlap the first run of this timer.
+ifupdown_running() {
+    local f
+    for f in /proc/[0-9]*/comm; do
+        case "$(cat "$f" 2>/dev/null)" in
+            ifup|ifdown) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+# `iface bond0 inet dhcp` in the live configuration.
+stanza_is_dhcp() {
+    cat /etc/network/interfaces /etc/network/interfaces.d/* 2>/dev/null \
+        | grep -Eq '^[[:space:]]*iface[[:space:]]+bond0[[:space:]]+inet[[:space:]]+dhcp([[:space:]]|$)'
+}
+
+# --- 1. never no IP ----------------------------------------------------------
+if [ -z "$(cuems_net_routable bond0)" ] && ! ifupdown_running; then
+    if [ "$cuems_net_mode" = cable-static ]; then
+        if ip -4 addr replace "$cuems_net_static" dev bond0; then
+            note "bond0 had no IPv4: static address $cuems_net_static re-asserted"
+        else
+            warn "bond0 has no IPv4 and $cuems_net_static could not be set"
+        fi
+    elif [ -z "$(cuems_net_gw_elsewhere bond0)" ]; then
+        if ip -4 addr replace "$gw_cidr" dev bond0; then
+            note "bond0 had no IPv4: fallback $gw_cidr set"
+        else
+            warn "bond0 has no IPv4 and the fallback $gw_cidr could not be set"
+        fi
+    fi
+fi
+
+# cable-static ends here: no client, no AP, no probe.
+if [ "$cuems_net_mode" = cable-static ]; then
+    if ! cuems_net_has bond0 "${cuems_net_static%%/*}"; then
+        if ip -4 addr replace "$cuems_net_static" dev bond0; then
+            note "static address $cuems_net_static re-asserted on bond0"
+        else
+            warn "static address $cuems_net_static could not be set on bond0"
+        fi
+    fi
+    exit 0
+fi
+
+# --- 2. AP sanity ------------------------------------------------------------
+if [ -d /sys/class/net/wifi0 ] && cuems_net_has wifi0 "$cuems_net_gw"; then
+    if active hostapd.service; then
+        rm -f "$STATE_DIR/ap-without-hostapd"
+        if ! active isc-dhcp-server.service; then
+            warn "the AP is up but isc-dhcp-server is not running: starting it"
+            sc start isc-dhcp-server.service \
+                || warn "could not queue the start of isc-dhcp-server"
+        fi
+    elif [ -e "$STATE_DIR/ap-without-hostapd" ]; then
+        # Second run in a row. Through the target, so that dhcpd goes too and
+        # cuems-ap-path puts the address back on bond0.
+        warn "wifi0 carries $cuems_net_gw but hostapd is not running: taking the AP data path down"
+        rm -f "$STATE_DIR/ap-without-hostapd"
+        if active cuems-wifi.service; then
+            sc stop cuems-wifi.target cuems-wifi.service \
+                || warn "could not queue the stop of cuems-wifi.target"
+        else
+            # systemd runs no ExecStop= for a unit that is not active — one
+            # that was stopped while its ExecStartPost= was still running, for
+            # instance. Stopping it again would move nothing, and the address
+            # would stay on wifi0 for good. The helper is idempotent.
+            sc stop cuems-wifi.target 2>/dev/null
+            "$BIN/cuems-ap-path" down >/dev/null \
+                || warn "cuems-ap-path down failed"
+        fi
+    else
+        : > "$STATE_DIR/ap-without-hostapd"
+    fi
+else
+    rm -f "$STATE_DIR/ap-without-hostapd"
+    # `ap` means always: an AP that failed to come up is retried, slowly.
+    if [ "$cuems_net_mode" = ap ] && [ "$cuems_net_armed" = yes ] \
+       && [ -d /sys/class/net/wifi0 ] && ! active hostapd.service; then
+        now=$(date +%s)
+        last=$(cat "$STATE_DIR/ap-retry" 2>/dev/null || echo 0)
+        case "$last" in ''|*[!0-9]*) last=0 ;; esac
+        if [ $((now - last)) -ge "$AP_RETRY_S" ]; then
+            echo "$now" > "$STATE_DIR/ap-retry"
+            warn "NET_MODE=ap but the AP is not up: starting cuems-wifi.target"
+            sc start cuems-wifi.target \
+                || warn "could not queue the start of cuems-wifi.target"
+        fi
+    fi
+fi
+
+# --- 3. dhclient alive -------------------------------------------------------
+if cuems_net_mode_wants_client \
+   && grep -qx 'bond0=bond0' /run/network/ifstate 2>/dev/null \
+   && stanza_is_dhcp \
+   && ! ifupdown_running \
+   && ! "$BIN/cuems-bond0-dhclient" active-for >/dev/null 2>&1; then
+    # Not behind an operator's back: `ifdown bond0` takes bond0 out of
+    # ifstate, and then this does nothing.
+    warn "no dhclient owns bond0: starting one"
+    "$BIN/cuems-bond0-dhclient" start || warn "could not start a dhclient on bond0"
+    exit 0
+fi
+
+# --- 4. re-probe -------------------------------------------------------------
+cuems_net_mode_wants_client || exit 0
+
+stuck=no
+if cuems_net_only_gw bond0; then
+    stuck=yes
+elif [ -z "$(cuems_net_routable bond0)" ] && [ -n "$(cuems_net_gw_elsewhere bond0)" ]; then
+    stuck=yes
+fi
+[ "$stuck" = yes ] || exit 0
+[ "$(cuems_net_carrier ethernet0)" = yes ] || exit 0
+
+# Give a client that has just started the time to go through its own timeout
+# before judging it stuck.
+age=$("$BIN/cuems-bond0-dhclient" active-for 2>/dev/null) || exit 0
+[ "$age" -ge "$CLIENT_SETTLE_S" ] || exit 0
+
+"$BIN/cuems-dhcp-probe" bond0
+case $? in
+    0)
+        note "a DHCP server answers on bond0: restarting dhclient to take the lease"
+        "$BIN/cuems-bond0-dhclient" restart \
+            || warn "could not restart dhclient on bond0"
+        ;;
+    2)  ;;   # no server yet; ask again in a minute, silently
+    *)  warn "the DHCP probe on bond0 could not run" ;;
+esac
+exit 0
