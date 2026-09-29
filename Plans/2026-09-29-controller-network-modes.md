@@ -458,7 +458,7 @@ does stop dhclient. The reviewer wrote and deleted one scratch file in `/tmp` on
 ## 18. Execution notes — 2026-09-29
 
 Implemented on `fix/controller-network-modes`. Built as `cuems-common_1.3.0-23_all.deb`. V1, the build
-and V2–V8 are done (results in §19); V9 is running; V10 waits for someone at the taller.
+and V2–V9 are done (results in §19); V10 waits for someone at the taller.
 
 ### Deviations from v3, and why
 
@@ -508,7 +508,7 @@ and V2–V8 are done (results in §19); V9 is running; V10 waits for someone at 
 | 2 | the AP keeps broadcasting after a cable lease arrives: **accepted** |
 | 3 | postinst rewrites `INTERFACESv4`: **accepted** |
 | 4 | the package enforces the fallback; `manual` is the opt-out: **accepted** |
-| 5 | test2 gets an inventory row, under its **current** UUID |
+| 5 | test2 gets an inventory row, under its **current** UUID — done 2026-09-30 in cuems-fleet (controller and node01, cluster `test2`) |
 | 6 | test and test3: **decide after test2** |
 | 7 | not decisions; see §19 for what the runs showed |
 
@@ -528,6 +528,7 @@ timer behind it. The observer sampled `ip -4 -o addr show dev bond0` once a seco
 | V6 | **pass** | run together with V4c, project `prova` playing: `engine_state` stayed `running` and node01 stayed reachable in every snapshot; no stop or unload in the engine journal. Audio never played in this project on this box ("No JACK server available"), which predates the test |
 | V7 | **pass** | `ifdown bond0; ifup bond0` released the transient client, `cuems-dhclient-bond0.service` was collected (`LoadState=not-found`), `--failed` empty, lease restored. Run detached with `setsid`, not from the console |
 | V8 | **pass** | `cuems-net-mode ap --yes`: hostapd `AP-ENABLED`, wifi0 = 192.168.6.1/24 and out of the bond, dhcpd running on `wifi0` only, forwarding 0 on wifi0, bond0 still 10.16.10.3, SSH intact, project still running. A reinstall of the package with the AP up left mode, arming and AP untouched. `auto --yes`: address off wifi0, wifi0 back in the bond, the three units skipped, none failed |
+| V9 | **pass** | 70 minutes on the fallback with the project playing, after a 70-minute baseline in the same state with the guard timer stopped. 70 guard runs, all silent; one dhclient throughout; `--failed` empty; no file left behind (the only change under `/var/lib/dhcp` is the lease file the test itself emptied). videocomposer's `total unexpected` dropped-frame counter: **+0 in the baseline, +0 with the guard**. 0 of 4207 samples without a routable IPv4. Lease back 29 s after the filter went away |
 | all | **pass** | no AppArmor denial in any run |
 
 dhcpd logged `receive_packet failed on wifi0: Network is down` once, while hostapd reconfigured the
