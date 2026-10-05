@@ -29,10 +29,10 @@ CONVERTED_MAP = (
     "<node_list>"
     "<node><uuid>0367f391-ebf4-48b2-9f26-000000000001</uuid><mac>2cf05d21cca3</mac>"
     "<name>controller-node</name><node_role>controller</node_role>"
-    "<ip>192.168.1.10</ip><adopted>True</adopted><online>True</online></node>"
+    "<ip>192.168.1.10</ip><adopted>true</adopted><online>true</online></node>"
     "<node><uuid>0367f391-ebf4-48b2-9f26-000000000002</uuid><mac>aabbccddeeff</mac>"
     "<name>a-node</name><node_role>node</node_role>"
-    "<ip>192.168.1.11</ip><adopted>True</adopted><online>True</online></node>"
+    "<ip>192.168.1.11</ip><adopted>true</adopted><online>true</online></node>"
     "</node_list></cms:CuemsNetworkMap>"
 )
 

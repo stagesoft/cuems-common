@@ -46,7 +46,7 @@ def _doc(uuid: str, node_type: str) -> str:
         "<node_list><node>"
         f"<uuid>{uuid}</uuid><mac>2cf05d21cca3</mac><name>n</name>"
         f"<node_type>{node_type}</node_type><ip>192.168.1.10</ip>"
-        "<adopted>True</adopted><online>True</online>"
+        "<adopted>true</adopted><online>true</online>"
         "</node></node_list></cms:CuemsNetworkMap>"
     )
 

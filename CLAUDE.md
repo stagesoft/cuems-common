@@ -60,7 +60,7 @@ Every adopted node carries identity fields in `network_map.xml`. Schema shipped 
 | `name` | yes | yes | nodeconf | mDNS FQDN (`<mac>._cuems_nodeconf._tcp.local.`). |
 | `node_role` | yes | no | operator | `controller` / `node` / `firstrun`. |
 | `ip` | yes | no | nodeconf | Link-local IP discovered via avahi. |
-| `adopted` | opt | no | nodeconf | `True` once adopted. |
+| `adopted` | opt | no | nodeconf | `true` once adopted. |
 | `online` | opt | no | nodeconf | Discovery-pass snapshot — NOT runtime liveness. See the nodeconf CLAUDE.md. |
 | `role_id` | opt | no* | nodeconf | `controller` or `nodeNN`. |
 | `alias` | opt | no | operator (UI) | Free-form human label. |

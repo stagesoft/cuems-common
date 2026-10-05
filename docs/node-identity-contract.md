@@ -30,7 +30,7 @@ Every adopted node has these fields in `network_map.xml`:
 | `name`       | yes      | YES    | nodeconf       | mDNS FQDN (`<mac>._cuems_nodeconf._tcp.local.`)  |
 | `node_role`  | yes      | NO     | operator       | `controller`, `node`, or `firstrun` (feature 007 — was `node_type`, `NodeType.master`/`NodeType.slave`) |
 | `ip`         | yes      | NO     | nodeconf       | link-local IP discovered via avahi                |
-| `adopted`    | opt      | NO     | nodeconf       | `True` once adopted                               |
+| `adopted`    | opt      | NO     | nodeconf       | `true` once adopted                               |
 | `online`     | opt      | NO     | nodeconf       | last-known liveness                               |
 | `role_id`    | opt      | NO*    | nodeconf       | `controller` or `nodeNN` — see assignment rules   |
 | `alias`      | opt      | NO     | operator (UI)  | free-form human label                             |

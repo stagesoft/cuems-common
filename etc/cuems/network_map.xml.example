@@ -28,9 +28,9 @@
             <!-- required. The address the host answers on. -->
             <ip>192.0.2.10</ip>
             <!-- optional. True once the node is adopted into the cluster. -->
-            <adopted>True</adopted>
+            <adopted>true</adopted>
             <!-- optional. Discovery-pass snapshot, not runtime liveness. -->
-            <online>False</online>
+            <online>false</online>
             <!-- optional. controller, or nodeNN for a node. -->
             <role_id>node01</role_id>
             <!-- optional. Free-form human label. -->
