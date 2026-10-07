@@ -1,3 +1,75 @@
+cuems-common (1.3.0-23) bookworm; urgency=medium
+
+  * Controller network modes. Taller, 2026-09-29, power cut: the
+    controllers booted before their router, took the fallback lease
+    192.168.6.1 and served 192.168.6.0/24 on the WIRED LAN, to other hosts
+    and to each other; nothing was reachable until every dhcpd was stopped
+    and every dhclient restarted by hand. isc-dhcp-server was never behind
+    the AP gate: its only gate was dhcpd.conf's subnet match, which opens
+    exactly when the fallback is taken.
+    NEW /etc/cuems/net-mode.conf (NET_MODE=auto|cable-dhcp|cable-static|
+    ap|manual, AP_ARMED=yes|no) and /usr/bin/cuems-net-mode to switch a box
+    in one step. A missing file or an unknown value means `manual`, in
+    which this package does nothing. Everything acts on a controller only:
+    /etc/cuems/master.ip AND bond0.
+  * check-ip.sh is now three gates: `ap` (cuems-wifi.service), `dhcpd`
+    (isc-dhcp-server) and `hostapd`. The dhcpd gate refuses to serve on
+    bond0 whatever the mode. A wired boot no longer leaves dhcpd `failed`
+    and the system `degraded`: it is a condition skip. 169.254.x on bond0
+    no longer fails the AP gate closed. Exit 255 (unit failed) only when
+    /etc/cuems/ap.conf is missing, and never in manual. In manual the
+    hostapd gate opens only while cuems-wifi.service is active, which is
+    what the Requisite= it replaces enforced.
+  * The fallback is re-probed. A dhclient bound to the static lease sleeps
+    until that lease expires, in 2040, so a controller that booted before
+    its router stayed on 192.168.6.1 until someone intervened. NEW
+    cuems-net-guard.timer (every 60 s) sends one DHCPDISCOVER
+    (cuems-dhcp-probe: DISCOVER only, takes no lease, writes nothing) and
+    on an offer replaces the client (cuems-bond0-dhclient). Also: never
+    leaves bond0 without an IPv4, restarts a missing client, and takes the
+    AP data path down if hostapd died under it. /etc/dhcp/dhclient.conf is
+    not touched.
+  * NEW dhclient exit hook cuems-fallback (a symlink into
+    dhclient-exit-hooks.d, not a conffile): puts the fallback on bond0
+    whenever bond0 has no routable IPv4, and removes it when a real lease
+    arrives. Closes the gap in which a rejected recorded lease left bond0
+    with no address at all.
+  * The packaged AP could never work, for three independent reasons, each
+    hidden by the previous one. cuems-wifi.service was enabled by nothing,
+    so hostapd's Requisite= failed on every boot; hostapd's
+    ConditionFileNotEmpty=/run/cuems/hostapd.conf was checked before the
+    ExecStartPre that renders that file; and 192.168.6.1 and dhcpd stayed
+    on bond0 while hostapd took wifi0 out of the bond. NEW cuems-ap-path
+    moves the address onto wifi0 (address first, then dhcpd, then hostapd)
+    with forwarding off on wifi0. hostapd's stop no longer ends `failed`
+    (bonding refuses to enslave an interface that is up).
+    ALL hostapd changes are in hostapd.service.d/cuems-wifi-group.conf,
+    which Medina and formitgo shadow; 20-cuems-config.conf is unchanged.
+  * BEHAVIOUR CHANGES. The AP no longer takes ethernet0 down nor stops
+    dhclient. A laptop cabled straight into a controller no longer gets a
+    lease from it. While the AP is up bond0 has no IPv4, so cuems-nodeconf,
+    where enabled, skips its map refresh until the AP goes down.
+  * The AP never comes up unless AP_ARMED=yes. An upgrade always writes
+    `no`, whatever the unit's enablement; a first install writes `yes`.
+    Arm with `cuems-net-mode auto` or `cuems-net-mode ap`.
+  * postinst starts, stops and restarts nothing new. The gates, the hook
+    and the guard take effect at the next boot. On a controller in a mode
+    other than manual it rewrites INTERFACESv4 in
+    /etc/default/isc-dhcp-server from "bond0" or empty to "wifi0" (backup
+    kept next to it). A DHCP server already serving on the cable keeps
+    running until the reboot or `cuems-net-mode apply --fix-now`; postinst
+    warns.
+  * NEW debian/prerm, carrying debhelper's token so the unit-stop snippet
+    generated until now is kept. On remove, and on a downgrade below
+    1.3.0-23, it removes the hook symlink, disables the guard timer and
+    disables cuems-wifi.service if this version armed it, so a downgrade
+    cannot bring back the older ethernet0-down takeover on a box that
+    never had its AP enabled.
+  * cuems-healthcheck reports an inconsistent network mode.
+  * Planning documents moved from dev/planning/ to Plans/.
+
+ -- Ion Reguera <ion@stagelab.coop>  Tue, 29 Sep 2026 20:25:02 +0200
+
 cuems-common (1.3.0-22) bookworm; urgency=medium
 
   * The 1.3.0-20 conffile retirement DELETED the host's live

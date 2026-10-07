@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# /etc/cuems/net-mode.conf — how this CONTROLLER brings up its network.
+# Created by the cuems-common postinst, rewritten by `cuems-net-mode`.
+# Do not edit by hand: `cuems-net-mode <mode>` also reconciles dhcpd, the AP
+# units and /etc/network/interfaces, which an edit here does not.
+# Ignored on a node.
+#
+# NET_MODE
+#   auto          the standard. Cable with a DHCP server: take the lease.
+#                 Cable without one: 192.168.6.1, ask again every minute, never
+#                 serve DHCP on the cable. No cable: WiFi AP on 192.168.6.1,
+#                 serving DHCP to its own clients (needs AP_ARMED=yes).
+#   cable-dhcp    as `auto`, but never an AP.
+#   cable-static  fixed address on the cable (CABLE_STATIC_ADDR), no DHCP
+#                 client, never an AP.
+#   ap            always the WiFi AP (needs AP_ARMED=yes); the cable still
+#                 takes a lease when there is one.
+#   manual        this package does nothing: the site manages its own network
+#                 and AP. Also what a missing file or an unknown value means.
+#
+# AP_ARMED
+#   yes | no      the AP never comes up unless this says yes, whatever the
+#                 mode and whatever units are enabled. Set by
+#                 `cuems-net-mode auto` and `cuems-net-mode ap`; an upgrade
+#                 always writes `no`.
+#
+# CABLE_STATIC_ADDR
+#   address/prefix, only read in cable-static. Default 192.168.6.1/24.
+NET_MODE=@@NET_MODE@@
+AP_ARMED=@@AP_ARMED@@

@@ -1,0 +1,186 @@
+#!/usr/bin/python3
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+"""Ask whether a DHCP server is answering on an interface, without taking a lease.
+
+    cuems-dhcp-probe [IFACE]        (default: bond0)
+
+Exit status:
+    0   a DHCPOFFER for our transaction arrived
+    2   no offer within the wait
+    1   the probe itself could not run (no such interface, not root, ...)
+
+Sends DHCPDISCOVER and only ever DISCOVER. No DHCPREQUEST follows, so no lease
+is taken, nothing is written to disk and no process is left behind; a server
+releases an unanswered offer by itself after a few seconds.
+
+Why not a second dhclient: its AppArmor profile is enforced on the controllers
+and allows neither an alternative config path, nor lease and pid files outside
+its own, nor `-sf /bin/true`.
+
+Why packet sockets and not a UDP socket bound to :68: the probe runs while the
+interface holds the FALLBACK address. An offer then arrives from a server the
+host has no route to, which reverse-path filtering may drop before a UDP
+socket sees it, and a UDP socket would also send the DISCOVER from the fallback
+address instead of 0.0.0.0. A packet socket sits below both, exactly where
+dhclient itself listens.
+"""
+
+import errno
+import os
+import select
+import socket
+import struct
+import sys
+import time
+
+ETH_P_IP = 0x0800
+BROADCAST_MAC = b"\xff" * 6
+DHCP_MAGIC = b"\x63\x82\x53\x63"
+RETRANSMIT_AT = (0.0, 2.0, 5.0)
+WAIT_TOTAL = 8.0
+
+
+def checksum(data):
+    if len(data) % 2:
+        data += b"\x00"
+    total = sum(struct.unpack("!%dH" % (len(data) // 2), data))
+    while total >> 16:
+        total = (total & 0xFFFF) + (total >> 16)
+    return ~total & 0xFFFF
+
+
+def build_discover(mac, xid):
+    bootp = struct.pack(
+        "!BBBBIHH4s4s4s4s16s64s128s",
+        1,            # op: BOOTREQUEST
+        1,            # htype: ethernet
+        6,            # hlen
+        0,            # hops
+        xid,
+        0,            # secs
+        0x8000,       # flags: BROADCAST — we cannot receive unicast yet
+        b"\x00" * 4,  # ciaddr
+        b"\x00" * 4,  # yiaddr
+        b"\x00" * 4,  # siaddr
+        b"\x00" * 4,  # giaddr
+        mac + b"\x00" * 10,
+        b"\x00" * 64,
+        b"\x00" * 128,
+    )
+    options = (
+        DHCP_MAGIC
+        + b"\x35\x01\x01"              # message type: DISCOVER
+        # No client identifier on purpose: the server then keys the offer on
+        # chaddr alone and the probe leaves no second identity in its table.
+        + b"\x37\x03\x01\x03\x06"      # request: mask, router, DNS
+        + b"\xff"
+    )
+    payload = bootp + options
+    payload += b"\x00" * max(0, 300 - len(payload))
+
+    udp_len = 8 + len(payload)
+    src, dst = b"\x00" * 4, b"\xff" * 4
+    udp = struct.pack("!HHHH", 68, 67, udp_len, 0)
+    pseudo = src + dst + struct.pack("!BBH", 0, socket.IPPROTO_UDP, udp_len)
+    udp_sum = checksum(pseudo + udp + payload) or 0xFFFF
+    udp = struct.pack("!HHHH", 68, 67, udp_len, udp_sum)
+
+    ip_head = struct.pack(
+        "!BBHHHBBH4s4s",
+        0x45, 0x10, 20 + udp_len, 0, 0, 64, socket.IPPROTO_UDP, 0, src, dst,
+    )
+    ip_head = ip_head[:10] + struct.pack("!H", checksum(ip_head)) + ip_head[12:]
+    return ip_head + udp + payload
+
+
+def is_offer(packet, xid, mac):
+    """True when `packet` (an IPv4 datagram) is a DHCPOFFER for our xid."""
+    if len(packet) < 20 or packet[0] >> 4 != 4:
+        return False
+    ihl = (packet[0] & 0x0F) * 4
+    if packet[9] != socket.IPPROTO_UDP or len(packet) < ihl + 8:
+        return False
+    sport, dport = struct.unpack("!HH", packet[ihl:ihl + 4])
+    if sport != 67 or dport != 68:
+        return False
+    bootp = packet[ihl + 8:]
+    if len(bootp) < 240 or bootp[0] != 2:
+        return False
+    if struct.unpack("!I", bootp[4:8])[0] != xid or bootp[28:34] != mac:
+        return False
+    if bootp[236:240] != DHCP_MAGIC:
+        return False
+    i = 240
+    while i < len(bootp):
+        code = bootp[i]
+        if code == 0xFF:
+            break
+        if code == 0:
+            i += 1
+            continue
+        if i + 1 >= len(bootp):
+            break
+        length = bootp[i + 1]
+        if code == 53 and length >= 1 and i + 2 < len(bootp):
+            return bootp[i + 2] == 2
+        i += 2 + length
+    return False
+
+
+def probe(iface):
+    with open("/sys/class/net/%s/address" % iface) as handle:
+        mac = bytes.fromhex(handle.read().strip().replace(":", ""))
+    if len(mac) != 6:
+        raise OSError("%s has no ethernet address" % iface)
+
+    xid = struct.unpack("!I", os.urandom(4))[0]
+    frame = build_discover(mac, xid)
+
+    # SOCK_DGRAM on AF_PACKET: the kernel writes and strips the link-layer
+    # header, so this works the same on a bond as on a plain NIC.
+    sock = socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, socket.htons(ETH_P_IP))
+    try:
+        sock.bind((iface, ETH_P_IP))
+        start = time.monotonic()
+        pending = list(RETRANSMIT_AT)
+        while True:
+            now = time.monotonic() - start
+            if now >= WAIT_TOTAL:
+                return False
+            if pending and now >= pending[0]:
+                pending.pop(0)
+                try:
+                    sock.sendto(frame, (iface, ETH_P_IP, 0, 1, BROADCAST_MAC))
+                except OSError as err:
+                    # ENOBUFS is the queue refusing or dropping the frame (a
+                    # full queue, an egress filter). To the caller that is a
+                    # DISCOVER nobody answered, not a probe that cannot run.
+                    if err.errno != errno.ENOBUFS:
+                        raise
+            deadline = min([WAIT_TOTAL] + pending[:1])
+            ready, _, _ = select.select([sock], [], [], max(0.0, deadline - now))
+            if not ready:
+                continue
+            packet, _ = sock.recvfrom(65535)
+            if is_offer(packet, xid, mac):
+                return True
+    finally:
+        sock.close()
+
+
+def main(argv):
+    if len(argv) > 2 or (len(argv) == 2 and argv[1].startswith("-")):
+        sys.stderr.write("Usage: cuems-dhcp-probe [IFACE]\n")
+        return 1
+    iface = argv[1] if len(argv) == 2 else "bond0"
+    try:
+        return 0 if probe(iface) else 2
+    except (OSError, ValueError) as err:
+        sys.stderr.write("cuems-dhcp-probe: %s: %s\n" % (iface, err))
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

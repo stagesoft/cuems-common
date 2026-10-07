@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 
 # CUEMS Health Check Script
 # This script checks the status of all CUEMS services and logs any issues
@@ -72,6 +75,17 @@ done
 network_issues=0
 
 # Network checks can be added per-installation as needed
+
+# Controller network mode: addresses, DHCP server and AP consistent with
+# /etc/cuems/net-mode.conf. Exits 0 on a node and in NET_MODE=manual.
+if [ -x /usr/bin/cuems-net-mode ]; then
+    if /usr/bin/cuems-net-mode status --check; then
+        log "✓ Network mode is consistent"
+    else
+        log "✗ Network mode is NOT consistent (run: cuems-net-mode status)"
+        ((network_issues++))
+    fi
+fi
 
 # Check disk space
 if ! check_disk_space; then

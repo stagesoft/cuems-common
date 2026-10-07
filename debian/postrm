@@ -55,6 +55,11 @@ fi
 if [ "$1" = "purge" ]; then
     rm -f /etc/chrony/conf.d/cuems.conf \
           /etc/chrony/sources.d/cuems-master.sources
+    # Controller network mode (1.3.0-23), written by the postinst and by
+    # cuems-net-mode. /etc/default/isc-dhcp-server and /etc/network/interfaces
+    # are NOT restored: they belong to the host, and their backups
+    # (.bak-cuems-net-mode, interfaces.bak-*) stay next to them.
+    rm -f /etc/cuems/net-mode.conf
 fi
 
 # =========================================================================

@@ -86,7 +86,8 @@ if [ -d /usr/lib/cuems/bin ]; then
     chmod +x /usr/lib/cuems/bin/*.sh 2>/dev/null || true
     chmod +x /usr/lib/cuems/bin/*.py 2>/dev/null || true
     # Scripts without standard extensions
-    for f in cuems-extract-video-latency cuems-log-collector-url cuems-write-rtpmidid-config cuems-write-hostapd-config cuems-arm-wol cuems-gpu-pin; do
+    for f in cuems-extract-video-latency cuems-log-collector-url cuems-write-rtpmidid-config cuems-write-hostapd-config cuems-arm-wol cuems-gpu-pin \
+             cuems-ap-path cuems-bond0-dhclient cuems-net-guard cuems-dhcp-probe; do
         [ -f "/usr/lib/cuems/bin/$f" ] && chmod +x "/usr/lib/cuems/bin/$f"
     done
 
@@ -613,6 +614,88 @@ if command -v systemctl >/dev/null 2>&1; then
     # changes nothing on any existing host until an operator opts that box in.
     systemctl enable cuems-gpu-pin.service 2>/dev/null || true
 fi
+
+# =========================================================================
+# Controller network modes (1.3.0-23)
+# =========================================================================
+# Taller, 2026-09-29: the controllers booted before their router, took the
+# fallback lease 192.168.6.1 and — because isc-dhcp-server's only gate was
+# dhcpd.conf's subnet match — served 192.168.6.0/24 on the WIRED LAN, to each
+# other included. See Plans/2026-09-29-controller-network-modes.md.
+#
+# THIS BLOCK STARTS, STOPS AND RESTARTS NOTHING. The gates, the exit hook and
+# the guard take effect at the next boot; an operator who wants them now runs
+# `cuems-net-mode`. Every call is guarded: a network helper must never be the
+# reason the package fails to configure — on a node least of all.
+#
+# The order matters. net-mode.conf comes first, because everything that
+# follows reads it and treats a missing file as `manual`.
+NET_MODE_CONF=/etc/cuems/net-mode.conf
+if [ ! -e "$NET_MODE_CONF" ] && [ -r /usr/share/cuems/net-mode.conf.default ]; then
+    # `manual` wherever the site already manages its own AP or addressing:
+    # a drop-in under /etc for any of the three units (Medina, formitgo), the
+    # hand-made always-on AP unit, a masked cuems-wifi.service, or a static
+    # bond0. Those sites are not migrated; they must only not break.
+    _net_mode=auto
+    for _f in /etc/systemd/system/cuems-wifi.service.d/*.conf \
+              /etc/systemd/system/hostapd.service.d/*.conf \
+              /etc/systemd/system/isc-dhcp-server.service.d/*.conf \
+              /etc/systemd/system/cuems-ap-mode.service; do
+        [ -e "$_f" ] && _net_mode=manual
+    done
+    if [ "$(readlink /etc/systemd/system/cuems-wifi.service 2>/dev/null)" = /dev/null ]; then
+        _net_mode=manual
+    fi
+    if cat /etc/network/interfaces /etc/network/interfaces.d/* 2>/dev/null \
+        | grep -Eq '^[[:space:]]*iface[[:space:]]+bond0[[:space:]]+inet[[:space:]]+static([[:space:]]|$)'; then
+        _net_mode=manual
+    fi
+    # Armed on a FIRST install only. On an upgrade the AP stays off whatever
+    # the unit's enablement says: isil is recorded with cuems-wifi.service
+    # enabled, and an upgrade must not be what puts an AP on the air.
+    _ap_armed=no
+    if [ "$1" = "configure" ] && [ -z "$2" ]; then
+        _ap_armed=yes
+    fi
+    if sed -e "s/@@NET_MODE@@/$_net_mode/" -e "s/@@AP_ARMED@@/$_ap_armed/" \
+            /usr/share/cuems/net-mode.conf.default > "$NET_MODE_CONF.dpkg-tmp" \
+       && chmod 0644 "$NET_MODE_CONF.dpkg-tmp" \
+       && mv "$NET_MODE_CONF.dpkg-tmp" "$NET_MODE_CONF"; then
+        echo "cuems-common: network mode is '$_net_mode' (AP armed: $_ap_armed); see cuems-net-mode status"
+    else
+        rm -f "$NET_MODE_CONF.dpkg-tmp"
+        echo "WARNING: could not write $NET_MODE_CONF; this host stays in 'manual'" >&2
+    fi
+    unset _net_mode _ap_armed _f
+fi
+
+# dhclient exit hook, as a symlink (see debian/install for why not a conffile).
+if [ -d /etc/dhcp/dhclient-exit-hooks.d ]; then
+    ln -sf /usr/lib/cuems/dhclient-hooks/cuems-fallback \
+        /etc/dhcp/dhclient-exit-hooks.d/cuems-fallback \
+        || echo "WARNING: could not install the dhclient exit hook cuems-fallback" >&2
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+    # First install only: the unit has to be enabled for the AP to come up at
+    # boot, and on an upgrade its enablement is the site's, not ours.
+    if [ "$1" = "configure" ] && [ -z "$2" ]; then
+        systemctl enable cuems-wifi.service 2>/dev/null \
+            || echo "WARNING: could not enable cuems-wifi.service" >&2
+    fi
+    # Enabled, not started: it arms at the next boot. Every host, because the
+    # role can flip; on a node the service is a condition skip (no bond0).
+    systemctl enable cuems-net-guard.timer 2>/dev/null \
+        || echo "WARNING: could not enable cuems-net-guard.timer" >&2
+fi
+
+# isc-dhcp-server must never be told to listen on the cable. Touches no
+# service and always exits 0.
+if [ -x /usr/bin/cuems-net-mode ]; then
+    /usr/bin/cuems-net-mode apply --postinst \
+        || echo "WARNING: cuems-net-mode apply --postinst failed" >&2
+fi
+
 # CUEMS cluster time sync via chrony
 # =========================================================================
 # Role-aware NTP setup applied by /usr/lib/cuems/bin/cuems-write-chrony-source

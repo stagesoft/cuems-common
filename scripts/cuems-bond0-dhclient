@@ -1,0 +1,166 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# The DHCP client of bond0, outside of ifup/ifdown.
+#
+#   cuems-bond0-dhclient status       who owns bond0; exit 0 running, 3 not
+#   cuems-bond0-dhclient active-for   age in seconds of the running client;
+#                                     exit 1 when there is none
+#   cuems-bond0-dhclient start        start one, unless one is running
+#   cuems-bond0-dhclient stop         kill it, leaving bond0's address in place
+#   cuems-bond0-dhclient restart      stop, then start
+#
+# A client bound to the fallback lease sleeps until that lease expires, in
+# 2040. The only way to make it ask again is to replace it, and that is what
+# cuems-net-guard does with `restart` once a server has answered its probe.
+set -u
+
+IFACE=bond0
+UNIT=cuems-dhclient-bond0
+PIDFILE=/run/dhclient.bond0.pid
+
+# ifupdown compiles its dhclient command line in; there is no inet.defn on disk
+# to read it from. This is the one ifupdown 0.8.41 runs for `iface bond0 inet
+# dhcp`, minus `-v`. It must stay the same: `-i` selects the DUID-based client
+# identifier, so a different set of flags is a different DHCP identity and
+# misses the router's reservation. The paths are the ones dhclient's AppArmor
+# profile allows.
+DHCLIENT_ARGS=(-4 -i -pf "$PIDFILE"
+               -lf /var/lib/dhcp/dhclient.bond0.leases
+               -I -df /var/lib/dhcp/dhclient6.bond0.leases "$IFACE")
+
+log()  { echo "cuems-bond0-dhclient: $*"; }
+warn() { echo "<4>cuems-bond0-dhclient: $*" >&2; }
+
+# The running client is found by scanning /proc and not only through the pid
+# file: a client that was SIGKILLed leaves a stale file, and one started by
+# hand may have written none.
+client_pids() {
+    local dir pid arg is_client has_iface one_shot
+    local -a argv
+    for dir in /proc/[0-9]*; do
+        pid="${dir#/proc/}"
+        [ -r "$dir/cmdline" ] || continue
+        mapfile -d '' -t argv < "$dir/cmdline" 2>/dev/null || continue
+        [ "${#argv[@]}" -gt 1 ] || continue
+        is_client=no has_iface=no one_shot=no
+        [ "${argv[0]##*/}" = dhclient ] && is_client=yes
+        for arg in "${argv[@]:1}"; do
+            case "$arg" in
+                "$IFACE") has_iface=yes ;;
+                -6|-r|-x) one_shot=yes ;;   # v6, or a release/stop invocation
+            esac
+        done
+        if [ "$is_client" = yes ] && [ "$has_iface" = yes ] && [ "$one_shot" = no ]; then
+            echo "$pid"
+        fi
+    done
+}
+
+do_status() {
+    local pids pid
+    pids=$(client_pids)
+    if [ -z "$pids" ]; then
+        echo "no dhclient owns $IFACE"
+        return 3
+    fi
+    for pid in $pids; do
+        echo "dhclient pid $pid on $IFACE, running for $(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ')s, parent $(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
+    done
+    if timeout 10 systemctl is-active --quiet "$UNIT.service" 2>/dev/null; then
+        echo "transient unit $UNIT.service is active" 2>/dev/null
+    fi
+    return 0
+}
+
+do_active_for() {
+    local pid age oldest=""
+    for pid in $(client_pids); do
+        age=$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ')
+        [ -n "$age" ] || continue
+        if [ -z "$oldest" ] || [ "$age" -gt "$oldest" ]; then
+            oldest="$age"
+        fi
+    done
+    [ -n "$oldest" ] || return 1
+    echo "$oldest"
+}
+
+do_stop() {
+    local pids pid
+    pids=$(client_pids)
+    if [ -n "$pids" ]; then
+        # SIGKILL, not `dhclient -x` and not SIGTERM: both make the client run
+        # dhclient-script with reason STOP, which flushes the address the
+        # operator is connected through.
+        for pid in $pids; do
+            kill -KILL "$pid" 2>/dev/null
+        done
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            [ -z "$(client_pids)" ] && break
+            sleep 0.5
+        done
+        if [ -n "$(client_pids)" ]; then
+            warn "dhclient on $IFACE survived SIGKILL: $(client_pids | tr '\n' ' ')"
+            return 1
+        fi
+    fi
+    # The pid file of a killed client points at a pid that will be reused, and
+    # dhclient signals whatever its pid file names when it starts.
+    rm -f "$PIDFILE"
+    # The transient unit of a killed client ends `failed`; --collect unloads
+    # it, but not before the next start unless it is reset here.
+    timeout 10 systemctl --no-block reset-failed "$UNIT.service" 2>/dev/null
+    for _ in 1 2 3 4 5 6; do
+        [ "$(timeout 10 systemctl show -p LoadState --value "$UNIT.service" 2>/dev/null)" = loaded ] || break
+        sleep 0.5
+    done
+    return 0
+}
+
+do_start() {
+    if [ -n "$(client_pids)" ]; then
+        log "a dhclient already owns $IFACE"
+        return 0
+    fi
+    if [ ! -d "/sys/class/net/$IFACE" ]; then
+        warn "no $IFACE on this host"
+        return 1
+    fi
+    # No client owns the interface, so whatever the pid file names is not
+    # ours: a client killed from outside leaves it behind, the pid gets
+    # reused, and dhclient acts on the pid it finds there when it starts.
+    rm -f "$PIDFILE"
+    # -d keeps the client in the foreground, as the main process of a unit of
+    # its own: it survives the guard's oneshot, and shows up in the journal.
+    # KillSignal=SIGKILL for the same reason `stop` uses it.
+    if ! timeout 10 systemd-run --no-block --quiet --collect \
+            --unit="$UNIT" \
+            --description="DHCP client for $IFACE (started by cuems-common)" \
+            -p KillSignal=SIGKILL \
+            -- /sbin/dhclient -d "${DHCLIENT_ARGS[@]}"; then
+        warn "systemd-run could not start dhclient on $IFACE"
+        return 1
+    fi
+    log "dhclient started on $IFACE as $UNIT.service"
+    return 0
+}
+
+if [ "$(id -u)" -ne 0 ] && [ "${1:-}" != status ] && [ "${1:-}" != active-for ]; then
+    echo "cuems-bond0-dhclient: ${1:-} needs root" >&2
+    exit 1
+fi
+
+case "${1:-}" in
+    status)     do_status ;;
+    active-for) do_active_for ;;
+    start)      do_start ;;
+    stop)       do_stop ;;
+    restart)    do_stop && do_start ;;
+    *)
+        echo "Usage: cuems-bond0-dhclient {status|start|stop|restart|active-for}" >&2
+        exit 2
+        ;;
+esac

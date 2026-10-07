@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+[Unit]
+Description=Run the CUEMS controller network guard every minute
+# Deliberately NOT PartOf=cuems-controller.target, for the same reason as
+# cuems-journal-vacuum.timer: a controller-target bounce would cancel it.
+
+[Timer]
+# 120 s, not less: a boot that waits for a DHCP server which is not there
+# spends dhclient's whole timeout inside `ifup`, and the guard must not judge
+# bond0 while that is still running.
+OnBootSec=120s
+OnUnitActiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

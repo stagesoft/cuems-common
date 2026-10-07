@@ -1,0 +1,141 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# The data path of the controller's standalone WiFi AP.
+#
+#   cuems-ap-path up            ExecStartPost of cuems-wifi.service
+#   cuems-ap-path down          ExecStop      of cuems-wifi.service
+#   cuems-ap-path release-wifi  ExecStopPost  of hostapd.service
+#
+# Until 1.3.0-22 the packaged AP could not carry traffic: hostapd took wifi0
+# out of the bond, but 192.168.6.1 and dhcpd stayed on bond0, so a client that
+# associated was handed nothing and could reach nothing. `up` moves the gateway
+# address onto wifi0, where the AP's clients are.
+#
+# Order is the whole design, in both directions: the box must never be left
+# without an address. `up` gives wifi0 the address and only then takes it off
+# bond0; `down` puts it back on bond0 and only then takes it off wifi0.
+set -u
+
+# shellcheck source=usr/lib/cuems/net-mode.sh
+. /usr/lib/cuems/net-mode.sh
+
+log()  { echo "cuems-ap-path: $*"; }
+warn() { echo "<4>cuems-ap-path: $*" >&2; }
+
+# Put wifi0 back into the bond. Bonding refuses an interface that is up
+# (EPERM), which is what the bare `ip link set wifi0 master bond0` in
+# 20-cuems-config.conf ran into on every hostapd stop.
+enslave_wifi() {
+    [ -d /sys/class/net/wifi0 ] && [ -d /sys/class/net/bond0 ] || return 0
+    cuems_net_enslaved wifi0 && return 0
+    ip link set wifi0 down || warn "could not set wifi0 down"
+    ip link set wifi0 master bond0 || { warn "could not re-enslave wifi0 to bond0"; return 1; }
+}
+
+do_up() {
+    local was_slave=no
+
+    [ "$cuems_net_mode" = manual ] && exit 0
+    if [ ! -d /sys/class/net/wifi0 ]; then
+        warn "no wifi0 on this host"
+        exit 1
+    fi
+    cuems_net_enslaved wifi0 && was_slave=yes
+
+    if ip link set wifi0 nomaster \
+       && ip link set wifi0 up \
+       && echo 0 > /proc/sys/net/ipv4/conf/wifi0/forwarding \
+       && ip -4 addr replace "${cuems_net_gw}/${cuems_net_prefix}" dev wifi0; then
+        :
+    else
+        # bond0 has not been touched yet, so the box is as reachable as it was.
+        warn "could not prepare wifi0; leaving bond0 untouched"
+        ip -4 addr del "${cuems_net_gw}/${cuems_net_prefix}" dev wifi0 2>/dev/null
+        [ "$was_slave" = yes ] && enslave_wifi
+        exit 1
+    fi
+
+    # The AP's clients are not routed onto the venue LAN nor the cluster link.
+    # ip_forward=1 ships globally (99-cuems-performance.conf), hence the
+    # per-interface switch above rather than trusting the global one.
+
+    if cuems_net_has bond0 "$cuems_net_gw"; then
+        ip -4 addr del "${cuems_net_gw}/${cuems_net_prefix}" dev bond0 \
+            || warn "could not remove ${cuems_net_gw} from bond0; it is now on both interfaces"
+    fi
+    log "AP data path up: ${cuems_net_gw}/${cuems_net_prefix} on wifi0"
+}
+
+do_down() {
+    [ "$cuems_net_mode" = manual ] && exit 0
+
+    # Address back on bond0 FIRST, and only if bond0 has nothing better: with a
+    # real lease on the cable the fallback is not wanted there.
+    if [ -d /sys/class/net/bond0 ] && [ -z "$(cuems_net_routable bond0)" ]; then
+        if [ "$cuems_net_mode" = cable-static ]; then
+            ip -4 addr replace "$cuems_net_static" dev bond0 \
+                || warn "could not put $cuems_net_static on bond0"
+        else
+            ip -4 addr replace "${cuems_net_gw}/${cuems_net_prefix}" dev bond0 \
+                || warn "could not put ${cuems_net_gw} back on bond0"
+        fi
+    fi
+
+    if [ -d /sys/class/net/wifi0 ] && cuems_net_has wifi0 "$cuems_net_gw"; then
+        ip -4 addr del "${cuems_net_gw}/${cuems_net_prefix}" dev wifi0 \
+            || warn "could not remove ${cuems_net_gw} from wifi0"
+    fi
+
+    # A box upgraded while the pre-1.3.0-23 takeover was active still has
+    # ethernet0 administratively down. Nothing else would ever bring it up.
+    # (IFF_UP is bit 0 of the interface flags.)
+    if [ -d /sys/class/net/ethernet0 ] \
+       && [ $(( $(cat /sys/class/net/ethernet0/flags 2>/dev/null || echo 1) & 1 )) -eq 0 ]; then
+        ip link set ethernet0 up || warn "could not set ethernet0 up"
+    fi
+
+    # hostapd stops before this unit does (it is ordered After= it), and its
+    # ExecStopPost leaves wifi0 alone while it still carries the address. Now
+    # that the address is gone, wifi0 goes back into the bond.
+    if ! systemctl is-active --quiet hostapd.service 2>/dev/null; then
+        enslave_wifi
+    fi
+    log "AP data path down"
+}
+
+do_release_wifi() {
+    [ -d /sys/class/net/wifi0 ] || exit 0
+    # After a condition skip wifi0 never left the bond: nothing to do.
+    cuems_net_enslaved wifi0 && exit 0
+    # Never enslave an interface that still carries the address. `down`, or
+    # the guard if hostapd died on its own, takes the address off first.
+    if [ -n "${cuems_net_gw:-}" ] && cuems_net_has wifi0 "$cuems_net_gw"; then
+        exit 0
+    fi
+    enslave_wifi
+}
+
+cuems_net_load || true
+
+case "${1:-}" in
+    release-wifi)
+        # Mode-independent on purpose: it only repairs what hostapd's own
+        # ExecStartPre (`ip link set wifi0 nomaster`) did.
+        do_release_wifi
+        ;;
+    up|down)
+        if [ -z "${cuems_net_gw:-}" ]; then
+            warn "$cuems_net_ap_conf is missing or has no AP_GATEWAY/AP_SUBNET"
+            exit 1
+        fi
+        if [ "$1" = up ]; then do_up; else do_down; fi
+        ;;
+    *)
+        echo "Usage: cuems-ap-path {up|down|release-wifi}" >&2
+        exit 2
+        ;;
+esac
+exit 0

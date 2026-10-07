@@ -2,6 +2,7 @@
 ***
 SPDX-FileCopyrightText: 2025 Stagelab Coop SCCL
 SPDX-License-Identifier: GPL-3.0-or-later
+SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 ***
 -->
 
@@ -55,6 +56,7 @@ It is composed of:
   - [Shell Aliases](#shell-aliases)
   - [Environment and Configuration Variables](#environment-and-configuration-variables)
   - [Process Exit Codes](#process-exit-codes)
+- [Controller network modes](#controller-network-modes)
 - [Installation](#installation)
   - [Debian Package](#debian-package)
   - [Build from Source](#build-from-source)
@@ -136,7 +138,7 @@ CUEMS is a distributed live-performance cue management system. A CUEMS installat
 
 - **`cuems-node.target`** groups all services that every machine (including the controller) must run for local playback.
 - **`cuems-controller.target`** requires and extends `cuems-node.target` with the scheduling engine, editor, and MIDI connector. It is activated automatically on the machine that holds `/etc/cuems/master.lock`.
-- **`cuems-wifi.target`** brings up the controller's WiFi access point (hostapd + isc-dhcp-server) so nodes and operator devices can connect wirelessly.
+- **`cuems-wifi.target`** brings up the controller's standalone WiFi access point (hostapd + isc-dhcp-server) when the controller has no cable, so an operator device can reach it. On a cabled controller every unit in the group is skipped. See [Controller network modes](#controller-network-modes).
 - All CUEMS daemons run under the `cuems` system user (created by `preinst`). They share `/tmp/cuems` for NNG IPC sockets (which requires `PrivateTmp=no` on every unit).
 
 ---
@@ -186,8 +188,10 @@ These units are `WantedBy=cuems-controller.target` and run only on the controlle
 
 | Service | Role |
 |---|---|
-| `cuems-wifi.service` | Oneshot WiFi AP setup. `ExecCondition=/usr/lib/cuems/bin/check-ip.sh` guards activation: the service only runs when bond0 has the static AP address and `ethernet0` is disconnected. Calls `ip link set ethernet0 down` to release the interface for the AP. |
-| `hostapd.service` | WiFi access point daemon. `PartOf=cuems-wifi.target`, starts after `cuems-wifi.service`. Reads `/etc/hostapd/hostapd.conf`. |
+| `cuems-wifi.service` | Oneshot AP data path. `ExecCondition=/usr/lib/cuems/bin/check-ip.sh` guards activation: a controller, armed (`AP_ARMED=yes`), and either `NET_MODE=ap` or `NET_MODE=auto` with bond0 on the fallback address and no cable on `ethernet0`. `cuems-ap-path up` then moves `192.168.6.1` from bond0 to wifi0; `cuems-ap-path down` moves it back. It does not take `ethernet0` down. See [Controller network modes](#controller-network-modes). |
+| `hostapd.service` | WiFi access point daemon. `PartOf=cuems-wifi.target` and `cuems-wifi.service`, starts after `isc-dhcp-server`. Gated by `check-ip.sh hostapd` (wifi0 must already carry the gateway address). Reads `/run/cuems/hostapd.conf`, rendered at `ExecStartPre`. |
+| `isc-dhcp-server.service` | DHCP server for the AP's clients. Gated by `check-ip.sh dhcpd`: skipped unless an interface other than bond0 carries an address in the AP subnet. **Never serves on the cable.** |
+| `cuems-net-guard.timer` / `.service` | Every 60 s on a controller: keeps an IPv4 on bond0, checks the AP, keeps a DHCP client alive, and probes for a DHCP server while on the fallback address. |
 | `cuems-hdmi-audio-map.service` | HDMI audio oneshot (see [Node Services](#node-services)). |
 | `rsync@.service` + `rsync.socket` | Socket-activated rsync daemon. Used for media library synchronisation between controller and nodes. Config: `/etc/rsyncd.conf`. |
 
@@ -215,7 +219,11 @@ Pipewire, pipewire-pulse, and wireplumber are **masked system-wide** via `/etc/s
 | Script | Called from | Role |
 |---|---|---|
 | `cuems-extract-video-latency` | `cuems-videocomposer.service` ExecStartPre | Reads `videoplayer/output_latency_ms` from `settings.xml` (path: `$CUEMS_CONF_PATH/settings.xml` or `/etc/cuems/settings.xml`). Writes `OUTPUT_LATENCY_FLAG=--output-latency-ms N` (integer case) or `OUTPUT_LATENCY_FLAG=` (auto / absent / missing) to `/run/cuems/videocomposer.env`. Graceful degradation on missing or malformed XML. |
-| `check-ip.sh` | `cuems-wifi.service` ExecCondition | Tests whether bond0 holds the static WiFi AP address (`192.168.6.1`) and `ethernet0` is disconnected. Returns 0 (proceed), 1 (inhibit), or 255 (no IP at all). |
+| `check-ip.sh [ap\|dhcpd\|hostapd]` | ExecCondition of `cuems-wifi.service`, `isc-dhcp-server.service`, `hostapd.service` | The three gates of the AP. Returns 0 (proceed), 1 (skip quietly) or 255 (`/etc/cuems/ap.conf` missing: the unit fails). |
+| `cuems-ap-path {up\|down\|release-wifi}` | `cuems-wifi.service` ExecStartPost / ExecStop, `hostapd.service` ExecStopPost | Moves the gateway address between bond0 and wifi0; re-enslaves wifi0 to the bond after the AP stops. |
+| `cuems-net-guard` | `cuems-net-guard.service` | One pass of the network guard. |
+| `cuems-dhcp-probe [IFACE]` | `cuems-net-guard` | Sends `DHCPDISCOVER` only. Exit 0 offer, 2 none, 1 error. Takes no lease. |
+| `cuems-bond0-dhclient {status\|start\|stop\|restart\|active-for}` | `cuems-net-guard`, `cuems-net-mode` | The DHCP client of bond0 outside `ifup`/`ifdown`. |
 | `wifi-auto.sh` | Manual / operator | Stops `isc-dhcp-server`, brings down the WiFi interface, then brings it up on the `wifi-out` profile for an external network connection. |
 
 ### Configuration and Data Files
@@ -475,9 +483,39 @@ Note: `cuems-stop` is now unambiguously the alias above. The `/usr/bin/cuems-sto
 | `cuems-hdmi-audio-map` | 1 | No HDMI/DP audio outputs detected; asound.conf unchanged |
 | `cuems-ola-profile` | 0 | Profile applied and olad restarted |
 | `cuems-ola-profile` | 1 | Conflicting profiles or unknown profile name |
-| `check-ip.sh` | 0 | WiFi AP condition met; service should start |
-| `check-ip.sh` | 1 | Ethernet is connected; AP should not start |
-| `check-ip.sh` | 255 | No IP address on bond0; condition unknown |
+| `check-ip.sh` | 0 | Gate open; the unit starts |
+| `check-ip.sh` | 1 | Gate closed; the unit is skipped, not failed |
+| `check-ip.sh` | 255 | `/etc/cuems/ap.conf` missing or unknown gate; the unit fails |
+| `cuems-net-mode status --check` | 0 | Network state consistent with the mode (always 0 on a node) |
+| `cuems-net-mode status --check` | 1 | Inconsistent; run `cuems-net-mode status` |
+| `cuems-dhcp-probe` | 0 / 2 / 1 | A DHCP server answered / none did / the probe could not run |
+
+---
+
+## Controller network modes
+
+A controller decides how to bring up its network from `NET_MODE` in `/etc/cuems/net-mode.conf`. Nodes are not affected.
+
+| Mode | Behaviour |
+|---|---|
+| `auto` (standard) | Cable with a DHCP server: take the lease. Cable without one: `192.168.6.1`, asking again every minute and moving to the real lease as soon as a server answers — and **never** serving DHCP on the cable. No cable: WiFi AP on `192.168.6.1`, serving DHCP to its own clients. |
+| `cable-dhcp` | As `auto`, but never an AP. |
+| `cable-static [ADDR]` | Fixed address on the cable (default `192.168.6.1/24`), no DHCP client, never an AP. |
+| `ap` | Always the WiFi AP; the cable still takes a lease when there is one. |
+| `manual` | `cuems-common` does nothing: the site manages its own network and AP. Also what a missing file or an unknown value means. |
+
+```bash
+cuems-net-mode status            # mode, addresses, units, the three gates, warnings
+sudo cuems-net-mode auto         # switch (asks for confirmation; --yes to skip)
+sudo cuems-net-mode cable-static 10.0.0.5/24
+sudo cuems-net-mode apply --fix-now   # stop a DHCP server that is serving on the cable
+```
+
+The AP comes up only when it is **armed** (`AP_ARMED=yes`). A first install arms it; an upgrade never does — run `cuems-net-mode auto` (or `ap`) on the box to arm it. Switching mode drops any session that runs over an address which goes away; a running show keeps playing.
+
+While the AP is up, the address `192.168.6.1` is on `wifi0` and `bond0` has no IPv4. If a cable is plugged in afterwards and a DHCP server answers, `bond0` takes the lease and the AP stays up until the next reboot.
+
+Known limitations: several controllers on one LAN without a DHCP server all hold `192.168.6.1`; `cuems-nodeconf`, where enabled, skips its map refresh while the AP is up.
 
 ---
 
