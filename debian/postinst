@@ -1,14 +1,93 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 set -e
 
 # CUEMS Common package post-installation script
+
+# =========================================================================
+# Retire the dead acpid power-button conffiles (1.3.0-16)
+# =========================================================================
+# /etc/acpi/{powerbtn-custom-handler.sh,cuems-power-button-waiter.sh,
+# events/powerbtn-acpi-support} were conffiles, so dropping them from
+# debian/install is not enough — dpkg would keep them on every upgraded host
+# forever. See etc/systemd/logind.conf.d/10-cuems-power-button.conf for why
+# they were dead code (acpid is installed on no CUEMS host) and why leaving
+# them was a booby trap (the handler called the hardcoded /usr/bin/cuems-stop).
+#
+# These calls are HAND-WRITTEN rather than declared in a debian/*.maintscript
+# on purpose. rm_conffile must run in preinst (move aside), postinst (finish)
+# and postrm (restore on abort), but debhelper can only inject where its
+# substitution token appears — and this postinst/postrm have none. Adding one
+# would ALSO inject dh_installsystemd's snippets for every unit in the
+# package for the first time, which would restart the engine, editor and
+# videocomposer on any upgrade and create .wants symlinks for units that are
+# deliberately disabled (cuems-nodeconf is masked at Medina). That blast
+# radius does not belong in this change. The identical line works in all
+# three scripts: the helper reads $DPKG_MAINTSCRIPT_NAME to know its phase.
+if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
+    for _cf in /etc/acpi/powerbtn-custom-handler.sh \
+               /etc/acpi/cuems-power-button-waiter.sh \
+               /etc/acpi/events/powerbtn-acpi-support; do
+        dpkg-maintscript-helper rm_conffile "$_cf" 1.3.0-16~ cuems-common -- "$@"
+    done
+    unset _cf
+fi
+
+# Retire the obsolete GRUB display drop-in (1.3.0-19).
+# /etc/default/grub.d/cuems-display.cfg carried `i915.enable_dc=0` for the HDMI
+# warm-restart hack. That hack was REVERTED in April 2026 (bd47669) — the black
+# screen was a monitor-side setup problem, not a GPU/driver one — and the file
+# was dropped from debian/install without an rm_conffile. dpkg therefore marks it
+# `obsolete` and keeps it on disk forever: a fresh install has no such file, but
+# every host upgraded across the revert still appends the parameter to EVERY boot
+# entry, Debian's own included. Nothing in any log says so. Same family as the
+# acpid conffiles above, and hand-written for the same reason.
+if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
+    dpkg-maintscript-helper rm_conffile \
+        /etc/default/grub.d/cuems-display.cfg 1.3.0-19~ cuems-common -- "$@"
+fi
+
+# /etc/network/interfaces and /etc/network/interfaces.cuems were shipped by
+# versions old enough that dpkg still records them as `obsolete` conffiles on
+# every host that came through the divert -> postinst-cp transition — verified
+# on test2 (1.3.0-14) in 2026-08. Two consequences that this retires: `dpkg -S
+# /etc/network/interfaces` still answers cuems-common, which reads as "the
+# package owns the live network config" and it does not; and a `dpkg --purge`
+# would DELETE the host's live /etc/network/interfaces, because obsolete
+# conffiles are removed on purge. The live file is host-specific and must
+# survive purge. Same family as the acpid and grub-display conffiles above.
+if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
+    for _cf in /etc/network/interfaces /etc/network/interfaces.cuems; do
+        dpkg-maintscript-helper rm_conffile "$_cf" 1.3.0-20~ cuems-common -- "$@"
+    done
+fi
+
+# Put the live network config back (snapshot taken in the preinst). The
+# deregistration above has already happened, so from here on the file is a
+# plain file that no dpkg operation owns — which was the whole point: `dpkg -S`
+# stops answering cuems-common, `dpkg --purge` can no longer delete it, and the
+# host keeps its network. Only ever restores when the path is empty, so an
+# operator's file is never clobbered.
+if [ ! -e /etc/network/interfaces ] && \
+   [ -e /var/backups/cuems-common.interfaces.presave ]; then
+    cp -a /var/backups/cuems-common.interfaces.presave /etc/network/interfaces
+    echo "cuems-common: /etc/network/interfaces deregistered as a conffile and restored in place"
+fi
+
+
+# Published default credentials. See docs/default-credentials.md.
+# Single source of truth at code level; doc cites the same literals.
+DEFAULT_OPERATOR_PASSWORD="cuems-admin-default"
 
 # Ensure all scripts are executable
 if [ -d /usr/lib/cuems/bin ]; then
     chmod +x /usr/lib/cuems/bin/*.sh 2>/dev/null || true
     chmod +x /usr/lib/cuems/bin/*.py 2>/dev/null || true
     # Scripts without standard extensions
-    for f in cuems-generate-display-conf; do
+    for f in cuems-extract-video-latency cuems-log-collector-url cuems-write-rtpmidid-config cuems-write-hostapd-config cuems-arm-wol cuems-gpu-pin \
+             cuems-ap-path cuems-bond0-dhclient cuems-net-guard cuems-dhcp-probe; do
         [ -f "/usr/lib/cuems/bin/$f" ] && chmod +x "/usr/lib/cuems/bin/$f"
     done
 
@@ -21,17 +100,6 @@ fi
 
 if [ -f /usr/bin/cuems-hdmi-audio-map ]; then
     chmod +x /usr/bin/cuems-hdmi-audio-map
-fi
-
-for script in cuems-i915-rebind.sh cuems-wake-monitors.sh; do
-    if [ -f "/usr/bin/$script" ]; then
-        chmod +x "/usr/bin/$script"
-    fi
-done
-
-# Apply GRUB kernel parameters if grub-common is present
-if [ -f /etc/default/grub.d/cuems-display.cfg ] && command -v update-grub >/dev/null 2>&1; then
-    update-grub 2>/dev/null || true
 fi
 
 # Verify Python wrapper exists (provided by cuems-utils package)
@@ -47,120 +115,81 @@ if [ ! -x /usr/lib/cuems/bin/python3 ]; then
     chmod +x /usr/lib/cuems/bin/python3
 fi
 
-# Divert avahi-daemon.conf to allow custom configuration
+# --- Retire the legacy per-conffile dpkg-divert + .cuems mechanism ----------
+# Older versions diverted a set of conffiles to <file>.dpkg-old and copied a
+# now-obsolete <file>.cuems over them. The .cuems sources are gone (so those
+# copies were dead) and several of the diverted files belong to OTHER packages
+# (systemd, isc-dhcp-server, isc-dhcp-client, avahi, xserver). Migrate cleanly.
+# (/etc/network/interfaces is handled in its own block below.)
 if command -v dpkg-divert >/dev/null 2>&1; then
-    # Divert the original file if not already diverted
-    if ! dpkg-divert --list | grep -q "avahi-daemon.conf"; then
-        dpkg-divert --add --rename --divert /etc/avahi/avahi-daemon.conf.dpkg-old /etc/avahi/avahi-daemon.conf
-    fi
-    # Copy our custom configuration to the correct location
-    if [ -f /etc/avahi/avahi-daemon.conf.cuems ]; then
-        cp /etc/avahi/avahi-daemon.conf.cuems /etc/avahi/avahi-daemon.conf
-        # Restart avahi-daemon to apply new configuration
-        if command -v systemctl >/dev/null 2>&1 && systemctl is-active avahi-daemon.service >/dev/null 2>&1; then
-            systemctl restart avahi-daemon.service >/dev/null 2>&1 || true
+
+    # (1) Files cuems no longer overrides: drop the diversion and hand each back
+    #     to its owning package (restore the diverted original), then remove the
+    #     dead .cuems. CUEMS journald/rsyslog policy now ships as drop-ins
+    #     (journald.conf.d/cuems.conf, rsyslog.d/cuems.conf); the rest were never
+    #     actually customised, and hostapd is driven from /run/cuems/hostapd.conf.
+    for f in /etc/systemd/journald.conf /etc/rsyslog.conf \
+             /etc/dhcp/dhclient.conf /etc/default/isc-dhcp-server \
+             /etc/X11/Xwrapper.config /etc/hostapd/hostapd.conf ; do
+        if dpkg-divert --list "$f" 2>/dev/null | grep -q 'by cuems-common'; then
+            dpkg-divert --remove "$f" >/dev/null 2>&1 || true
+            [ -e "${f}.dpkg-old" ] && mv -f "${f}.dpkg-old" "$f"
         fi
-    fi
-fi
+        rm -f "${f}.cuems"
+    done
 
-# Divert dhclient.conf to allow custom configuration
-if command -v dpkg-divert >/dev/null 2>&1; then
-    # Divert the original file if not already diverted
-    if ! dpkg-divert --list | grep -q "dhclient.conf"; then
-        dpkg-divert --add --rename --divert /etc/dhcp/dhclient.conf.dpkg-old /etc/dhcp/dhclient.conf
-    fi
-    # Copy our custom configuration to the correct location
-    if [ -f /etc/dhcp/dhclient.conf.cuems ]; then
-        cp /etc/dhcp/dhclient.conf.cuems /etc/dhcp/dhclient.conf
-    fi
-fi
-
-# Divert dhcpd.conf to allow custom configuration
-if command -v dpkg-divert >/dev/null 2>&1; then
-    # Divert the original file if not already diverted
-    if ! dpkg-divert --list | grep -q "dhcpd.conf"; then
-        dpkg-divert --add --rename --divert /etc/dhcp/dhcpd.conf.dpkg-old /etc/dhcp/dhcpd.conf
-    fi
-    # Copy our custom configuration to the correct location
-    if [ -f /etc/dhcp/dhcpd.conf.cuems ]; then
-        cp /etc/dhcp/dhcpd.conf.cuems /etc/dhcp/dhcpd.conf
-        # Restart isc-dhcp-server to apply new configuration
-        if command -v systemctl >/dev/null 2>&1 && systemctl is-active isc-dhcp-server.service >/dev/null 2>&1; then
-            systemctl restart isc-dhcp-server.service >/dev/null 2>&1 || true
+    # (2) Files cuems must override but which have NO drop-in mechanism
+    #     (avahi-daemon.conf, dhcpd.conf): keep diverting the owning package's
+    #     file aside and install the cuems version from a /usr/share/cuems
+    #     template -- but only on FIRST install, so operator edits survive
+    #     upgrades. The avahi template leaves host-name unset (-> OS hostname).
+    for f in /etc/avahi/avahi-daemon.conf /etc/dhcp/dhcpd.conf ; do
+        tmpl="/usr/share/cuems/$(basename "$f")"
+        if ! dpkg-divert --list "$f" 2>/dev/null | grep -q 'by cuems-common'; then
+            dpkg-divert --add --rename --divert "${f}.dpkg-old" "$f" >/dev/null 2>&1 || true
         fi
-    fi
-fi
+        if [ "$1" = "configure" ] && [ -z "$2" ] && [ -f "$tmpl" ]; then
+            cp "$tmpl" "$f"
+        fi
+        rm -f "${f}.cuems"
+    done
 
-# Divert journald.conf to allow custom configuration
-if command -v dpkg-divert >/dev/null 2>&1; then
-    if ! dpkg-divert --list | grep -q "journald.conf"; then
-        dpkg-divert --add --rename --divert /etc/systemd/journald.conf.dpkg-old /etc/systemd/journald.conf
-    fi
-    if [ -f /etc/systemd/journald.conf.cuems ]; then
-        cp /etc/systemd/journald.conf.cuems /etc/systemd/journald.conf
-        # Restart systemd-journald to apply new configuration
-        if command -v systemctl >/dev/null 2>&1 && systemctl is-active systemd-journald.service >/dev/null 2>&1; then
+    # The journald/rsyslog drop-ins just changed effective config; apply them.
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl is-active systemd-journald.service >/dev/null 2>&1; then
             systemctl restart systemd-journald.service >/dev/null 2>&1 || true
         fi
-    fi
-fi
-
-# Divert network/interfaces to allow custom configuration
-if command -v dpkg-divert >/dev/null 2>&1; then
-    if ! dpkg-divert --list | grep -q "interfaces"; then
-        dpkg-divert --add --rename --divert /etc/network/interfaces.dpkg-old /etc/network/interfaces
-    fi
-    if [ -f /etc/network/interfaces.cuems ]; then
-        cp /etc/network/interfaces.cuems /etc/network/interfaces
-    fi
-fi
-
-# Divert rsyslog.conf to allow custom configuration
-if command -v dpkg-divert >/dev/null 2>&1; then
-    if ! dpkg-divert --list | grep -q "rsyslog.conf"; then
-        dpkg-divert --add --rename --divert /etc/rsyslog.conf.dpkg-old /etc/rsyslog.conf
-    fi
-    if [ -f /etc/rsyslog.conf.cuems ]; then
-        cp /etc/rsyslog.conf.cuems /etc/rsyslog.conf
-        # Restart rsyslog to apply new configuration
-        if command -v systemctl >/dev/null 2>&1 && systemctl is-active rsyslog.service >/dev/null 2>&1; then
+        if systemctl is-active rsyslog.service >/dev/null 2>&1; then
             systemctl restart rsyslog.service >/dev/null 2>&1 || true
         fi
     fi
 fi
 
-# Divert hostapd.conf to allow custom configuration
-if command -v dpkg-divert >/dev/null 2>&1; then
-    if ! dpkg-divert --list | grep -q "hostapd.conf"; then
-        dpkg-divert --add --rename --divert /etc/hostapd/hostapd.conf.dpkg-old /etc/hostapd/hostapd.conf
+# Network interfaces.
+# Not shipped as a conffile (host- and role-specific). On FIRST install only,
+# take over /etc/network/interfaces with a reachable baseline (the controller
+# "master" template: bond0 DHCP + ethernet1 link-local), preserving any
+# pre-existing file -- e.g. the debian-installer default -- at .dpkg-old. This
+# is necessary because a stock Debian interfaces references the original NIC
+# names, which cuems-common's .link files rename to ethernet0/ethernet1/wifi0,
+# so the stock file would go stale and drop the network. On UPGRADES interfaces
+# is never touched (operator / clone / role-template config wins). Role
+# specialisation (interfaces.node, static IPs, ...) is applied later by the
+# operator or a future cuems-write-network-interfaces helper / nodeconf.
+if [ "$1" = "configure" ] && [ -z "$2" ]; then
+    if [ -e /etc/network/interfaces ] && [ ! -e /etc/network/interfaces.dpkg-old ]; then
+        mv /etc/network/interfaces /etc/network/interfaces.dpkg-old
     fi
-    if [ -f /etc/hostapd/hostapd.conf.cuems ]; then
-        cp /etc/hostapd/hostapd.conf.cuems /etc/hostapd/hostapd.conf
-        # Restart hostapd to apply new configuration
-        if command -v systemctl >/dev/null 2>&1 && systemctl is-active hostapd.service >/dev/null 2>&1; then
-            systemctl restart hostapd.service >/dev/null 2>&1 || true
-        fi
-    fi
+    cp /usr/share/cuems/interfaces.master /etc/network/interfaces
 fi
-
-# Divert Xwrapper.config to allow custom configuration
-if command -v dpkg-divert >/dev/null 2>&1; then
-    if ! dpkg-divert --list | grep -q "Xwrapper.config"; then
-        dpkg-divert --add --rename --divert /etc/X11/Xwrapper.config.dpkg-old /etc/X11/Xwrapper.config
-    fi
-    if [ -f /etc/X11/Xwrapper.config.cuems ]; then
-        cp /etc/X11/Xwrapper.config.cuems /etc/X11/Xwrapper.config
-    fi
-fi
-
-# Divert isc-dhcp-server default config to allow custom configuration
-if command -v dpkg-divert >/dev/null 2>&1; then
-    if ! dpkg-divert --list | grep -q "isc-dhcp-server"; then
-        dpkg-divert --add --rename --divert /etc/default/isc-dhcp-server.dpkg-old /etc/default/isc-dhcp-server
-    fi
-    if [ -f /etc/default/isc-dhcp-server.cuems ]; then
-        cp /etc/default/isc-dhcp-server.cuems /etc/default/isc-dhcp-server
-    fi
+# Retire the obsolete legacy mechanism: older versions diverted
+# /etc/network/interfaces to .dpkg-old and copied a now-unshipped
+# interfaces.cuems over it. Remove the diversion WITHOUT --rename (so the live
+# file is left exactly as-is) and clean up the stale diverted copy.
+if command -v dpkg-divert >/dev/null 2>&1 \
+   && dpkg-divert --list /etc/network/interfaces 2>/dev/null | grep -q .; then
+    dpkg-divert --remove /etc/network/interfaces >/dev/null 2>&1 || true
+    rm -f /etc/network/interfaces.dpkg-old
 fi
 
 # Reload systemd to pick up new unit files
@@ -171,12 +200,98 @@ elif command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload
 fi
 
+# =========================================================================
+# GRUB recovery boot entry (1.3.0-18)
+# =========================================================================
+# /etc/grub.d/11_cuems_recovery is package-owned from this version on. Before
+# it, the same idea existed on exactly ONE machine (the FP530) as a
+# hand-placed /etc/grub.d/11_formitgo_recovery that no package owned — so
+# nothing would ever remove it, and leaving it would give that host TWO
+# recovery entries with different rules: the old script always picks the
+# NEWEST installed kernel, which is precisely the defect the new generator
+# exists to fix (on the FP530 the newest kernel is the backports 6.12.95 that
+# comes up on the wrong IP).
+rm -f /etc/grub.d/11_formitgo_recovery
+
+# Compile the entry into grub.cfg now instead of waiting for the next kernel
+# install. Guarded, because a host with no GRUB (container, chroot, build
+# environment) must still configure cleanly — but NOT silently: a failing
+# update-grub means far more than a missing recovery entry. /etc/grub.d/* runs
+# from grub-mkconfig under `set -e`, so whatever aborted it will abort EVERY
+# future update-grub on this host, the hook the kernel package runs included,
+# and the box would quietly stop getting new kernels into its menu. The
+# existing grub.cfg is never destroyed (grub-mkconfig writes a .new and only
+# installs it after grub_script_check passes) — it just freezes.
+if command -v update-grub >/dev/null 2>&1; then
+    update-grub >/dev/null 2>&1 || \
+        echo "WARNING: update-grub failed; the CUEMS recovery entry is not in grub.cfg" >&2
+elif command -v grub-mkconfig >/dev/null 2>&1 && [ -d /boot/grub ]; then
+    grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || \
+        echo "WARNING: grub-mkconfig failed; the CUEMS recovery entry is not in grub.cfg" >&2
+fi
+
+# Migration: cuems-midiconnector.service moved from cuems-controller.target
+# to cuems-node.target. deb-systemd-helper recreates the symlink at the new
+# location but does not clean up the old one. Without this, the unit would
+# be wanted by BOTH targets on upgraded hosts and start twice.
+if [ -L /etc/systemd/system/cuems-controller.target.wants/cuems-midiconnector.service ]; then
+    rm -f /etc/systemd/system/cuems-controller.target.wants/cuems-midiconnector.service
+fi
+
+# Migration: cuems-journal-vacuum.timer moved from cuems-controller.target to
+# timers.target in 1.3.0-15 (it has to run on nodes too). Same deb-systemd-helper
+# behaviour as above — the new symlink is written, the old one is left behind, so
+# a host upgraded from 1.3.0-13/-14 ends up WantedBy both targets. Harmless, since
+# PartOf= was dropped in the same release and WantedBy never stops anything, but it
+# contradicts the unit and misleads anyone reading `systemctl show`.
+if [ -L /etc/systemd/system/cuems-controller.target.wants/cuems-journal-vacuum.timer ]; then
+    rm -f /etc/systemd/system/cuems-controller.target.wants/cuems-journal-vacuum.timer
+fi
+
+# Migration: prior cuems-common versions shipped an /lib/systemd/system/hostapd.service
+# that overrode the upstream hostapd package's unit file (dpkg file-conflict footgun
+# during downgrade). Now that hostapd plumbing lives entirely in drop-ins under
+# hostapd.service.d/, the symlink upstream's postinst writes to enable hostapd at
+# boot via multi-user.target.wants/ becomes stale: on nodes it triggers a "Dependency
+# failed for hostapd.service" at every boot (Requisite=cuems-wifi.service is never
+# satisfied off a controller).
+#
+# Always-run rm + reenable: idempotent. The rm covers any leftover multi-user
+# symlink. The reenable re-evaluates the current [Install] sections (upstream +
+# cuems-wifi-group.conf drop-in with its WantedBy= empty-clear) and writes
+# /etc/systemd/system/cuems-wifi.target.wants/hostapd.service. Controllers then
+# get hostapd via cuems-controller.target -> cuems-wifi.target; nodes never
+# activate cuems-wifi.target so hostapd stays inert (no boot-time failures).
+rm -f /etc/systemd/system/multi-user.target.wants/hostapd.service
+if command -v systemctl >/dev/null 2>&1 && [ -e /lib/systemd/system/hostapd.service ]; then
+    systemctl reenable hostapd.service 2>/dev/null || true
+fi
+
 # Enable linger for cuems user so systemd-logind does not clean up
 # IPC resources (semaphores, shared memory, sockets) when the last login
 # session ends. Without this, JACK server IPC gets destroyed on logout
 # even though jackd runs as a system service under this user.
 if command -v loginctl >/dev/null 2>&1; then
     loginctl enable-linger cuems 2>/dev/null || true
+fi
+
+# Stop any running pipewire/wireplumber for every logged-in user so the
+# /etc/systemd/user/ masks take effect immediately (masks prevent starts;
+# this handles instances already running from before the package install).
+# No-op when pipewire isn't installed — the stop commands fail silently.
+if command -v loginctl >/dev/null 2>&1 \
+   && command -v runuser >/dev/null 2>&1 \
+   && [ -f /usr/lib/systemd/user/pipewire.service ]; then
+    for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
+        uname=$(getent passwd "$uid" | cut -d: -f1)
+        [ -z "$uname" ] && continue
+        runtime="/run/user/$uid"
+        [ -d "$runtime" ] || continue
+        for unit in pipewire.socket pipewire.service pipewire-pulse.socket pipewire-pulse.service wireplumber.service; do
+            runuser -u "$uname" -- env XDG_RUNTIME_DIR="$runtime" systemctl --user stop "$unit" 2>/dev/null || true
+        done
+        runuser -u "$uname" -- env XDG_RUNTIME_DIR="$runtime" systemctl --user daemon-reload 2>/dev/null || true
+    done
 fi
 
 # Set proper permissions on sensitive files
@@ -186,6 +301,64 @@ fi
 
 if [ -f /etc/sudoers.d/99-cuems ]; then
     chmod 440 /etc/sudoers.d/99-cuems
+fi
+
+if [ -f /etc/sudoers.d/50-cuems-admin ]; then
+    chmod 440 /etc/sudoers.d/50-cuems-admin
+fi
+
+if [ -f /etc/sudoers.d/99-cuems-admin-poweroff ]; then
+    chmod 440 /etc/sudoers.d/99-cuems-admin-poweroff
+fi
+
+# =========================================================================
+# Operator account (cuems-admin) — first-install bootstrap
+# =========================================================================
+# First install: create user, set the published default password, plant the
+# org SSH key, lock root. Marker file gates the destructive bits so package
+# upgrades NEVER clobber operator-rotated passwords / added per-engineer
+# keys / a deliberately-unlocked root account.
+#
+# Lockout safety: sshd reload happens at the very end of postinst. If any
+# step here fails, postinst exits non-zero and the old (password-permitting)
+# sshd config stays active until the next install attempt.
+# =========================================================================
+ADMIN_MARKER=/var/lib/cuems/.admin-bootstrapped
+
+if ! getent passwd cuems-admin >/dev/null 2>&1; then
+    # Default adduser behaviour: per-user primary group (cuems-admin),
+    # then add to `sudo` as a supplementary group. Going via --ingroup
+    # sudo instead would leave no `cuems-admin` group for the .ssh
+    # ownership chmod below.
+    adduser --disabled-password --gecos "CUEMS Operator" cuems-admin >/dev/null
+    adduser cuems-admin sudo >/dev/null
+fi
+
+if [ ! -e "$ADMIN_MARKER" ]; then
+    # First-install only path. DO NOT repeat on upgrade.
+    echo "cuems-admin:${DEFAULT_OPERATOR_PASSWORD}" | chpasswd
+
+    install -d -m 0700 -o cuems-admin -g cuems-admin /home/cuems-admin/.ssh
+    if [ -f /etc/cuems/ssh/cuems-org.pub ]; then
+        install -m 0600 -o cuems-admin -g cuems-admin \
+            /etc/cuems/ssh/cuems-org.pub \
+            /home/cuems-admin/.ssh/authorized_keys
+    else
+        echo "WARNING: /etc/cuems/ssh/cuems-org.pub missing; cuems-admin has no SSH key" >&2
+    fi
+
+    # Root stays locked. sudo -i from cuems-admin is the escalation path.
+    passwd -l root >/dev/null 2>&1 || true
+
+    # Cloned-node SSH host-key rotation: cloned disk images carry the
+    # source host's keys; first SSH to a fresh clone otherwise trips a
+    # TOFU warning. First install only — preserves trusted fingerprints
+    # on subsequent upgrades.
+    rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
+    ssh-keygen -A >/dev/null 2>&1 || true
+
+    install -d -m 0755 /var/lib/cuems
+    touch "$ADMIN_MARKER"
 fi
 
 # Generate SSL certificates for Apache2 if they don't exist
@@ -381,6 +554,208 @@ fi
 # Ensure cuems-ola-profile script is executable
 if [ -f /usr/bin/cuems-ola-profile ]; then
     chmod +x /usr/bin/cuems-ola-profile
+fi
+
+# =========================================================================
+# CUEMS centralized journal log collection
+# =========================================================================
+# Master = systemd-journal-remote (collector), every slave = systemd-journal-upload.
+# Apply tmpfiles immediately so /var/log/journal/remote exists without a
+# reboot. Role-aware enable based on /etc/cuems/master.ip presence (managed
+# by cuems-nodeconf; currently operator-placed while nodeconf is disabled
+# cluster-wide). ConditionPathExists in the upload drop-in is belt-and-braces
+# so even a misconfigured enable on the controller is a no-op at runtime.
+# =========================================================================
+if command -v systemd-tmpfiles >/dev/null 2>&1; then
+    systemd-tmpfiles --create /usr/lib/tmpfiles.d/cuems-journal-remote.conf 2>/dev/null \
+        || systemd-tmpfiles --create /etc/tmpfiles.d/cuems-journal-remote.conf 2>/dev/null \
+        || true
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+    if [ -f /etc/cuems/master.ip ]; then
+        systemctl enable systemd-journal-remote.service 2>/dev/null || true
+    else
+        systemctl enable systemd-journal-upload.service 2>/dev/null || true
+    fi
+    # Journal maintenance runs on EVERY host, controller or node — it was
+    # previously enabled only in the controller branch above, which is why
+    # nodes accumulated journals nothing ever pruned. Two jobs, both needed
+    # cluster-wide:
+    #   * /var/log/journal/remote — journal-remote on systemd 252 has NO
+    #     MaxUse=/MaxFiles= of its own (journal-remote.conf accepts only Seal=,
+    #     SplitMode= and the TLS options), so this timer is its only bound. A
+    #     node cloned from a controller image carries one of these too.
+    #   * foreign machine-id directories inherited from the master image, which
+    #     journald's SystemMaxUse= never touches.
+    # Explicit enable, same pattern as the units above — do not rely on
+    # dh_installsystemd inferring it from the unit's WantedBy=.
+    systemctl enable cuems-journal-vacuum.timer 2>/dev/null || true
+
+    # Orderly cluster power-off + boot display confirmation. Enabled
+    # UNCONDITIONALLY here, exactly like the timer above and for the same reason:
+    # burying an enable inside the `master.ip` controller branch is what left
+    # nodes without journal maintenance for months. Role gating belongs to the
+    # units' own WantedBy=cuems-controller.target (a node never starts that
+    # target), and BEHAVIOURAL gating belongs to enabled= in
+    # /etc/cuems/cluster-poweroff.conf, which ships false. So enabling here is
+    # inert on every existing host until an operator opts that box in.
+    #
+    # NB WantedBy= never stops anything, which is why cuems-cluster-poweroff's
+    # ExecStop cannot be fired by `systemctl stop cuems-controller.target` or by
+    # an engine restart — only by a real poweroff transaction.
+    systemctl enable cuems-cluster-poweroff.service 2>/dev/null || true
+    systemctl enable cuems-displays-on.service 2>/dev/null || true
+
+    # GPU clock pin (869eq54nj). Enabled unconditionally for the same reason as
+    # the two above, and inert for the same reason: the helper exits 0 unless
+    # BOTH enabled=true in /etc/cuems/gpu-pin.conf (ships false) AND an
+    # allow-listed GPU is present (currently only Picasso 1002:15d8). So this
+    # changes nothing on any existing host until an operator opts that box in.
+    systemctl enable cuems-gpu-pin.service 2>/dev/null || true
+fi
+
+# =========================================================================
+# Controller network modes (1.3.0-23)
+# =========================================================================
+# Taller, 2026-09-29: the controllers booted before their router, took the
+# fallback lease 192.168.6.1 and — because isc-dhcp-server's only gate was
+# dhcpd.conf's subnet match — served 192.168.6.0/24 on the WIRED LAN, to each
+# other included. See Plans/2026-09-29-controller-network-modes.md.
+#
+# THIS BLOCK STARTS, STOPS AND RESTARTS NOTHING. The gates, the exit hook and
+# the guard take effect at the next boot; an operator who wants them now runs
+# `cuems-net-mode`. Every call is guarded: a network helper must never be the
+# reason the package fails to configure — on a node least of all.
+#
+# The order matters. net-mode.conf comes first, because everything that
+# follows reads it and treats a missing file as `manual`.
+NET_MODE_CONF=/etc/cuems/net-mode.conf
+if [ ! -e "$NET_MODE_CONF" ] && [ -r /usr/share/cuems/net-mode.conf.default ]; then
+    # `manual` wherever the site already manages its own AP or addressing:
+    # a drop-in under /etc for any of the three units (Medina, formitgo), the
+    # hand-made always-on AP unit, a masked cuems-wifi.service, or a static
+    # bond0. Those sites are not migrated; they must only not break.
+    _net_mode=auto
+    for _f in /etc/systemd/system/cuems-wifi.service.d/*.conf \
+              /etc/systemd/system/hostapd.service.d/*.conf \
+              /etc/systemd/system/isc-dhcp-server.service.d/*.conf \
+              /etc/systemd/system/cuems-ap-mode.service; do
+        [ -e "$_f" ] && _net_mode=manual
+    done
+    if [ "$(readlink /etc/systemd/system/cuems-wifi.service 2>/dev/null)" = /dev/null ]; then
+        _net_mode=manual
+    fi
+    if cat /etc/network/interfaces /etc/network/interfaces.d/* 2>/dev/null \
+        | grep -Eq '^[[:space:]]*iface[[:space:]]+bond0[[:space:]]+inet[[:space:]]+static([[:space:]]|$)'; then
+        _net_mode=manual
+    fi
+    # Armed on a FIRST install only. On an upgrade the AP stays off whatever
+    # the unit's enablement says: isil is recorded with cuems-wifi.service
+    # enabled, and an upgrade must not be what puts an AP on the air.
+    _ap_armed=no
+    if [ "$1" = "configure" ] && [ -z "$2" ]; then
+        _ap_armed=yes
+    fi
+    if sed -e "s/@@NET_MODE@@/$_net_mode/" -e "s/@@AP_ARMED@@/$_ap_armed/" \
+            /usr/share/cuems/net-mode.conf.default > "$NET_MODE_CONF.dpkg-tmp" \
+       && chmod 0644 "$NET_MODE_CONF.dpkg-tmp" \
+       && mv "$NET_MODE_CONF.dpkg-tmp" "$NET_MODE_CONF"; then
+        echo "cuems-common: network mode is '$_net_mode' (AP armed: $_ap_armed); see cuems-net-mode status"
+    else
+        rm -f "$NET_MODE_CONF.dpkg-tmp"
+        echo "WARNING: could not write $NET_MODE_CONF; this host stays in 'manual'" >&2
+    fi
+    unset _net_mode _ap_armed _f
+fi
+
+# dhclient exit hook, as a symlink (see debian/install for why not a conffile).
+if [ -d /etc/dhcp/dhclient-exit-hooks.d ]; then
+    ln -sf /usr/lib/cuems/dhclient-hooks/cuems-fallback \
+        /etc/dhcp/dhclient-exit-hooks.d/cuems-fallback \
+        || echo "WARNING: could not install the dhclient exit hook cuems-fallback" >&2
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+    # First install only: the unit has to be enabled for the AP to come up at
+    # boot, and on an upgrade its enablement is the site's, not ours.
+    if [ "$1" = "configure" ] && [ -z "$2" ]; then
+        systemctl enable cuems-wifi.service 2>/dev/null \
+            || echo "WARNING: could not enable cuems-wifi.service" >&2
+    fi
+    # Enabled, not started: it arms at the next boot. Every host, because the
+    # role can flip; on a node the service is a condition skip (no bond0).
+    systemctl enable cuems-net-guard.timer 2>/dev/null \
+        || echo "WARNING: could not enable cuems-net-guard.timer" >&2
+fi
+
+# isc-dhcp-server must never be told to listen on the cable. Touches no
+# service and always exits 0.
+if [ -x /usr/bin/cuems-net-mode ]; then
+    /usr/bin/cuems-net-mode apply --postinst \
+        || echo "WARNING: cuems-net-mode apply --postinst failed" >&2
+fi
+
+# CUEMS cluster time sync via chrony
+# =========================================================================
+# Role-aware NTP setup applied by /usr/lib/cuems/bin/cuems-write-chrony-source
+# (also runs as ExecStartPre on every chrony start). One helper, one source
+# of truth: detects role from /etc/cuems/master.ip on every invocation, so
+# role flips (slave -> master and back) propagate to chrony config on next
+# `systemctl restart chrony` without re-running postinst.
+#
+# Intentionally NO `systemctl restart chrony` here: a wall-clock disturbance
+# during a production show is worse than waiting for the next natural
+# restart to pick up config changes. Postinst only enables.
+# =========================================================================
+/usr/lib/cuems/bin/cuems-write-chrony-source 2>/dev/null || true
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable chrony.service 2>/dev/null || true
+fi
+
+# =========================================================================
+# CUEMS file deploy via rsync (controller-only)
+# =========================================================================
+# rsync.service is pulled by cuems-controller.target via Wants=, gated by
+# the drop-in's ConditionPathExists=/etc/cuems/master.ip so nodes skip it.
+# Intentionally NO `deb-systemd-helper enable rsync.service` — that would
+# create /etc/systemd/system/multi-user.target.wants/rsync.service and run
+# the daemon on every host at boot (Condition would no-op it, but the log
+# noise is misleading). The target's Wants= is the only activation path.
+#
+# On a host that is currently controller with the target active, start the
+# daemon now so node-engine deploys work without waiting for the next
+# target restart. Best-effort: failure must not abort postinst.
+# =========================================================================
+if command -v systemctl >/dev/null 2>&1; then
+    if [ -f /etc/cuems/master.ip ] && systemctl is-active --quiet cuems-controller.target 2>/dev/null; then
+        systemctl start rsync.service 2>/dev/null || true
+    fi
+fi
+
+# =========================================================================
+# Reload sshd LAST — after the org pubkey is in cuems-admin's authorized_keys.
+# Ordering matters: if sshd picks up `PasswordAuthentication no` before the
+# key is in place, remote installs over SSH self-strand the operator.
+# =========================================================================
+if command -v invoke-rc.d >/dev/null 2>&1; then
+    invoke-rc.d ssh reload >/dev/null 2>&1 || true
+elif command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet ssh.service 2>/dev/null; then
+    systemctl reload ssh.service >/dev/null 2>&1 || true
+fi
+
+# =========================================================================
+# Wake-on-LAN: enable + arm immediately so operators can wake the box
+# right after install without waiting for a reboot. The oneshot service
+# walks /sys/class/net and runs ethtool -s wol g on every physical
+# ethernet NIC that supports magic-packet wake. Idempotent.
+# =========================================================================
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl enable cuems-arm-wol.service 2>/dev/null || true
+    # Arm now (best-effort; ethtool may not be runnable inside a chroot/build).
+    /usr/lib/cuems/bin/cuems-arm-wol 2>/dev/null || true
 fi
 
 echo "CUEMS Common package installed successfully."

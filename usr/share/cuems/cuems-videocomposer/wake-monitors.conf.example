@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# Opt-in drop-in for hosts whose monitors do not wake reliably from
+# the videocomposer's DRM modeset alone and need an explicit DDC/CI
+# Power-On nudge after start. Sleeps 10 s then issues VCP 0xD6=0x01
+# via ddcutil to each known i2c bus.
+#
+# CONTROLLER-ONLY HELPER. Both this drop-in and i915-rebind exist
+# for the dev-lab controller 000000000002's hardware (Alder Lake-N
+# TC-port + LG UltraFine). Node hosts do NOT need wake-monitors —
+# their HDMI outputs initialise cleanly via display-conf-gen alone.
+# Additionally, /usr/bin/cuems-wake-monitors.sh hardcodes the
+# controller's i2c bus numbers (bus 4, bus 11) which do not even
+# map to the same connectors on hosts with different wiring. Do
+# not opt in on a node.
+#
+# Requires the ddcutil package (Recommended by cuems-common; install
+# it on the host first: sudo apt install ddcutil).
+#
+# Install on a host that needs it:
+#   sudo cp /usr/share/cuems/cuems-videocomposer/wake-monitors.conf.example \
+#           /etc/systemd/system/cuems-videocomposer.service.d/wake-monitors.conf
+#   sudo systemctl daemon-reload
+#   sudo systemctl restart cuems-videocomposer.service
+#
+# Remove (no longer needed on this host):
+#   sudo rm /etc/systemd/system/cuems-videocomposer.service.d/wake-monitors.conf
+#   sudo systemctl daemon-reload
+#   sudo systemctl restart cuems-videocomposer.service
+
+[Service]
+ExecStartPost=+/usr/bin/cuems-wake-monitors.sh

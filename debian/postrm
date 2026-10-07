@@ -1,0 +1,97 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+set -e
+
+# Retire the dead acpid power-button conffiles (1.3.0-16). The postrm half of
+# rm_conffile restores the conffile if the upgrade is aborted. Hand-written for
+# the reason documented at the top of debian/postinst.
+if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
+    for _cf in /etc/acpi/powerbtn-custom-handler.sh \
+               /etc/acpi/cuems-power-button-waiter.sh \
+               /etc/acpi/events/powerbtn-acpi-support; do
+        dpkg-maintscript-helper rm_conffile "$_cf" 1.3.0-16~ cuems-common -- "$@"
+    done
+    unset _cf
+fi
+
+# Retire the obsolete GRUB display drop-in (1.3.0-19).
+# /etc/default/grub.d/cuems-display.cfg carried `i915.enable_dc=0` for the HDMI
+# warm-restart hack. That hack was REVERTED in April 2026 (bd47669) — the black
+# screen was a monitor-side setup problem, not a GPU/driver one — and the file
+# was dropped from debian/install without an rm_conffile. dpkg therefore marks it
+# `obsolete` and keeps it on disk forever: a fresh install has no such file, but
+# every host upgraded across the revert still appends the parameter to EVERY boot
+# entry, Debian's own included. Nothing in any log says so. Same family as the
+# acpid conffiles above, and hand-written for the same reason.
+if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
+    dpkg-maintscript-helper rm_conffile \
+        /etc/default/grub.d/cuems-display.cfg 1.3.0-19~ cuems-common -- "$@"
+fi
+
+# /etc/network/interfaces and /etc/network/interfaces.cuems were shipped by
+# versions old enough that dpkg still records them as `obsolete` conffiles on
+# every host that came through the divert -> postinst-cp transition — verified
+# on test2 (1.3.0-14) in 2026-08. Two consequences that this retires: `dpkg -S
+# /etc/network/interfaces` still answers cuems-common, which reads as "the
+# package owns the live network config" and it does not; and a `dpkg --purge`
+# would DELETE the host's live /etc/network/interfaces, because obsolete
+# conffiles are removed on purge. The live file is host-specific and must
+# survive purge. Same family as the acpid and grub-display conffiles above.
+if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
+    for _cf in /etc/network/interfaces /etc/network/interfaces.cuems; do
+        dpkg-maintscript-helper rm_conffile "$_cf" 1.3.0-20~ cuems-common -- "$@"
+    done
+fi
+
+
+# CUEMS Common package post-removal script.
+#
+# On `apt purge cuems-common`, clean up files that postinst generates
+# but dpkg doesn't track (they're created by `install -m` inside
+# postinst, not declared in debian/install — dpkg's manifest doesn't
+# know about them).
+if [ "$1" = "purge" ]; then
+    rm -f /etc/chrony/conf.d/cuems.conf \
+          /etc/chrony/sources.d/cuems-master.sources
+    # Controller network mode (1.3.0-23), written by the postinst and by
+    # cuems-net-mode. /etc/default/isc-dhcp-server and /etc/network/interfaces
+    # are NOT restored: they belong to the host, and their backups
+    # (.bak-cuems-net-mode, interfaces.bak-*) stay next to them.
+    rm -f /etc/cuems/net-mode.conf
+fi
+
+# =========================================================================
+# GRUB recovery boot entry (1.3.0-18)
+# =========================================================================
+# /etc/grub.d/11_cuems_recovery lives under /etc/, so dh_installdeb makes it a
+# dpkg CONFFILE automatically. Neither `remove` nor `purge` regenerates
+# grub.cfg on its own, so without this hook the compiled menu would keep
+# offering "CUEMS Recovery (<kver>)" with
+# systemd.mask=cuems-videocomposer.service for a package that is gone — an
+# unowned, stale boot entry, i.e. exactly the problem the packaging exists to
+# fix.
+#
+# The remove/purge asymmetry below is intended, not a bug:
+#   remove — the conffile is still on disk, so the regenerated menu still
+#            carries the entries. Correct: the package's config is still there.
+#   purge  — dpkg deletes the conffile BEFORE running postrm, so the
+#            regeneration produces a menu without them.
+#
+# Guarded the same way as postinst, and just as loudly: a broken update-grub
+# is a host-wide condition (it also breaks the kernel package's own hook), not
+# a cosmetic one.
+case "$1" in
+    remove|purge)
+        if command -v update-grub >/dev/null 2>&1; then
+            update-grub >/dev/null 2>&1 || \
+                echo "WARNING: update-grub failed; grub.cfg may still list CUEMS recovery entries" >&2
+        elif command -v grub-mkconfig >/dev/null 2>&1 && [ -d /boot/grub ]; then
+            grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || \
+                echo "WARNING: grub-mkconfig failed; grub.cfg may still list CUEMS recovery entries" >&2
+        fi
+        ;;
+esac
+
+exit 0

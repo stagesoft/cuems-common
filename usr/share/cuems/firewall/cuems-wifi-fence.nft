@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# WiFi-AP isolation ruleset for CUEMS controllers.
+#
+# The controller's WiFi AP (hostapd on wifi0) exists so operator
+# laptops can reach the management UI without a wired connection.
+# That convenience opens layer-2 access to every cluster service
+# bound to 0.0.0.0 unless explicitly fenced:
+#   - NNG bus  TCP/9093  (controller <-> nodes; no auth)
+#   - OSC      UDP/9190  (UI -> controller; no auth)
+#   - rsync    TCP/873   (controller media deploy)
+#   - journal-remote TCP/19532  (controller-only)
+#
+# This ruleset accepts ONLY the operator-facing surface on wifi0:
+#   - SSH      TCP/22    (operator login with org key)
+#   - HTTP     TCP/80    (Apache redirect to HTTPS)
+#   - HTTPS    TCP/443   (cuems-editor UI)
+#   - DHCP     UDP/67-68 (clients getting an address)
+#   - mDNS     UDP/5353  (avahi name resolution)
+#   - ICMP/ICMPv6 echo   (ping for diagnostics)
+# All other traffic on wifi0 input is dropped. Other interfaces
+# (cluster ethernet, loopback) are untouched — kernel default accept.
+#
+# This file is shipped under /usr/share/cuems/firewall/ as an
+# EXAMPLE — not auto-loaded. To enable on a controller:
+#   sudo cp /usr/share/cuems/firewall/cuems-wifi-fence.nft \
+#           /etc/nftables.d/
+#   sudo sh -c 'echo "include \"/etc/nftables.d/cuems-wifi-fence.nft\"" >> /etc/nftables.conf'
+#   sudo systemctl enable --now nftables.service
+#
+# Validate before enabling persistent:
+#   sudo nft -c -f /usr/share/cuems/firewall/cuems-wifi-fence.nft
+#
+# To verify it loaded:
+#   sudo nft list table inet cuems_wifi_fence
+
+table inet cuems_wifi_fence {
+    chain input {
+        type filter hook input priority 0; policy accept;
+
+        # Only filter wifi0 — other interfaces fall through to accept.
+        iifname != "wifi0" accept
+
+        # Loopback (defensive — wifi0 shouldn't see lo traffic but keep safe)
+        iif lo accept
+
+        # Established/related from outbound responses
+        ct state established,related accept
+
+        # ICMP / ICMPv6 — allow ping and basic neighbor discovery
+        meta l4proto { icmp, icmpv6 } accept
+
+        # Operator-facing services
+        tcp dport { 22, 80, 443 } accept
+        udp dport { 67, 68, 5353 } accept
+
+        # Everything else on wifi0 — DROP.
+        # NNG, OSC, rsync, journal-remote, etc. all fall here.
+        drop
+    }
+}

@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+
+[Unit]
+Description=CUEMS confirm the projectors powered on at boot
+Documentation=file:/usr/share/doc/cuems-common/README.md
+# Wants=, not Requires=: cuems-power-bridge is a SUGGESTS of cuems-common, not a
+# dependency, so on a host without it this unit must still start and simply do
+# nothing. systemd ignores Wants=/After= naming a unit that does not exist, and
+# the script exits 0 after one ERROR if the bridge's venv interpreter is missing.
+After=cuems-power-bridge.service
+Wants=cuems-power-bridge.service
+
+[Service]
+# Type=simple, NOT oneshot: the script sleeps between polls for up to ~10
+# minutes. A oneshot would keep the start job open for that whole window, so
+# `systemctl start/restart cuems-controller.target` would block on it.
+Type=simple
+ExecStart=/usr/bin/cuems-displays-on
+Restart=no
+
+[Install]
+WantedBy=cuems-controller.target

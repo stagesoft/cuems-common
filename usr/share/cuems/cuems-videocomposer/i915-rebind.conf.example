@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# Opt-in drop-in for hosts that need the Intel i915 GPU rebind before
+# the videocomposer starts. The rebind forces the i915 driver to
+# re-initialise the HDMI PHY from a clean state, which works around
+# the silent-failure mode observed on the controller's TC-port DP/HDMI
+# combination (Alder Lake-N + kernel 6.1 VBT child-device size
+# mismatch). Adds ~2 s to each videocomposer service start.
+#
+# CONTROLLER-ONLY HELPER. Node hosts (slave/clone) do NOT need the
+# i915 rebind — their HDMI outputs initialise normally via the
+# always-on display-conf-gen drop-in. Do not opt in on a node.
+#
+# Install on a host that needs it:
+#   sudo cp /usr/share/cuems/cuems-videocomposer/i915-rebind.conf.example \
+#           /etc/systemd/system/cuems-videocomposer.service.d/i915-rebind.conf
+#   sudo systemctl daemon-reload
+#   sudo systemctl restart cuems-videocomposer.service
+#
+# Remove (no longer needed on this host):
+#   sudo rm /etc/systemd/system/cuems-videocomposer.service.d/i915-rebind.conf
+#   sudo systemctl daemon-reload
+#   sudo systemctl restart cuems-videocomposer.service
+
+[Service]
+ExecStartPre=+/usr/bin/cuems-i915-rebind.sh

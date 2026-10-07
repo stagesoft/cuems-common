@@ -1,0 +1,17 @@
+# CUEMS controller chrony — additions on top of stock /etc/chrony/chrony.conf.
+# Installed to /etc/chrony/conf.d/cuems.conf by the cuems-common postinst
+# when /etc/cuems/master.ip is present (i.e. host has the controller role).
+#
+# Stock chrony.conf on bookworm already ships:
+#   pool 2.debian.pool.ntp.org iburst
+#   driftfile /var/lib/chrony/chrony.drift
+#   rtcsync
+#   makestep 1 3
+# Don't restate those. Only add what's CUEMS-specific.
+#
+# allow: accept time queries from the link-local cluster subnet.
+# local stratum 8: if upstream pool becomes unreachable, keep serving
+# clients from this host's own clock (offline-first fallback). Clients
+# see Stratum 9 instead of 4 but the cluster stays internally coherent.
+allow 169.254.0.0/16
+local stratum 8

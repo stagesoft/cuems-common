@@ -1,25 +1,85 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 # Debian package installation mapping
 # Format: source_path destination_path
 
 # CUEMS binaries and scripts (must be executable)
 scripts/check-ip.sh usr/lib/cuems/bin/
 scripts/wifi-auto.sh usr/lib/cuems/bin/
+scripts/cuems-log-collector-url usr/lib/cuems/bin/
+scripts/cuems-write-chrony-source usr/lib/cuems/bin/
+scripts/cuems-arm-wol usr/lib/cuems/bin/
+# Controller network modes (1.3.0-23): the AP data path, the DHCP client of
+# bond0 outside ifupdown, the once-a-minute guard and its DISCOVER-only probe.
+scripts/cuems-ap-path usr/lib/cuems/bin/
+scripts/cuems-bond0-dhclient usr/lib/cuems/bin/
+scripts/cuems-net-guard usr/lib/cuems/bin/
+scripts/cuems-dhcp-probe usr/lib/cuems/bin/
+# Shared state readers, sourced by all of the above, by check-ip.sh and by the
+# dhclient exit hook. Not executable: it is never run.
+usr/lib/cuems/net-mode.sh usr/lib/cuems/
+# dhclient exit hook. Shipped under /usr/lib and symlinked into
+# /etc/dhcp/dhclient-exit-hooks.d/ by the postinst: a file under /etc/ would be
+# a conffile, which a downgrade cannot take away and an upgrade may not replace.
+usr/lib/cuems/dhclient-hooks/cuems-fallback usr/lib/cuems/dhclient-hooks/
+usr/bin/cuems-net-mode usr/bin/
 usr/bin/cuems-healthcheck usr/bin/
+usr/lib/cuems/bin/cuems-extract-video-latency usr/lib/cuems/bin/
+usr/lib/cuems/bin/cuems-write-rtpmidid-config usr/lib/cuems/bin/
+usr/lib/cuems/bin/cuems-write-hostapd-config usr/lib/cuems/bin/
+usr/lib/cuems/bin/cuems-gpu-pin usr/lib/cuems/bin/
 usr/lib/cuems/bin/cuems-generate-display-conf usr/lib/cuems/bin/
+
+# Opt-in HDMI helpers (cuems-videocomposer pre/post-start drop-ins
+# ship as examples under /usr/share/; operator copies to /etc/ on
+# hosts that need them — see usr/share/doc/cuems-common/hdmi-helpers.README).
+usr/bin/cuems-i915-rebind.sh usr/bin/
+usr/bin/cuems-wake-monitors.sh usr/bin/
+usr/share/cuems/cuems-videocomposer/i915-rebind.conf.example usr/share/cuems/cuems-videocomposer/
+usr/share/cuems/cuems-videocomposer/wake-monitors.conf.example usr/share/cuems/cuems-videocomposer/
+usr/share/doc/cuems-common/hdmi-helpers.README usr/share/doc/cuems-common/
+
+# Opt-in WiFi-AP firewall fence (nftables). Not enabled by default —
+# see /usr/share/doc/cuems-common/firewall.README for the procedure.
+usr/share/cuems/firewall/cuems-wifi-fence.nft usr/share/cuems/firewall/
+usr/share/doc/cuems-common/firewall.README usr/share/doc/cuems-common/
+
+# Operator-facing default credentials disclosure. Referenced by
+# /etc/ssh/sshd_config.d/50-cuems.conf so a locked-out operator at
+# the TTY console can find the recovery account.
+docs/default-credentials.md usr/share/doc/cuems-common/
+usr/lib/cuems/bin/cuems-wait-controller usr/lib/cuems/bin/
+
+# rtpmidid role-aware INI templates (read by cuems-write-rtpmidid-config)
+usr/share/cuems/rtpmidid/default.ini.controller usr/share/cuems/rtpmidid/
+usr/share/cuems/rtpmidid/default.ini.node usr/share/cuems/rtpmidid/
+
+# hostapd template (read by cuems-write-hostapd-config). SSID and WPA
+# passphrase placeholders @@SSID@@ / @@WPA_PASSPHRASE@@ get substituted
+# at hostapd ExecStartPre time into /run/cuems/hostapd.conf.
+usr/share/cuems/hostapd/hostapd.conf.template usr/share/cuems/hostapd/
 
 # Python scripts (executable)
 usr/bin/cuems-config-node usr/bin/
 
 # System scripts
+usr/bin/cuems-cluster-poweroff usr/bin/
+usr/bin/cuems-displays-on usr/bin/
 usr/bin/cuems-hdmi-audio-map usr/bin/
-usr/bin/cuems-i915-rebind.sh usr/bin/
-usr/bin/cuems-wake-monitors.sh usr/bin/
+usr/bin/cuems-journal-vacuum usr/bin/
+usr/bin/cuems-logs usr/bin/
 usr/bin/cuems-ola-profile usr/bin/
-usr/bin/cuems-stop usr/bin/
+# usr/bin/cuems-stop RETIRED in 1.3.0-16: hardcoded to a long-gone venue's power
+# relay (192.168.3.20) and SSH targets (stagelab@192.168.2.20x), and its only
+# caller was the equally dead /etc/acpi/ handler chain. The `cuems-stop` shell
+# ALIAS in etc/profile.d/cuems.sh (stop the systemd targets) stays, and with the
+# binary gone it is no longer ambiguous.
 
 # Systemd unit files
 # Package-provided services should be in /lib/systemd/system/ (not /etc/systemd/system/)
 etc/systemd/system/cuems-videocomposer.service lib/systemd/system/
+etc/systemd/system/cuems-gradient-motiond.service lib/systemd/system/
 etc/systemd/system/cuems-controller.target lib/systemd/system/
 etc/systemd/system/cuems-wifi.target lib/systemd/system/
 etc/systemd/system/cuems-controller-engine.service lib/systemd/system/
@@ -30,68 +90,168 @@ etc/systemd/system/cuems-node-engine.service lib/systemd/system/
 etc/systemd/system/cuems-node.target lib/systemd/system/
 etc/systemd/system/cuems-nodeconf.service lib/systemd/system/
 etc/systemd/system/cuems-wifi.service lib/systemd/system/
+# Orderly power-off (ExecStop hook) + boot display confirmation. Both are gated
+# behind enabled= in /etc/cuems/cluster-poweroff.conf, shipped false.
+etc/systemd/system/cuems-cluster-poweroff.service lib/systemd/system/
+etc/systemd/system/cuems-displays-on.service lib/systemd/system/
+# GPU clock pin (869eq54nj). Same arrangement: enabled unconditionally in
+# postinst, gated behind enabled= in /etc/cuems/gpu-pin.conf, shipped false.
+etc/systemd/system/cuems-gpu-pin.service lib/systemd/system/
+# hostapd.service itself is owned by the upstream `hostapd` Debian package.
+# cuems-common adds cuems-wifi.target / cuems-wifi.service plumbing and the
+# /run/cuems/hostapd.conf redirect via drop-ins under hostapd.service.d/
+# only — never overriding the unit file (was a dpkg file-conflict footgun).
 etc/systemd/system/jack-alsa-bridges.service lib/systemd/system/
 etc/systemd/system/jackd-cuems.service lib/systemd/system/
+# Topology-independent WoL arm-er (alternative to per-host .link files which
+# pin Match=Path= to a specific PCI topology; ours don't match across the N97
+# cluster). Walks /sys/class/net and runs ethtool -s wol g on every physical
+# ethernet NIC that hardware-supports magic-packet wake.
+etc/systemd/system/cuems-arm-wol.service lib/systemd/system/
 etc/systemd/system/olad.service lib/systemd/system/
-etc/systemd/system/rsync@.service lib/systemd/system/
+# Retention for the journals uploaded by the nodes. systemd-journal-remote
+# has no MaxUse=/MaxFiles= of its own on systemd 252, so a timer is the only
+# bound — see the comment in systemd-journal-remote.service.d/.
+etc/systemd/system/cuems-journal-vacuum.service lib/systemd/system/
+# Controller network guard (1.3.0-23). Its timer comes in through the *.timer
+# glob below and is what the postinst enables.
+etc/systemd/system/cuems-net-guard.service lib/systemd/system/
 etc/systemd/system/*.path lib/systemd/system/
-etc/systemd/system/*.socket lib/systemd/system/
+etc/systemd/system/*.timer lib/systemd/system/
 # Systemd drop-in directories (package-provided overrides)
-etc/systemd/system/cuems-videocomposer.service.d/hdmi-fix.conf lib/systemd/system/cuems-videocomposer.service.d/
 etc/systemd/system/avahi-daemon.d/* lib/systemd/system/avahi-daemon.service.d/
 etc/systemd/system/apache2.service.d/* lib/systemd/system/apache2.service.d/
 etc/systemd/system/hostapd.service.d/* lib/systemd/system/hostapd.service.d/
 etc/systemd/system/isc-dhcp-server.service.d/* lib/systemd/system/isc-dhcp-server.service.d/
 etc/systemd/system/rtpmidid.service.d/* lib/systemd/system/rtpmidid.service.d/
+etc/systemd/system/rsync.service.d/* lib/systemd/system/rsync.service.d/
+etc/systemd/system/systemd-journal-remote.service.d/* lib/systemd/system/systemd-journal-remote.service.d/
+etc/systemd/system/systemd-journal-upload.service.d/* lib/systemd/system/systemd-journal-upload.service.d/
+etc/systemd/system/cuems-videocomposer.service.d/* lib/systemd/system/cuems-videocomposer.service.d/
+etc/systemd/system/chrony.service.d/* lib/systemd/system/chrony.service.d/
 
-# Systemd journald configuration
-etc/systemd/journald.conf.cuems etc/systemd/
+# Mask pipewire/wireplumber per-user units system-wide (all users).
+# Why: wireplumber competes with zita-j2a for hw:HID (USB audio), causing
+# jack-alsa-bridges boot retries and ALSA glitches that trip
+# JackAudioDriver::ProcessGraphAsyncMaster errors. /etc/systemd/user/
+# overrides /usr/lib/systemd/user/ for every user's systemd --user instance.
+# Symlinks target /dev/null — the standard systemd mask convention.
+etc/systemd/user/pipewire.service etc/systemd/user/
+etc/systemd/user/pipewire.socket etc/systemd/user/
+etc/systemd/user/pipewire-pulse.service etc/systemd/user/
+etc/systemd/user/pipewire-pulse.socket etc/systemd/user/
+etc/systemd/user/wireplumber.service etc/systemd/user/
 
-# Systemd network link files
-etc/systemd/network/*.link etc/systemd/network/
-
-
-# GRUB kernel parameter snippet
-etc/default/grub.d/cuems-display.cfg etc/default/grub.d/
+# GRUB recovery boot entry generator. On a CUEMS video host the compositor
+# owns DRM master over every output, so there is no usable text console
+# exactly when one is needed; this emits menu entries that boot with
+# cuems-videocomposer masked via systemd.mask= on the kernel command line.
+# Executable (dh_install preserves the source mode; debian/rules re-chmods as
+# belt-and-braces) — grub-mkconfig silently skips a non-executable /etc/grub.d
+# file. Installed under /etc/, so dpkg tracks it as a conffile: see the
+# matching update-grub in debian/postinst and debian/postrm.
+etc/grub.d/11_cuems_recovery etc/grub.d/
 
 # Shell aliases
 etc/profile.d/cuems.sh etc/profile.d/
 
 # Configuration files
-etc/avahi/avahi-daemon.conf etc/avahi/
-etc/avahi/services/*.service etc/avahi/services/
-etc/network/interfaces etc/network/
+# avahi-daemon.conf and dhcpd.conf are NOT shipped as conffiles — they have no
+# drop-in mechanism and must override another package's single file, so they
+# ship as usr/share/cuems/ templates (via the glob below) that postinst installs
+# through a dpkg-divert. See debian/postinst.
+# NOTE: /etc/network/interfaces is intentionally NOT shipped — it is host- and
+# role-specific. Operators deploy from the role templates under usr/share/cuems/
+# (interfaces.master / interfaces.node; a future cuems-write-network-interfaces
+# helper will pick the right one per role). Shipping a single live conffile here
+# pushed the *master* variant onto nodes and risked clobbering host networking
+# on every upgrade.
 etc/rsyncd.conf etc/
 etc/rsyncd.secrets etc/
-etc/rsyslog.conf.cuems etc/
-etc/hostapd/hostapd.conf.cuems etc/hostapd/
-etc/dhcp/dhcpd.conf.cuems etc/dhcp/
-etc/dhcp/dhclient.conf.cuems etc/dhcp/
-etc/default/isc-dhcp-server.cuems etc/default/
+# hostapd.conf is NOT shipped: cuems drives hostapd from /run/cuems/hostapd.conf
+# (generated from usr/share/cuems/hostapd/hostapd.conf.template at ExecStartPre),
+# so the /etc/hostapd/hostapd.conf conffile was unused.
+# journald + rsyslog CUEMS policy ship as drop-ins (so we never divert
+# systemd's or rsyslog's own conffile): the stock files keep ownership and
+# these are pulled in via journald.conf.d/ and rsyslog.d/*.conf includes.
+etc/systemd/journald.conf.d/cuems.conf etc/systemd/journald.conf.d/
+# Same drop-in rationale for logind: pins HandlePowerKey=poweroff, the behaviour
+# cuems-cluster-poweroff.service's ExecStop hook depends on. Matches systemd's
+# compiled-in default, so it changes nothing — it states the contract.
+etc/systemd/logind.conf.d/10-cuems-power-button.conf etc/systemd/logind.conf.d/
+etc/rsyslog.d/cuems.conf etc/rsyslog.d/
 etc/sudoers.d/99-cuems etc/sudoers.d/
+etc/sudoers.d/50-cuems-admin etc/sudoers.d/
+
+# SSH server hardening (drop-in; main /etc/ssh/sshd_config left untouched
+# so upstream conffile-prompt machinery handles any operator edits there)
+etc/ssh/sshd_config.d/50-cuems.conf etc/ssh/sshd_config.d/
+
+# Organization SSH public key — planted in cuems-admin's authorized_keys
+# on first install (see debian/postinst). Private half is held by Stagelab.
+etc/cuems/ssh/cuems-org.pub etc/cuems/ssh/
+etc/sudoers.d/99-cuems-poweroff etc/sudoers.d/
+etc/sudoers.d/99-cuems-admin-poweroff etc/sudoers.d/
 etc/sysctl.d/99-cuems-performance.conf etc/sysctl.d/
+etc/modules-load.d/cuems-midi.conf etc/modules-load.d/
+
+# systemd-udev .link files — rename Intel/Realtek NICs to stable
+# ethernet0 / ethernet1 / wifi0 (Path= matches the PCI slot, so
+# names survive USB MAC churn). Also enable WakeOnLan=magic on the
+# ethernet NICs so remote-wake survives clean reboots without depending
+# on NIC NVRAM persistence (which was the historical bug: an earlier
+# cuems-common upgrade overwrote these files without the directive and
+# WoL silently stopped persisting at OS level). udev's net_setup_link
+# builtin applies these on every interface bring-up regardless of
+# whether systemd-networkd itself is enabled.
+etc/systemd/network/10-ethernet0.link etc/systemd/network/
+etc/systemd/network/10-ethernet1.link etc/systemd/network/
+etc/systemd/network/10-wifi0.link etc/systemd/network/
+
+# Hardware-mismatch recovery guide for the .link files above. Operators
+# whose NICs sit at different PCI paths than the N97 defaults MUST edit
+# /etc/systemd/network/10-*.link to match — and pick "keep my version"
+# on dpkg conffile prompts during upgrades.
+usr/share/doc/cuems-common/link-files.README usr/share/doc/cuems-common/
 etc/tmpfiles.d/jack-cuems.conf etc/tmpfiles.d/
+etc/tmpfiles.d/cuems-journal-remote.conf etc/tmpfiles.d/
 etc/logrotate.d/cuems etc/logrotate.d/
 etc/cuems/network_map.xml etc/cuems/
 etc/cuems/network_map.xsd etc/cuems/
-etc/cuems/pantalla_stagelab.png etc/cuems/
+# AP-network constants — single source of truth, sourced by check-ip.sh.
+# /etc/dhcp/dhcpd.conf cross-references it via header comment.
+etc/cuems/ap.conf etc/cuems/
+etc/cuems/videocomposer-flags.env.example etc/cuems/
+etc/cuems/gradient-motiond.env.example etc/cuems/
+# Orderly power-off / boot display confirmation. Shell syntax (both readers are
+# shell scripts); ships enabled=false so a fleet-wide upgrade changes no site.
+etc/cuems/cluster-poweroff.conf etc/cuems/
+
+# GPU clock pin. Shell syntax (the reader is a shell script); ships
+# enabled=false so a fleet-wide upgrade never starts pinning clocks - and +8 C -
+# on an AMD box nobody has thermally soaked.
+etc/cuems/gpu-pin.conf etc/cuems/
+
+# Multi-cluster identity example (not installed to /etc/cuems/ by default;
+# operator copies it manually when multi-cluster deployment is needed).
+etc/cuems/cluster.conf.example usr/share/doc/cuems-common/
 
 # Shared data files
 usr/share/cuems/* usr/share/cuems/
 
 # Apache configuration
-# Only install site configuration files (module files are provided by apache2 package)
+# Note: Module files come from their respective Debian packages (libapache2-mod-*)
+# We only install our CUEMS site configuration files and enable modules/sites in postinst
 etc/apache2/sites-available/cuems-ui.conf etc/apache2/sites-available/
 etc/apache2/sites-available/cuems-ui-ssl.conf etc/apache2/sites-available/
 
-# ACPI scripts
-etc/acpi/*.sh etc/acpi/
-etc/acpi/events/* etc/acpi/events/
+# ACPI scripts: RETIRED in 1.3.0-16, removed via debian/cuems-common.maintscript.
+# They never ran — acpid is not installed on any CUEMS host (verified on isil,
+# test2 and both Medina controllers), so the physical power button has always been
+# handled by systemd-logind's HandlePowerKey. The handler's first action was
+# /usr/bin/cuems-stop, hardcoded to another site's relay and SSH targets, so
+# leaving the files in place was a booby trap: installing acpid for any reason
+# would have resurrected it. Replaced by cuems-cluster-poweroff.service, which
+# hooks the poweroff transition instead and therefore also covers
+# `systemctl poweroff`.
 
-# Splash screen files
-splash/* usr/share/plymouth/themes/cuems/
-
-# Documentation (optional - uncomment if you want to install these)
-# LICENSE usr/share/doc/cuems-common/
-# README.md usr/share/doc/cuems-common/
-# instructions/* usr/share/doc/cuems-common/instructions/

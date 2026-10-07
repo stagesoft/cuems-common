@@ -1,0 +1,758 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+"""Interactive operator tool to author /etc/cuems/display.conf.
+
+Probes connected DRM outputs, walks the operator through resolution +
+layout choices, and writes /etc/cuems/display.conf. cuems-generate-
+display-conf (videocomposer's ExecStartPre) copies the operator override
+verbatim to /run/cuems/display.conf on every VC start, so the file is the
+persistent authority.
+
+Run as root:  sudo cuems-display-setup
+Inspect:      sudo cuems-display-setup --probe
+"""
+
+import argparse
+import datetime
+import glob
+import os
+import re
+import shutil
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+
+
+DISPLAY_CONF = '/etc/cuems/display.conf'
+DEFAULT_MAPPINGS_XML = '/etc/cuems/default_mappings.xml'
+PROJECT_MAPPINGS_XSD = '/etc/cuems/project_mappings.xsd'
+MASTER_IP_SENTINEL = '/etc/cuems/master.ip'
+SHOW_LOCK_PATH = '/tmp/cuems.show.lock'
+CMS_NAMESPACE = 'https://stagelab.coop/cuems/'
+
+# ---------------------------------------------------------------------------
+# Hardware probe
+# ---------------------------------------------------------------------------
+
+
+def probe_connected_outputs():
+    """Return list of dicts: {'card', 'connector', 'modes', 'edid_name'}.
+
+    Walks /sys/class/drm/cardN-CONNECTOR/, picks the connected ones, reads
+    the supported mode list (deduplicated by WxH preserving first
+    occurrence), and asks edid-decode for a human-readable monitor label.
+    """
+    results = []
+    seen_connectors = {}  # connector_name -> card_dir, for multi-GPU guard
+    for status_path in sorted(glob.glob('/sys/class/drm/card*-*/status')):
+        with open(status_path) as f:
+            status = f.read().strip()
+        if status != 'connected':
+            continue
+        card_dir = os.path.dirname(status_path)
+        card_dir_name = os.path.basename(card_dir)  # e.g. card0-HDMI-A-1
+        m = re.match(r'^(card\d+)-(.+)$', card_dir_name)
+        if not m:
+            continue
+        card, connector = m.group(1), m.group(2)
+
+        if connector in seen_connectors:
+            sys.exit(
+                f'ERROR: connector {connector!r} appears on both '
+                f'{seen_connectors[connector]} and {card_dir}. '
+                'display.conf cannot disambiguate same-named connectors '
+                'across multiple GPUs. Aborting.'
+            )
+        seen_connectors[connector] = card_dir
+
+        modes = _read_modes(os.path.join(card_dir, 'modes'))
+        edid_name = _read_edid_name(os.path.join(card_dir, 'edid'))
+        results.append({
+            'card': card,
+            'connector': connector,
+            'modes': modes,
+            'edid_name': edid_name,
+        })
+    return results
+
+
+def _read_modes(modes_path):
+    """Return deduplicated WxH list, preserving first-occurrence order.
+
+    /sys/class/drm/.../modes lists `WIDTHxHEIGHT` one per line and may
+    repeat the same WxH for different refresh rates. We dedup because the
+    operator menu just needs distinct resolutions.
+    """
+    if not os.path.isfile(modes_path):
+        return []
+    out = []
+    seen = set()
+    with open(modes_path) as f:
+        for line in f:
+            mode = line.strip()
+            if not mode or mode in seen:
+                continue
+            if not re.match(r'^\d+x\d+$', mode):
+                continue
+            seen.add(mode)
+            out.append(mode)
+    return out
+
+
+def _read_edid_name(edid_path):
+    """Best-effort monitor name via edid-decode. Returns None if absent.
+
+    Note: /sys/class/drm/.../edid is a synthesized sysfs file — stat
+    reports size 0 even when the read returns valid EDID bytes. We can't
+    short-circuit on size; read the bytes and decide based on content.
+    """
+    if not os.path.isfile(edid_path):
+        return None
+    try:
+        with open(edid_path, 'rb') as f:
+            edid_bytes = f.read()
+    except OSError:
+        return None
+    if not edid_bytes:
+        return None
+    try:
+        result = subprocess.run(
+            ['edid-decode'],
+            input=edid_bytes,
+            capture_output=True,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    stdout = result.stdout.decode('utf-8', errors='replace')
+    mfr = None
+    model = None
+    for line in stdout.splitlines():
+        line = line.strip()
+        if line.startswith('Manufacturer:'):
+            mfr = line.split(':', 1)[1].strip()
+        elif line.startswith('Display Product Name:'):
+            model = line.split(':', 1)[1].strip().strip("'\"")
+    if mfr and model:
+        return f'{mfr} {model}'
+    return model or mfr
+
+
+# ---------------------------------------------------------------------------
+# Pre-fill from existing display.conf
+# ---------------------------------------------------------------------------
+
+
+def load_existing_display_conf(path=DISPLAY_CONF):
+    """Return {connector: {x, y, width, height, resolution?}} from
+    /etc/cuems/display.conf so re-runs can pre-fill defaults. Empty dict
+    if file missing.
+    """
+    if not os.path.isfile(path):
+        return {}
+    out = {}
+    current = None
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            m = re.match(r'^\[output:(.+)\]$', line)
+            if m:
+                current = m.group(1)
+                out[current] = {}
+                continue
+            if current is None or '=' not in line:
+                continue
+            key, val = line.split('=', 1)
+            key, val = key.strip(), val.strip()
+            if key == 'canvas_region':
+                parts = val.split(',')
+                if len(parts) == 4:
+                    try:
+                        out[current].update({
+                            'x': int(parts[0]),
+                            'y': int(parts[1]),
+                            'width': int(parts[2]),
+                            'height': int(parts[3]),
+                        })
+                    except ValueError:
+                        pass
+            elif key == 'resolution':
+                out[current]['resolution'] = val
+            elif key == 'refresh':
+                out[current]['refresh'] = val
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Interactive helpers
+# ---------------------------------------------------------------------------
+
+
+def prompt(text, default=None):
+    suffix = f' [{default}]' if default is not None else ''
+    while True:
+        try:
+            answer = input(f'{text}{suffix}: ').strip()
+        except EOFError:
+            sys.exit('\nAborted.')
+        if not answer and default is not None:
+            return default
+        if answer:
+            return answer
+
+
+def prompt_choice(text, options, default_idx=0):
+    print()
+    print(text)
+    for i, opt in enumerate(options, start=1):
+        marker = ' (default)' if i - 1 == default_idx else ''
+        print(f'  {i}. {opt}{marker}')
+    while True:
+        raw = prompt(f'Pick 1-{len(options)}', default=str(default_idx + 1))
+        try:
+            idx = int(raw) - 1
+        except ValueError:
+            print(f'Not a number: {raw!r}')
+            continue
+        if 0 <= idx < len(options):
+            return idx, options[idx]
+        print(f'Out of range: {raw}')
+
+
+def prompt_yes_no(text, default=True):
+    suffix = 'Y/n' if default else 'y/N'
+    while True:
+        try:
+            raw = input(f'{text} [{suffix}]: ').strip().lower()
+        except EOFError:
+            sys.exit('\nAborted.')
+        if not raw:
+            return default
+        if raw in ('y', 'yes'):
+            return True
+        if raw in ('n', 'no'):
+            return False
+
+
+# ---------------------------------------------------------------------------
+# Connector reorder
+# ---------------------------------------------------------------------------
+
+
+def reorder_connectors(outputs):
+    """Let the operator reorder connectors to match physical L-to-R / T-to-B.
+
+    DRM names sort lexicographically, which often does NOT match the lab's
+    physical port layout. This step exists because a "horizontal" preset
+    applied to a lexicographic order will mirror the canvas on hosts where
+    physical order is reversed (slave: HDMI-A-3 is leftmost physically).
+    """
+    print()
+    print('Connector order (canvas left-to-right / top-to-bottom):')
+    for i, o in enumerate(outputs, start=1):
+        label = o.get('edid_name') or '(no EDID)'
+        print(f'  {i}. {o["connector"]:<12} {label}')
+    print()
+    print('Default order is lexicographic. If your physical port layout')
+    print('differs (slave example: HDMI-A-3 leftmost), reorder now.')
+    if prompt_yes_no('Keep this order?', default=True):
+        return outputs
+
+    print('Type "i j" to swap two positions; ENTER on its own when done.')
+    work = list(outputs)
+    while True:
+        for i, o in enumerate(work, start=1):
+            label = o.get('edid_name') or '(no EDID)'
+            print(f'  {i}. {o["connector"]:<12} {label}')
+        try:
+            raw = input('swap (e.g. "1 3") or ENTER: ').strip()
+        except EOFError:
+            sys.exit('\nAborted.')
+        if not raw:
+            return work
+        parts = raw.split()
+        if len(parts) != 2:
+            print('Need exactly two numbers.')
+            continue
+        try:
+            a = int(parts[0]) - 1
+            b = int(parts[1]) - 1
+        except ValueError:
+            print('Both must be integers.')
+            continue
+        if not (0 <= a < len(work) and 0 <= b < len(work)):
+            print('Out of range.')
+            continue
+        work[a], work[b] = work[b], work[a]
+
+
+# ---------------------------------------------------------------------------
+# Resolution selection
+# ---------------------------------------------------------------------------
+
+
+PRESETS = [
+    ('Native (each monitor at its preferred mode)', None),
+    ('All 1080p (1920x1080)', '1920x1080'),
+    ('All 720p (1280x720)', '1280x720'),
+    ('Per-monitor (custom)', '__custom__'),
+]
+
+
+def select_resolutions(outputs, existing):
+    """Return list of WxH strings, one per output (same order)."""
+    idx, _ = prompt_choice('Resolution preset:', [p[0] for p in PRESETS], default_idx=0)
+    _, target = PRESETS[idx]
+
+    resolutions = []
+    for o in outputs:
+        existing_res = existing.get(o['connector'], {}).get('resolution')
+        native = o['modes'][0] if o['modes'] else '1920x1080'
+        if target is None:
+            resolutions.append(native)
+        elif target == '__custom__':
+            print()
+            label = o.get('edid_name') or '(no EDID)'
+            print(f'{o["connector"]} ({label}):')
+            for i, m in enumerate(o['modes'], start=1):
+                marker = ' * native' if m == native else ''
+                print(f'  {i}. {m}{marker}')
+            default = existing_res or native
+            try:
+                default_idx = o['modes'].index(default) + 1
+            except ValueError:
+                default_idx = 1
+            while True:
+                raw = prompt(
+                    f'Pick 1-{len(o["modes"])} or type WxH',
+                    default=str(default_idx),
+                )
+                if re.match(r'^\d+x\d+$', raw):
+                    resolutions.append(raw)
+                    break
+                try:
+                    pick = int(raw) - 1
+                    if 0 <= pick < len(o['modes']):
+                        resolutions.append(o['modes'][pick])
+                        break
+                except ValueError:
+                    pass
+                print('Invalid pick.')
+        else:
+            if target in o['modes']:
+                resolutions.append(target)
+            else:
+                print(f'WARNING: {o["connector"]} does not support {target}; '
+                      f'using native {native}')
+                resolutions.append(native)
+    return resolutions
+
+
+# ---------------------------------------------------------------------------
+# Layout selection
+# ---------------------------------------------------------------------------
+
+
+def select_layout(outputs, resolutions):
+    """Return list of (x, y, w, h) tuples in the same order as outputs."""
+    layouts = [
+        'Horizontal left-to-right',
+        'Vertical top-to-bottom',
+        'Manual (x,y per monitor)',
+    ]
+    idx, _ = prompt_choice('Layout:', layouts, default_idx=0)
+
+    sizes = [tuple(int(p) for p in r.split('x')) for r in resolutions]
+
+    if idx == 0:
+        regions = []
+        x = 0
+        for w, h in sizes:
+            regions.append((x, 0, w, h))
+            x += w
+        return regions
+    if idx == 1:
+        regions = []
+        y = 0
+        for w, h in sizes:
+            regions.append((0, y, w, h))
+            y += h
+        return regions
+
+    regions = []
+    print()
+    print('Enter x,y per monitor (e.g. "1920,540"):')
+    for o, (w, h) in zip(outputs, sizes):
+        label = o.get('edid_name') or '(no EDID)'
+        while True:
+            raw = prompt(
+                f'  {o["connector"]} ({label}) {w}x{h} x,y',
+                default='0,0',
+            )
+            if raw.count(',') != 1:
+                print('Format: x,y (one comma).')
+                continue
+            try:
+                x, y = (int(p.strip()) for p in raw.split(','))
+            except ValueError:
+                print('Both must be integers.')
+                continue
+            if x < 0 or y < 0:
+                print('Negatives not allowed.')
+                continue
+            regions.append((x, y, w, h))
+            break
+    return regions
+
+
+# ---------------------------------------------------------------------------
+# Canvas size override
+# ---------------------------------------------------------------------------
+
+
+def select_canvas_size(regions):
+    """Compute bbox; optionally let operator override to a larger canvas."""
+    bbox_w = max(x + w for x, _, w, _ in regions)
+    bbox_h = max(y + h for _, y, _, h in regions)
+    print()
+    print(f'Monitor bounding box: {bbox_w}x{bbox_h}')
+    if not prompt_yes_no(
+        'Override canvas size? (larger than bbox, e.g. for letterbox)',
+        default=False,
+    ):
+        return None
+    while True:
+        raw = prompt(
+            f'  canvas size (WxH, must be >= {bbox_w}x{bbox_h})',
+            default=f'{bbox_w}x{bbox_h}',
+        )
+        m = re.match(r'^(\d+)x(\d+)$', raw)
+        if not m:
+            print('Format: WIDTHxHEIGHT.')
+            continue
+        cw, ch = int(m.group(1)), int(m.group(2))
+        if cw < bbox_w or ch < bbox_h:
+            print(f'Smaller than bbox ({bbox_w}x{bbox_h}) — would crop monitors.')
+            continue
+        if cw == bbox_w and ch == bbox_h:
+            return None
+        return (cw, ch)
+
+
+# ---------------------------------------------------------------------------
+# display.conf composition + install
+# ---------------------------------------------------------------------------
+
+
+def compose_display_conf(outputs, resolutions, regions, canvas_size):
+    """Return the textual display.conf for the chosen layout."""
+    ts = datetime.datetime.now().isoformat(timespec='seconds')
+    lines = [f'# Authored by cuems-display-setup on {ts}',
+             'canvas_layout=custom']
+    if canvas_size is not None:
+        lines.append(f'canvas_size={canvas_size[0]}x{canvas_size[1]}')
+    lines.append('')
+    for o, res, (x, y, w, h) in zip(outputs, resolutions, regions):
+        lines.append(f'[output:{o["connector"]}]')
+        lines.append(f'canvas_region={x},{y},{w},{h}')
+        lines.append(f'resolution={res}')
+        lines.append('')
+    return '\n'.join(lines).rstrip() + '\n'
+
+
+def install_display_conf(content, no_backup=False):
+    """Atomic write to /etc/cuems/display.conf with optional backup.
+
+    Temp file lives in /etc/cuems/.display.conf.tmp.<pid> (same FS as
+    destination so os.rename succeeds — cross-filesystem rename fails
+    with EXDEV).
+    """
+    target = DISPLAY_CONF
+    target_dir = os.path.dirname(target)
+    os.makedirs(target_dir, exist_ok=True)
+    if os.path.isfile(target) and not no_backup:
+        ts = datetime.datetime.now().strftime('%Y-%m-%dT%H-%M-%S')
+        backup = f'{target}.bak-{ts}'
+        shutil.copy2(target, backup)
+        print(f'Backed up previous display.conf to {backup}')
+    tmp = os.path.join(target_dir, f'.display.conf.tmp.{os.getpid()}')
+    with open(tmp, 'w') as f:
+        f.write(content)
+    os.chmod(tmp, 0o644)
+    os.rename(tmp, target)
+    print(f'Wrote {target}')
+
+
+# ---------------------------------------------------------------------------
+# Service restart
+# ---------------------------------------------------------------------------
+
+
+def is_controller_host():
+    return os.path.isfile(MASTER_IP_SENTINEL)
+
+
+def restart_services():
+    """Restart VC + engine(s). VC first so /run/ is regenerated from /etc/."""
+    units = ['cuems-videocomposer.service']
+    if is_controller_host():
+        units.extend(['cuems-controller-engine.service', 'cuems-node-engine.service'])
+    else:
+        units.append('cuems-node-engine.service')
+    print(f'Restarting (in order): {", ".join(units)}')
+    for u in units:
+        subprocess.run(['systemctl', 'restart', u], check=True)
+        print(f'  restarted {u}')
+
+
+# ---------------------------------------------------------------------------
+# --update-mappings: surgical insert into default_mappings.xml
+# ---------------------------------------------------------------------------
+
+
+def _connectors_in_default_mappings():
+    if not os.path.isfile(DEFAULT_MAPPINGS_XML):
+        return set()
+    try:
+        tree = ET.parse(DEFAULT_MAPPINGS_XML)
+    except ET.ParseError:
+        return set()
+    out = set()
+    for mapped in tree.iterfind('.//video/outputs/output/mappings/mapped_to'):
+        if mapped.text:
+            out.add(mapped.text.strip())
+    return out
+
+
+def update_default_mappings(connector, name):
+    """Insert a new <output> into the local node's <video><outputs>.
+
+    Surgical edit via ElementTree; preserves most formatting. Schema
+    order under VideoPutType: <id>, <name>, optional <canvas_region>,
+    <mappings>. We omit canvas_region (UI-template hint only, see XSD).
+    """
+    if not os.path.isfile(DEFAULT_MAPPINGS_XML):
+        sys.exit(f'ERROR: {DEFAULT_MAPPINGS_XML} not found')
+
+    ET.register_namespace('cms', CMS_NAMESPACE)
+    ET.register_namespace('xsi', 'http://www.w3.org/2001/XMLSchema-instance')
+    tree = ET.parse(DEFAULT_MAPPINGS_XML)
+    root = tree.getroot()
+
+    settings_path = '/etc/cuems/settings.xml'
+    local_uuid = None
+    if os.path.isfile(settings_path):
+        try:
+            stree = ET.parse(settings_path)
+            uel = stree.find('.//Settings/node/uuid')
+            if uel is not None and uel.text:
+                local_uuid = uel.text.strip()
+        except ET.ParseError:
+            pass
+
+    target_node = None
+    for node_el in root.findall('.//nodes/node'):
+        ue = node_el.find('uuid')
+        if ue is not None and ue.text and (local_uuid is None
+                                           or ue.text.strip() == local_uuid):
+            target_node = node_el
+            break
+    if target_node is None:
+        sys.exit('ERROR: could not find local node in default_mappings.xml')
+
+    outputs_el = target_node.find('./video/outputs')
+    if outputs_el is None:
+        sys.exit('ERROR: <video><outputs> missing under local node')
+
+    for out_el in outputs_el.findall('./output'):
+        mapped = out_el.find('mappings/mapped_to')
+        if mapped is not None and mapped.text and mapped.text.strip() == connector:
+            print(f'Connector {connector} already in default_mappings.xml (skipping)')
+            return
+
+    existing_ids = []
+    for out_el in outputs_el.findall('./output'):
+        ie = out_el.find('id')
+        if ie is not None and ie.text:
+            try:
+                existing_ids.append(int(ie.text))
+            except ValueError:
+                pass
+    next_id = max(existing_ids) + 1 if existing_ids else 0
+
+    new_out = ET.SubElement(outputs_el, 'output')
+    id_el = ET.SubElement(new_out, 'id')
+    id_el.text = str(next_id)
+    name_el = ET.SubElement(new_out, 'name')
+    name_el.text = name
+    mappings_el = ET.SubElement(new_out, 'mappings')
+    mapped_el = ET.SubElement(mappings_el, 'mapped_to')
+    mapped_el.text = connector
+
+    ts = datetime.datetime.now().strftime('%Y-%m-%dT%H-%M-%S')
+    backup = f'{DEFAULT_MAPPINGS_XML}.bak-{ts}'
+    shutil.copy2(DEFAULT_MAPPINGS_XML, backup)
+    print(f'Backed up XML to {backup}')
+
+    ET.indent(tree, space='    ')
+    tmp = f'{DEFAULT_MAPPINGS_XML}.tmp.{os.getpid()}'
+    tree.write(tmp, xml_declaration=True, encoding='utf-8')
+    os.rename(tmp, DEFAULT_MAPPINGS_XML)
+    print(f'Wrote {DEFAULT_MAPPINGS_XML} (id={next_id}, name={name!r}, mapped_to={connector})')
+
+    if os.path.isfile(PROJECT_MAPPINGS_XSD):
+        try:
+            subprocess.run(
+                ['xmllint', '--noout', '--schema', PROJECT_MAPPINGS_XSD,
+                 DEFAULT_MAPPINGS_XML],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            print('xmllint --schema passed')
+        except subprocess.CalledProcessError as e:
+            print('ERROR: xmllint validation failed; reverting from backup')
+            print(e.stderr)
+            shutil.copy2(backup, DEFAULT_MAPPINGS_XML)
+            sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Show-lock guard
+# ---------------------------------------------------------------------------
+
+
+def check_show_lock(force):
+    """Refuse to proceed if the show lock is present.
+
+    /tmp/cuems.show.lock is set by BaseEngine.set_show_lock_file() when a
+    project is loaded — its presence means there's an active show. Per
+    project rule "Never auto-stop a running project", we refuse install
+    + restart in this state. --force lets the operator override
+    explicitly (they're saying "I know what I'm doing").
+    """
+    if not os.path.isfile(SHOW_LOCK_PATH):
+        return
+    if force:
+        print(f'WARNING: {SHOW_LOCK_PATH} exists (project loaded). --force given; proceeding anyway.')
+        return
+    sys.exit(
+        f'ERROR: {SHOW_LOCK_PATH} exists — a project is currently loaded.\n'
+        '       Refusing to install / restart while a show is active.\n'
+        '       Stop playback and unload the project first, then re-run.\n'
+        '       (Use --force to override at your own risk.)'
+    )
+
+
+# ---------------------------------------------------------------------------
+# Entry points
+# ---------------------------------------------------------------------------
+
+
+def cmd_probe(args):
+    outputs = probe_connected_outputs()
+    if not outputs:
+        print('No connected DRM outputs found.', file=sys.stderr)
+        return 1
+    for o in outputs:
+        label = o.get('edid_name') or '(no EDID)'
+        modes = ', '.join(o['modes']) if o['modes'] else '(no modes)'
+        print(f'{o["card"]}/{o["connector"]:<12}  {label}')
+        print(f'  modes: {modes}')
+    return 0
+
+
+def cmd_interactive(args):
+    check_show_lock(args.force)
+
+    outputs = probe_connected_outputs()
+    if not outputs:
+        sys.exit('No connected DRM outputs found.')
+
+    print(f'Detected {len(outputs)} connected output(s):')
+    for o in outputs:
+        label = o.get('edid_name') or '(no EDID)'
+        native = o['modes'][0] if o['modes'] else '?'
+        print(f'  {o["connector"]:<12}  native {native:<10}  {label}')
+
+    if args.update_mappings:
+        xml_known = _connectors_in_default_mappings()
+        for o in outputs:
+            if o['connector'] not in xml_known:
+                label = o.get('edid_name') or o['connector']
+                friendly = prompt(
+                    f'  add {o["connector"]} to default_mappings.xml as <name>',
+                    default=label,
+                )
+                update_default_mappings(o['connector'], friendly)
+
+    existing = load_existing_display_conf()
+    outputs = reorder_connectors(outputs)
+    resolutions = select_resolutions(outputs, existing)
+    regions = select_layout(outputs, resolutions)
+    canvas_size = select_canvas_size(regions)
+
+    content = compose_display_conf(outputs, resolutions, regions, canvas_size)
+    print()
+    print('=' * 60)
+    print(content, end='')
+    print('=' * 60)
+
+    if args.no_install or args.dry_run:
+        print('(no-install: not writing)')
+        return 0
+
+    if not prompt_yes_no('Install this display.conf?', default=True):
+        print('Aborted; no changes.')
+        return 0
+
+    install_display_conf(content, no_backup=args.no_backup)
+
+    if args.no_restart:
+        print('(--no-restart: change picks up at next cuems-videocomposer start)')
+        return 0
+    if not args.restart and not prompt_yes_no('Restart services now?', default=True):
+        print('(skip restart — change picks up at next cuems-videocomposer start)')
+        return 0
+    restart_services()
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Interactive operator tool for /etc/cuems/display.conf'
+    )
+    parser.add_argument('--probe', action='store_true',
+                        help='print connected outputs + modes and exit')
+    parser.add_argument('--update-mappings', action='store_true',
+                        help='also patch default_mappings.xml for new connectors')
+    parser.add_argument('--no-install', action='store_true',
+                        help='preview only, do not touch /etc/cuems/display.conf')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='like --no-install but also skip backup')
+    parser.add_argument('--restart', action='store_true',
+                        help='restart services after install (skip confirm prompt)')
+    parser.add_argument('--no-restart', action='store_true',
+                        help='do not restart services')
+    parser.add_argument('--no-backup', action='store_true',
+                        help='skip the display.conf.bak-* file')
+    parser.add_argument('--force', action='store_true',
+                        help='proceed even if a show is loaded (overrides show.lock check)')
+    args = parser.parse_args()
+
+    if args.probe:
+        # --probe is read-only and doesn't need root.
+        return cmd_probe(args)
+    if os.getuid() != 0:
+        sys.exit('cuems-display-setup must run as root for install (use sudo)')
+    return cmd_interactive(args)
+
+
+if __name__ == '__main__':
+    sys.exit(main())

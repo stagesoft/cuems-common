@@ -5,11 +5,22 @@
 #
 # LG UltraFine (and similar HDMI monitors) can remain in a sleep state after
 # a warm restart even when the GPU is sending a valid HDMI signal. This script
-# uses ddcutil to explicitly wake each monitor via the DDC/CI protocol:
+# uses ddcutil to explicitly wake each monitor via the DDC/CI protocol.
+#
+# !!! CONTROLLER-ONLY HELPER — node hosts do not need this !!!
+# Node hosts (slave/clones) initialise their HDMI outputs cleanly
+# via the always-on display-conf-gen drop-in and do NOT need the
+# DDC/CI wake nudge. This script exists for the dev-lab controller
+# 000000000002 (Alder Lake-N + LG UltraFine via TC-port), and the
+# bus numbers below are hardcoded for that controller's layout:
 #
 #   HDMI-A-1 → /dev/i2c-4  (true HDMI port, DDC confirmed working)
 #   DP-2     → /dev/i2c-11 (DP++ in HDMI mode, DDC bridge unreliable;
 #                           monitor wakes from stable HDMI signal instead)
+#
+# TODO (future refactor): auto-discover bus numbers via
+# /sys/class/drm/<connector>/ddc/i2c-N so the script becomes
+# hardware-agnostic.
 #
 # Must run as root (ExecStartPost=+ in the service unit).
 

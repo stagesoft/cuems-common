@@ -1,0 +1,128 @@
+#!/usr/lib/cuems/bin/python3
+"""Apply role-aware chrony configuration for the CUEMS cluster.
+
+Runs as ExecStartPre on chrony.service (with `+` prefix so it runs as
+root, bypassing chrony's ProtectSystem=strict). Idempotent and
+role-flip-aware: detects role on every chrony start from /etc/cuems/
+master.ip and writes the correct config + cleans up stale files from
+the other role. This means promotion (slave -> master) and demotion
+(master -> slave) just need:
+
+    touch /etc/cuems/master.ip    # or `rm` to demote
+    systemctl restart chrony
+
+On master:
+  - Copies /usr/share/cuems/chrony-server.conf.template to
+    /etc/chrony/conf.d/cuems.conf (allow link-local + local stratum 8).
+  - Deletes /etc/chrony/sources.d/cuems-master.sources (left over from
+    a previous slave role, would point at a non-existent peer).
+
+On slave:
+  - Copies /usr/share/cuems/chrony-client.conf.template to
+    /etc/chrony/conf.d/cuems.conf (maxdistance 16 + makestep 1 -1
+    to absorb large initial offsets from freshly-cloned hardware).
+  - Reads /etc/cuems/network_map.xml, finds NodeType.master/ip, writes
+    /etc/chrony/sources.d/cuems-master.sources with one line:
+        server <master-ip> iburst minpoll 4 maxpoll 6
+
+Fails LOUDLY (stderr + non-zero exit) on parse failures so
+`systemctl status chrony` surfaces the root cause. The script name is
+historical — it now does more than just sources.d.
+"""
+
+import shutil
+import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+MASTER_MARKER = Path("/etc/cuems/master.ip")
+NETWORK_MAP = Path("/etc/cuems/network_map.xml")
+
+CUEMS_CONF = Path("/etc/chrony/conf.d/cuems.conf")
+SOURCES_FILE = Path("/etc/chrony/sources.d/cuems-master.sources")
+
+SERVER_TEMPLATE = Path("/usr/share/cuems/chrony-server.conf.template")
+CLIENT_TEMPLATE = Path("/usr/share/cuems/chrony-client.conf.template")
+
+
+def die(msg: str, *, code: int = 1) -> None:
+    print(f"cuems-write-chrony-source: ERROR: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def log(msg: str) -> None:
+    print(f"cuems-write-chrony-source: {msg}", file=sys.stderr)
+
+
+def install_template(src: Path, dst: Path) -> None:
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(src, dst)
+    except OSError as e:
+        die(f"failed to install {src} -> {dst}: {e}")
+
+
+def apply_master() -> None:
+    if not SERVER_TEMPLATE.exists():
+        die(f"{SERVER_TEMPLATE} missing — is cuems-common installed correctly?")
+    install_template(SERVER_TEMPLATE, CUEMS_CONF)
+    log(f"installed {SERVER_TEMPLATE.name} -> {CUEMS_CONF}")
+    # Clean up sources.d entry left over from a previous slave role —
+    # would otherwise have master try to NTP-sync to itself.
+    if SOURCES_FILE.exists():
+        try:
+            SOURCES_FILE.unlink()
+            log(f"removed stale {SOURCES_FILE} (role flipped to master)")
+        except OSError as e:
+            die(f"failed to remove {SOURCES_FILE}: {e}")
+
+
+def read_master_ip() -> str:
+    if not NETWORK_MAP.exists():
+        die(f"{NETWORK_MAP} not found — is /etc/cuems populated for this role?")
+    try:
+        tree = ET.parse(NETWORK_MAP)
+    except ET.ParseError as e:
+        die(f"failed to parse {NETWORK_MAP}: {e}")
+    root = tree.getroot()
+    elem = root.find("./node_list/node[node_type='NodeType.master']/ip")
+    if elem is None:
+        first_child = list(root)[0].tag if list(root) else "<none>"
+        die(
+            "could not find NodeType.master/ip in network_map.xml — "
+            f"root tag was {root.tag!r}, first child was {first_child!r}. "
+            "Search expression: ./node_list/node[node_type='NodeType.master']/ip. "
+            "If element names are now namespaced (e.g. {http://...}node), "
+            "the helper must be updated."
+        )
+    ip = (elem.text or "").strip()
+    if not ip:
+        die("NodeType.master found but its <ip> tag is empty")
+    return ip
+
+
+def apply_slave() -> None:
+    if not CLIENT_TEMPLATE.exists():
+        die(f"{CLIENT_TEMPLATE} missing — is cuems-common installed correctly?")
+    install_template(CLIENT_TEMPLATE, CUEMS_CONF)
+    log(f"installed {CLIENT_TEMPLATE.name} -> {CUEMS_CONF}")
+
+    master_ip = read_master_ip()
+    line = f"server {master_ip} iburst minpoll 4 maxpoll 6\n"
+    try:
+        SOURCES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SOURCES_FILE.write_text(line)
+    except OSError as e:
+        die(f"failed to write {SOURCES_FILE}: {e}")
+    log(line.rstrip())
+
+
+def main() -> None:
+    if MASTER_MARKER.exists():
+        apply_master()
+    else:
+        apply_slave()
+
+
+if __name__ == "__main__":
+    main()

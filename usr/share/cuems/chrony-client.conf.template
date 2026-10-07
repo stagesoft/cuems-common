@@ -1,0 +1,22 @@
+# CUEMS slave chrony — additions on top of stock /etc/chrony/chrony.conf.
+# Installed to /etc/chrony/conf.d/cuems.conf by cuems-apply-chrony-config
+# when /etc/cuems/master.ip is absent (i.e. host has the slave role).
+#
+# maxdistance: chrony's default of 3s rejects sources whose root distance
+# (round-trip + dispersion) exceeds 3 seconds. A freshly-cloned slave can
+# have its RTC and system clock hours off from real time; the first
+# measurement against master then has huge dispersion and gets the source
+# marked `^?` (unusable) → makestep never triggers → operator has to run
+# `chronyc makestep` by hand. Bumping to 16s lets chrony accept the source
+# despite the large initial uncertainty, after which the offset is stepped
+# and subsequent measurements drop the distance back to <100ms.
+maxdistance 16
+
+# makestep: stock chrony.conf ships `makestep 1 3` (step only in first 3
+# updates after start). On a slave that needs many seconds to first reach
+# master over link-local at boot, those 3 updates may all happen before
+# a good measurement → never steps. `-1` removes the count limit so any
+# update with offset > 1s steps the clock. Safe on slaves because the
+# only source is the cluster master (trusted) — would be unsafe on master
+# itself, which pulls from a public pool.
+makestep 1 -1

@@ -1,4 +1,7 @@
 #!/usr/bin/make -f
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 # Debian packaging rules for CUEMS Common
 
 %:
@@ -7,6 +10,7 @@
 # The repo root ships a multi-package orchestration Makefile used for
 # release builds. dh_auto_build would pick it up as this package's own
 # build step and try to rebuild every CUEMS package — suppress that.
+# (Mirrors the same fix already present on the debian/bookworm branch.)
 override_dh_auto_build:
 
 override_dh_fixperms:
@@ -20,6 +24,9 @@ override_dh_install:
 	# Ensure scripts are executable after installation
 	find debian/cuems-common/usr/lib/cuems/bin/ -type f -name "*.sh" -exec chmod +x {} \;
 	find debian/cuems-common/usr/lib/cuems/bin/ -type f -name "*.py" -exec chmod +x {} \;
+	# grub-mkconfig silently SKIPS a non-executable /etc/grub.d file, so a
+	# lost mode bit would drop the recovery entry with no error anywhere.
+	chmod 0755 debian/cuems-common/etc/grub.d/11_cuems_recovery 2>/dev/null || true
 
 override_dh_installdeb:
 	dh_installdeb

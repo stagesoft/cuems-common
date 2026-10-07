@@ -1,8 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 [Unit]
 Description=Cuems WiFi service group target
 Documentation=man:systemd.special(7)
 PartOf=cuems-controller.target
 After=network.target cuems-controller.target
-Requires=isc-dhcp-server.service
+# Wants=, not Requires= (1.3.0-23). isc-dhcp-server is now behind its own gate
+# (check-ip.sh dhcpd) and is skipped on every wired boot; the group must not
+# depend on a unit whose normal state is "not started".
+Wants=isc-dhcp-server.service
 Before=hostapd.service
 

@@ -1,39 +1,583 @@
-cuems-common (1.1.0-3) bookworm; urgency=medium
+cuems-common (1.3.0-23) bookworm; urgency=medium
 
-  * cuems-controller-engine.service: add LD_LIBRARY_PATH pointing to the
-    python_rtmidi-bundled libjack. Without it, the controller-engine's
-    MtcListener fails to import rtmidi (libjack-<hash>.so.0.1.0 cannot
-    be opened) and no MTC timecode reaches the UI. The equivalent
-    Environment= line was already present on cuems-node-engine.service.
+  * Controller network modes. Taller, 2026-09-29, power cut: the
+    controllers booted before their router, took the fallback lease
+    192.168.6.1 and served 192.168.6.0/24 on the WIRED LAN, to other hosts
+    and to each other; nothing was reachable until every dhcpd was stopped
+    and every dhclient restarted by hand. isc-dhcp-server was never behind
+    the AP gate: its only gate was dhcpd.conf's subnet match, which opens
+    exactly when the fallback is taken.
+    NEW /etc/cuems/net-mode.conf (NET_MODE=auto|cable-dhcp|cable-static|
+    ap|manual, AP_ARMED=yes|no) and /usr/bin/cuems-net-mode to switch a box
+    in one step. A missing file or an unknown value means `manual`, in
+    which this package does nothing. Everything acts on a controller only:
+    /etc/cuems/master.ip AND bond0.
+  * check-ip.sh is now three gates: `ap` (cuems-wifi.service), `dhcpd`
+    (isc-dhcp-server) and `hostapd`. The dhcpd gate refuses to serve on
+    bond0 whatever the mode. A wired boot no longer leaves dhcpd `failed`
+    and the system `degraded`: it is a condition skip. 169.254.x on bond0
+    no longer fails the AP gate closed. Exit 255 (unit failed) only when
+    /etc/cuems/ap.conf is missing, and never in manual. In manual the
+    hostapd gate opens only while cuems-wifi.service is active, which is
+    what the Requisite= it replaces enforced.
+  * The fallback is re-probed. A dhclient bound to the static lease sleeps
+    until that lease expires, in 2040, so a controller that booted before
+    its router stayed on 192.168.6.1 until someone intervened. NEW
+    cuems-net-guard.timer (every 60 s) sends one DHCPDISCOVER
+    (cuems-dhcp-probe: DISCOVER only, takes no lease, writes nothing) and
+    on an offer replaces the client (cuems-bond0-dhclient). Also: never
+    leaves bond0 without an IPv4, restarts a missing client, and takes the
+    AP data path down if hostapd died under it. /etc/dhcp/dhclient.conf is
+    not touched.
+  * NEW dhclient exit hook cuems-fallback (a symlink into
+    dhclient-exit-hooks.d, not a conffile): puts the fallback on bond0
+    whenever bond0 has no routable IPv4, and removes it when a real lease
+    arrives. Closes the gap in which a rejected recorded lease left bond0
+    with no address at all.
+  * The packaged AP could never work, for three independent reasons, each
+    hidden by the previous one. cuems-wifi.service was enabled by nothing,
+    so hostapd's Requisite= failed on every boot; hostapd's
+    ConditionFileNotEmpty=/run/cuems/hostapd.conf was checked before the
+    ExecStartPre that renders that file; and 192.168.6.1 and dhcpd stayed
+    on bond0 while hostapd took wifi0 out of the bond. NEW cuems-ap-path
+    moves the address onto wifi0 (address first, then dhcpd, then hostapd)
+    with forwarding off on wifi0. hostapd's stop no longer ends `failed`
+    (bonding refuses to enslave an interface that is up).
+    ALL hostapd changes are in hostapd.service.d/cuems-wifi-group.conf,
+    which Medina and formitgo shadow; 20-cuems-config.conf is unchanged.
+  * BEHAVIOUR CHANGES. The AP no longer takes ethernet0 down nor stops
+    dhclient. A laptop cabled straight into a controller no longer gets a
+    lease from it. While the AP is up bond0 has no IPv4, so cuems-nodeconf,
+    where enabled, skips its map refresh until the AP goes down.
+  * The AP never comes up unless AP_ARMED=yes. An upgrade always writes
+    `no`, whatever the unit's enablement; a first install writes `yes`.
+    Arm with `cuems-net-mode auto` or `cuems-net-mode ap`.
+  * postinst starts, stops and restarts nothing new. The gates, the hook
+    and the guard take effect at the next boot. On a controller in a mode
+    other than manual it rewrites INTERFACESv4 in
+    /etc/default/isc-dhcp-server from "bond0" or empty to "wifi0" (backup
+    kept next to it). A DHCP server already serving on the cable keeps
+    running until the reboot or `cuems-net-mode apply --fix-now`; postinst
+    warns.
+  * NEW debian/prerm, carrying debhelper's token so the unit-stop snippet
+    generated until now is kept. On remove, and on a downgrade below
+    1.3.0-23, it removes the hook symlink, disables the guard timer and
+    disables cuems-wifi.service if this version armed it, so a downgrade
+    cannot bring back the older ethernet0-down takeover on a box that
+    never had its AP enabled.
+  * cuems-healthcheck reports an inconsistent network mode.
+  * Planning documents moved from dev/planning/ to Plans/.
 
- -- Ion Reguera <ion@stagelab.coop>  Thu, 16 Apr 2026 21:25:00 +0200
+ -- Ion Reguera <ion@stagelab.coop>  Tue, 29 Sep 2026 20:25:02 +0200
 
-cuems-common (1.1.0-2) bookworm; urgency=medium
+cuems-common (1.3.0-22) bookworm; urgency=medium
 
-  * debian/install: drop shipping of hostapd.service. That file is owned
-    by the upstream hostapd package; shipping it here causes dpkg -i to
-    fail with "trying to overwrite '/lib/systemd/system/hostapd.service'".
-    CUEMS customisation of hostapd's behaviour happens via the
-    hostapd.service.d/* dropin directory, which is kept.
+  * The 1.3.0-20 conffile retirement DELETED the host's live
+    /etc/network/interfaces on upgrade — the exact outcome its own
+    comment said it was preventing. dpkg-maintscript-helper's
+    prepare_rm_conffile moves the live file aside (unmodified -> .dpkg-
+    remove, which finish_rm_conffile deletes with NO backup; modified ->
+    .dpkg-bak), so after the upgrade the path is empty either way.
+    Nothing fails at the time: the running network survives in the
+    kernel, so the upgrade looks clean and the host comes up with no
+    bond0, no DHCP and no address at the NEXT reboot — hours or days
+    later, and at a venue that means a physical trip. Hit on
+    formitgo_default 2026-09-04 going 1.3.0-12 -> -21; the file was
+    modified there so it landed in .dpkg-bak and could be restored, but
+    a clone-image box whose file still matches the registered md5 loses
+    it outright. Fixed by snapshotting the file in the preinst and
+    restoring it in the postinst after the deregistration completes,
+    which keeps the intent (dpkg -S stops answering cuems-common, --
+    purge can no longer take the live config) without the collateral.
+    interfaces.cuems is a dead duplicate and is still removed.
 
- -- Ion Reguera <ion@stagelab.coop>  Thu, 16 Apr 2026 21:05:00 +0200
+ -- Ion Reguera <ion@stagelab.coop>  Fri, 04 Sep 2026 13:52:36 +0200
 
-cuems-common (1.1.0-1) bookworm; urgency=medium
+cuems-common (1.3.0-21) bookworm; urgency=medium
 
-  * merge rc_1 into debian/bookworm (48 commits): brings in accumulated
-    rc_1 work onto the release branch
-    - cuems-node-engine.service: update pkill patterns for the player
-      binary rename (audioplayer-cuems -> cuems-audioplayer, and
-      dmxplayer-cuems -> cuems-dmxplayer)
-    - plus accumulated OLA daemon configuration, systemd dependency
-      hardening, user-facing script relocation to /usr/bin, and other
-      packaging fixes from rc_1
-  * debian/install: drop duplicate cuems-controller-engine.service and
-    duplicate hostapd.service.d/* entries (merge-conflict leftovers)
-  * debian/postinst: add missing fi closing the
-    "Disabled unnecessary systemd services/timers" block
+  * NEW cuems-gpu-pin.service + /usr/lib/cuems/bin/cuems-gpu-pin: force the AMD
+    GPU's DPM level to `high` at boot, on measured hardware only (869eq54nj).
+    On the Maxtang FP530 (Picasso, 1002:15d8) sustained multi-4K decode
+    collapses amdgpu's DPM to ~210-277 MHz after the first heavy rung per boot;
+    only a reboot restores it, and newer GPU firmware does NOT fix it (tested
+    2/2 on 20250410-2, hang signature identical). Pinning rescues the box at a
+    measured +8 C (plateau 76.0 C at ~28 C ambient).
+    SHIPS INERT. The helper exits 0 unless BOTH enabled=true in the new
+    /etc/cuems/gpu-pin.conf (ships false) AND an allow-listed GPU is present,
+    so this changes nothing on any existing host, exactly like the enabled=
+    gate in cluster-poweroff.conf. The allow-list is one entry — the evidence
+    is Picasso-only, and a future AMD SKU gets its own thermal soak first.
+    The unit is enabled explicitly in postinst, not via WantedBy=: this
+    package's postinst carries no #DEBHELPER# token, so dh_installsystemd
+    generates nothing and a unit relying on WantedBy= alone would be installed
+    but never symlinked, i.e. silently never run.
+    Note for anyone writing a test against it: `high` is a CEILING, not a
+    floor. The SMU still bounds the clock by the package power budget
+    (550-985 MHz under load on this box, 1200 only in bursts), so any check of
+    the form "sclk >= X while pinned" is wrong and fails on healthy hardware.
+  * cuems-videocomposer.service: Environment=MALLOC_ARENA_MAX=4. Decode-thread
+    churn warms up ~31 glibc secondary arenas (the 8 x nproc default) that
+    glibc never unmaps — a bounded ~134 MB RSS plateau, not a leak. Measured
+    across an interleaved n=3 matrix with decode occupancy flat at 57-58 %
+    across all nine arms: -133.9 MB against within-treatment spreads of
+    13-22 MB, drops indistinguishable from control. Cap 4 rather than 1 keeps
+    3-4 arenas, so render and decode threads are not serialised through a
+    single malloc lock; cap 1's extra 38 MB was judged not worth that risk at
+    layer counts nobody has measured. Memory measure only — no effect on the
+    hang boundary, on drops, or on VRAM.
+  * cuems-hdmi-audio-map: detect the ALSA card instead of assuming Intel's
+    name. The generator hardcoded hw:PCH, which is the card name on Intel
+    hosts; on the AMD FP530 the HDMI card is `Generic`, so the generated
+    /etc/asound.conf named a device that does not exist. jackd-cuems then
+    failed to open it and crash-looped (235 restarts observed), taking
+    cuems-node-engine down with it as a failed dependency — a video node dead
+    at boot for an audio-routing reason. Now reads /proc/asound/card*/pcm*p/info
+    for an HDMI-capable card and falls back to PCH.
+  * videocomposer-flags.env.example: document the hang-guard operator flags
+    (--hang-guard, --vc-profile, --saturation-monitor) shipped by
+    cuems-videocomposer 0.1.2-6.
 
- -- Ion Reguera <ion@stagelab.coop>  Thu, 16 Apr 2026 20:45:00 +0200
+ -- Ion Reguera <ion@stagelab.coop>  Wed, 02 Sep 2026 18:34:00 +0200
+
+cuems-common (1.3.0-20) bookworm; urgency=medium
+
+  * interfaces.master: list ethernet0 before wifi0 in bond-slaves. A bond adopts
+    the MAC of its FIRST slave and forces it onto the others, so listing wifi0
+    first put the WiFi card's MAC on the ethernet wire — making a controller's
+    DHCP identity depend on a chip it does not need. Measured 2026-08-31: on a
+    kernel whose iwlwifi firmware was missing, wifi0 never appeared, the bond
+    fell back to ethernet0's MAC, the reservation missed, and the host came up
+    on a pool lease looking dead. The new order simply makes the adopted MAC
+    agree with the bond-primary that was already declared; failover is decided
+    by bond-primary + miimon and is unchanged, and the WiFi AP is unaffected
+    because hostapd unenslaves wifi0 before binding. Controller-only: nodes use
+    bridge0 and have no bond.
+  * Retire /etc/network/interfaces and /etc/network/interfaces.cuems via
+    rm_conffile in preinst/postinst/postrm. Versions old enough to ship them
+    left dpkg recording both as `obsolete` conffiles on every host that came
+    through the divert -> postinst-cp transition (verified on test2, 1.3.0-14).
+    Two consequences this retires: `dpkg -S /etc/network/interfaces` still
+    answered cuems-common, which reads as the package owning the live network
+    config when it does not; and `dpkg --purge` would have DELETED the host's
+    live /etc/network/interfaces, obsolete conffiles being removed on purge.
+    The repo's two dead duplicates are deleted with them — the shipped template
+    is usr/share/cuems/interfaces.master and always was.
+  * CLAUDE.md: correct two false clauses in the same sentence. The templates ARE
+    auto-deployed on first install (debian/postinst copies interfaces.master
+    when [ -z "$2" ]), and nodeconf DOES touch network plumbing
+    (CuemsNodeConf.py:770-777 copies the same template during controller
+    promotion) — the note claimed the opposite "confirmed by source audit".
+  * docs/node-identity-contract.md: say which MAC. The `mac` field is less
+    stable than its table implies on controllers, `ethernet0`'s permanent
+    address is what a DHCP reservation and WoL must key to, and the fleet's
+    three coexisting states (unfixed / hwaddress-pinned / reordered) are named
+    so an operator meeting a pinned box knows what they are looking at.
+
+ -- Ion Reguera <ion@stagelab.coop>  Mon, 31 Aug 2026 20:33:12 +0200
+
+cuems-common (1.3.0-19) bookworm; urgency=medium
+
+  * Retire /etc/default/grub.d/cuems-display.cfg, the last live remnant of the
+    HDMI warm-restart hack. It appended `i915.enable_dc=0` to
+    GRUB_CMDLINE_LINUX_DEFAULT; the hack was reverted in bd47669 (April 2026,
+    the black screen was a monitor-side setup problem) and the file was dropped
+    from debian/install — but with no rm_conffile, so dpkg marked it `obsolete`
+    and kept it on disk forever.
+  * Consequence, found on the FP530 on 2026-08-31: a fresh install has no such
+    file, while every host upgraded across the revert still carries the
+    parameter on EVERY boot entry, Debian's own included. Where an operator had
+    also hand-added it to /etc/default/grub, it appears TWICE:
+    `ro pci=nommconf i915.enable_dc=0 i915.enable_dc=0`. Nothing in any log says
+    so, and the fleet silently splits into two populations depending on whether
+    a box was installed before or after April.
+  * Handled with dpkg-maintscript-helper rm_conffile across preinst/postinst/
+    postrm, the pattern already used for the acpid files in 1.3.0-16 and for the
+    same reason (debhelper cannot inject here — see the note atop postinst).
+  * The postinst's update-grub then recompiles the menu without the parameter,
+    since rm_conffile has already moved the file out of the *.cfg glob that
+    grub-mkconfig sources.
+  * NOT touched: a copy hand-added to /etc/default/grub itself. That is
+    grub-common's conffile and host-level config; this package has no business
+    rewriting it, so it stays an operator action.
+
+ -- Ion Reguera <ion@stagelab.coop>  Sun, 31 Aug 2026 14:05:00 +0200
+
+cuems-common (1.3.0-18) bookworm; urgency=medium
+
+  * New /etc/grub.d/11_cuems_recovery: a GRUB boot entry that starts the box
+    with cuems-videocomposer masked, so an operator in front of a broken video
+    host always has a usable text console. The compositor takes DRM master
+    over every connected output, which means the console disappears exactly
+    when it is needed.
+  * The mask is applied with systemd.mask= on the kernel command line, not on
+    disk, so one ordinary reboot undoes it. quiet/splash are stripped so the
+    boot is readable. Only the compositor is masked — this is a console escape
+    hatch, not a "CUEMS off" switch.
+  * Why it is in the package at all: the idea existed on ONE machine as a
+    hand-placed /etc/grub.d/11_formitgo_recovery that no package owned
+    (dpkg -S found nothing) and that no other host had. postinst removes that
+    legacy file, so an upgraded FP530 does not end up with two entries.
+  * One entry per each of the TWO newest kernels, newest first, with a stable
+    --id (cuems-recovery-<kver>). The hand-written script always picked the
+    newest kernel, so its recovery entry inherited whatever was wrong with the
+    default boot — on the FP530 that is the backports 6.12.95, which comes up
+    on the wrong IP. Capped at two because this package's own postinst
+    disables apt-daily*.timer, so superseded kernels are never purged here.
+  * Kernel/initrd paths come from grub-mkconfig_lib
+    (make_system_path_relative_to_its_root + prepare_grub_to_access_device)
+    instead of a hardcoded /boot/vmlinuz-<kver>, which silently assumes /boot
+    is not a separate partition. A kernel with no matching initrd is skipped.
+  * postinst and postrm both run update-grub, guarded so a host without GRUB
+    still (de)configures cleanly — but with a WARNING on stderr rather than a
+    bare `|| true`. A broken update-grub is host-wide: /etc/grub.d/* runs
+    under set -e, so it also breaks the hook the kernel package runs.
+  * postrm is not optional: files shipped under /etc/ become dpkg conffiles
+    automatically, and neither remove nor purge regenerates grub.cfg. Without
+    the hook the compiled menu would keep offering a recovery entry for a
+    package that is gone.
+
+ -- Ion Reguera <ion@stagelab.coop>  Sun, 31 Aug 2026 13:20:00 +0200
+
+cuems-common (1.3.0-17) bookworm; urgency=medium
+
+  * cluster-poweroff.conf: new nodes_off= knob (default true, so no site's
+    behaviour changes). false powers the displays off and shuts the controller
+    down but leaves the cluster nodes running.
+  * Why it was needed: sala1 at Castillo Medina del Campo wants exactly that,
+    and with no knob the only way to express it was to withhold the
+    controller's SSH key from the node — encoding an operator decision as an
+    authentication failure. That is invisible in config, reads as a fault in
+    the journal ("Permission denied (publickey)"), silently reverts the day
+    someone installs the key for good reasons, and costs the full node_wait_s
+    on every power-off because a node that stays up is polled to the deadline
+    (measured: +120 s on every power-button press).
+  * Accepts the same true|yes|1|on vocabulary as enabled=, in both scripts.
+  * Stage 2 now logs an explicit "SKIPPED — nodes_off=..." line, so a site that
+    deliberately leaves its nodes up says so in the journal instead of looking
+    like a broken SSH.
+
+ -- Ion Reguera <ion@stagelab.coop>  Fri, 07 Aug 2026 14:13:44 +0200
+
+cuems-common (1.3.0-16) bookworm; urgency=medium
+
+  * Orderly cluster power-off on the physical power button, and confirmed
+    projector power-on at boot. Both OFF by default: see enabled= in the new
+    /etc/cuems/cluster-poweroff.conf. A fleet-wide upgrade therefore changes
+    no site's behaviour until a box is opted in.
+  * New cuems-cluster-poweroff.service: does nothing at boot, and on the way
+    down its ExecStop= powers the projectors off (PJLink), then the cluster
+    node(s) off over SSH, waits until they are really down, and hands back to
+    systemd to power the controller off. The ordering is what makes it work:
+    After=networking.service (ifupdown is what actually tears interfaces
+    down; network-online.target is a passive boot synchronisation point and
+    cannot carry a stop-direction guarantee) plus avahi-daemon.service AND
+    .socket, so PJLink and <node>.local resolution still work when it runs;
+    Before=cuems-power-bridge.service so the bridge has already stopped and
+    its _cancel_projector_on_task() has run, ruling out a POWR 1 racing our
+    POWR 0.
+  * The hook duplicates no protocol logic: it drives the installed
+    cuems-power-bridge library (PJLink driver, SSH fan-out, reachability
+    poller) against this host's own power-bridge.conf, so ssh_user, ssh_key,
+    poweroff_cmd, dry_run and projector_power_off_on_shutdown keep exactly
+    their bridge meanings. dry_run=true gives a full-fidelity, zero-risk
+    rehearsal of the whole sequence.
+  * Guards, each earning its place: it acts only when a poweroff/halt job is
+    actually in the transaction, so a reboot never kills the lamps (PJLink
+    answers ERR3 to POWR 1 during cooldown, so a reboot that powered them off
+    would return to a dark room) and `isolate rescue.target` or a stray
+    `systemctl stop` are inert; self-exclusion by node uuid and by exact
+    local-address membership, because a standalone controller is its own node
+    and a host can never observe ITSELF unreachable, so a missed self-entry
+    would burn the whole node_wait_s on every poweroff — and hostname
+    matching alone would not catch it, since nodeconf never ran and the OS
+    hostname is e.g. cupula1 while the avahi name is node01.local; and
+    idempotency (query display state and node liveness before acting), which
+    makes the second pass after a bridge-driven POST /shutdown a fast no-op
+    instead of a redundant SSH fan-out and a POWR 0 into a cooldown window.
+  * New cuems-displays-on.service: the bridge's projector_power_on_on_start
+    fires one power-on whose retry budget is ~4s, while lamp cooldown is tens
+    of seconds — so a fast power cycle left the room dark with a single
+    unconfirmed WARNING. This re-issues POST /poweron until every display
+    reports "on". Gated on projector_power_on_on_start as well as enabled=,
+    so sites with real fleets deliberately left dark are never commanded.
+  * RETIRED the dead acpid power-button chain:
+    /etc/acpi/events/powerbtn-acpi-support, powerbtn-custom-handler.sh and
+    cuems-power-button-waiter.sh (removed via a new
+    debian/cuems-common.maintscript, since they are conffiles), plus
+    /usr/bin/cuems-stop. acpid is not installed on any CUEMS host — verified
+    on isil, test2 and both Medina controllers — so none of it has ever run;
+    the button has always been handled by systemd-logind. Keeping it was a
+    booby trap: cuems-stop is hardcoded to a long-gone venue's relay
+    (192.168.3.20) and SSH targets (stagelab@192.168.2.20x), so installing
+    acpid for any reason would have resurrected it. The `cuems-stop` shell
+    ALIAS survives and is now unambiguous.
+  * New etc/systemd/logind.conf.d/10-cuems-power-button.conf pins
+    HandlePowerKey=poweroff. Behaviourally a no-op — it is already the
+    compiled-in default — but the new hook depends on a press producing an
+    ordinary orderly transaction, so the contract is now stated. Not
+    reloadable (CanReload=no on systemd 252), so it applies at next boot;
+    harmless, since it matches what is already in force.
+  * cuems-hdmi-audio-map: stop asserting that JACK uses multi_hdmi. The
+    generated asound.conf header said so unconditionally, which is FALSE on a
+    venue whose sound goes to a house PA rather than the projectors -- cupula2
+    runs jackd -dhw:PCH,0 (the ALC897 analog minijack) with every HDMI PCM
+    closed, and that line would send anyone debugging audio to the wrong
+    device. The header now reports the device actually configured in
+    DAEMON_ARGS (/etc/default/jack, a conffile that is NOT regenerated at
+    boot), flagging whether it is the minijack or the HDMI slots. Documentation
+    only; no behavioural change.
+  * Known blind spot, documented rather than papered over: `systemctl
+    poweroff --force` skips the orderly per-unit stop, so no ExecStop runs
+    and the projectors and nodes stay up.
+
+ -- Ion Reguera <ion@stagelab.coop>  Thu, 06 Aug 2026 12:29:07 +0200
+
+cuems-common (1.3.0-15) bookworm; urgency=medium
+
+  * journal maintenance: run on every host, and reclaim orphaned journal
+    directories.
+  * cuems-journal-vacuum.timer was WantedBy=cuems-controller.target, so
+    on a node it could never fire. Nodes need it too: they inherit the
+    same foreign machine-id journal directories from the master image,
+    and a node cloned from a controller keeps a /var/log/journal/remote
+    that nothing else would ever prune. Now WantedBy=timers.target, and
+    the postinst enables it outside the controller-only branch. Also
+    dropped PartOf=cuems-controller.target — a controller-target bounce
+    must not cancel log maintenance.
+  * cuems-journal-vacuum now also removes journal directories belonging
+    to OTHER machines, inherited by cloning a master image. Nothing
+    reclaimed them before: journald enforces SystemMaxUse= only inside
+    its own machine-id directory and the old sweep covered remote/ only,
+    so they were immortal — and journalctl --disk-usage does not count
+    them, which is why the growth stayed invisible. Guarded: never this
+    host's own directory, never remote/, the name must be machine-id
+    shaped, and the directory must contain journal files and nothing
+    else. Disable with CUEMS_JOURNAL_PRUNE_FOREIGN=0.
+  * A missing /var/log/journal/remote no longer exits the script early,
+    so the foreign-directory sweep still runs on hosts that never
+    collected journals. ReadWritePaths widened to /var/log/journal
+    accordingly.
+  * Measured before the fix: 17-22G of /var/log on each of three fleet
+    hosts (cupula2, isil controller, isil node01), ~11G of it orphaned
+    directories on every one; ~45G reclaimed.
+
+ -- Ion Reguera <ion@stagelab.coop>  Wed, 05 Aug 2026 12:14:50 +0200
+
+cuems-common (1.3.0-14) unstable; urgency=medium
+
+  * cuems-logs: expand unit globs on ALL merged queries, not only follow
+    mode. journalctl --merge -p N -u '<glob>' defeats match indexing on
+    systemd 252 — the identical -e query measured 34.5s with the glob vs
+    1.2s expanded (9 results either way) — so cuems-logs -e looked hung.
+
+ -- Ion Reguera <ion@stagelab.coop>  Wed, 29 Jul 2026 20:15:01 +0200
+
+cuems-common (1.3.0-13) unstable; urgency=medium
+
+  * cuems-logs: fix silent-empty follow mode. `journalctl --merge --follow
+    -u '<glob>'` yields ZERO entries on systemd 252 (each pair of those
+    options works; only the triple fails, and one glob poisons the whole
+    match set), and the no-argument cuems-logs invocation is exactly that
+    triple — so plain `cuems-logs` printed nothing while the cluster logged
+    normally. Globs are now resolved to literal unit names (local systemd
+    unit table + a time-boxed sweep of the merged journal) before handing
+    off to journalctl. Verified on the test2 controller: 0 -> 36 lines,
+    with -c and historical queries unchanged.
+  * cuems-logs: make --list-nodes finish. Enumerating hosts by streaming a
+    24h window through `sort -u` is O(entries) and ran for minutes on a
+    controller holding a few GB of collected node journals — read as "the
+    tool is broken". Now uses the journal's unique-value index
+    (`--field _HOSTNAME`) plus a per-host last-entry lookup (12.7s -> 1.5s
+    here), and stderr is no longer sent to /dev/null, so a real journalctl
+    failure is visible instead of masquerading as "no nodes".
+  * Journal retention, bounded from two sides. A controller left running ~3
+    months filled /var to 83%: 20 GB in /var/log/journal/remote (190
+    archived journals + 261 corrupt .journal~ from rotation storms) on top
+    of a 6 GB local journal. systemd-journal-remote 252 cannot express a
+    limit at all (journal-remote.conf accepts only Seal=, SplitMode= and
+    TLS options), so: journald.conf.d/cuems.conf now caps the LOCAL journal
+    (SystemMaxUse=8G, SystemKeepFree=10G, enforced continuously by
+    journald), and a new cuems-journal-vacuum script + daily timer prunes
+    the COLLECTED journals (defaults 8G/30d, overridable via systemctl
+    edit). Postinst enables the timer on controllers, same role-aware
+    pattern as the journal-remote/upload enables.
+
+ -- Ion Reguera <ion@stagelab.coop>  Tue, 29 Jul 2026 18:30:00 +0200
+
+cuems-common (1.3.0-12) unstable; urgency=medium
+
+  * cuems-node-engine.service: order After=olad.service. On a controller
+    (which runs both olad.service and node-engine, and node-engine spawns
+    cuems-dmxplayer) there was no ordering between them, so at cold boot the
+    player could start before olad.service bound 127.0.0.1:9010 and spawn a
+    rogue default-config olad that squats the port. olad.service then failed
+    with 'Address already in use', the Eurolite MK2 never registered, and DMX
+    stayed dead until manual recovery. Pure ordering (not Requires/Wants): a
+    no-op on nodes where olad isn't enabled, a wait-for-olad on controllers.
+  * cuems-ola-profile: add eurolite-mk2 profile. Eurolite USB-DMX512 PRO MK2
+    presents as a stock FTDI FT232R (0403:6001) and is claimed by the usbdmx
+    EurolitePro factory. The profile enables usbdmx, auto-detects the connected
+    FT232R serial from sysfs and pins eurolite_mk2_serial, and disables the
+    conflicting ftdidmx/usbserial/stageprofi plugins.
+
+ -- Ion Reguera <ion@stagelab.coop>  Wed, 01 Jul 2026 17:45:00 +0200
+
+cuems-common (1.3.0-11) unstable; urgency=medium
+
+  * Depend on libnss-mdns so every node can resolve `.local` names (notably
+    `controller.local`) via NSS. Its postinst patches /etc/nsswitch.conf with
+    the `mdns4_minimal [NOTFOUND=return]` hosts entry. Required by the engine's
+    Phase-2 controller late-binding (cuems-engine get_controller_ip resolves
+    controller.local first, falling back to the network_map <ip>). The rig
+    already had it installed; this guarantees it on fresh provisioning.
+
+ -- Ion Reguera <ion@stagelab.coop>  Fri, 12 Jun 2026 18:45:00 +0200
+
+cuems-common (1.3.0-10) unstable; urgency=medium
+
+  * cuems-nodeconf.service: drop RemainAfterExit=yes. cuems-nodeconf is now a
+    long-running daemon (resident avahi discovery loop + interface-scoped alias
+    supervision), not a one-shot. With Type=notify, RemainAfterExit=yes would
+    leave the unit 'active (exited)' when the daemon dies, masking the failure
+    from dependents and from Restart= monitoring. Pairs with the cuems-nodeconf
+    Phase-1 re-enable.
+
+ -- Ion Reguera <ion@stagelab.coop>  Fri, 12 Jun 2026 13:10:00 +0200
+
+cuems-common (1.3.0-9) unstable; urgency=medium
+
+  * rtpmidid.service.d/cuems-node-group.conf: order rtpmidid after avahi-daemon
+    (Wants=+After=avahi-daemon.service) so its libavahi-client connects to a
+    ready daemon and publishes its _apple-midi services. On cold boot rtpmidid
+    was starting ~170ms before avahi-daemon, deferring its registration and
+    (pre rtpmidid 26.06~1stagelab1) never committing it -> controller invisible
+    over mDNS, nodes never discover its MTC export, nodes get no MTC. Pairs with
+    the rtpmidid announce_all()-on-S_RUNNING fix. Deliberately avoids
+    network-online.target (documented ordering-cycle trap above the new lines).
+
+ -- Ion Reguera <ion@stagelab.coop>  Thu, 04 Jun 2026 18:40:00 +0200
+
+cuems-common (1.3.0-8) unstable; urgency=medium
+
+  * sudoers/99-cuems-poweroff: fix the systemctl path /sbin/systemctl ->
+    /usr/bin/systemctl. /sbin/systemctl does not exist on bookworm (usr-merge),
+    so the two `cuems ... /sbin/systemctl poweroff[ --no-block]` entries never
+    matched and were dead. The working /sbin/poweroff entry (what the bridge
+    actually uses) was unaffected; this only matters if controller_poweroff_cmd
+    is set to a systemctl invocation.
+
+ -- Ion Reguera <ion@stagelab.coop>  Thu, 04 Jun 2026 13:41:10 +0200
+
+cuems-common (1.3.0-7) unstable; urgency=medium
+
+  * sudoers: add 99-cuems-admin-poweroff granting cuems-admin passwordless
+    /sbin/poweroff. cuems-power-bridge now SSHes nodes as cuems-admin (which
+    has a login shell) instead of the nologin cuems service user; this lets
+    the unattended, no-TTY poweroff complete. Scoped to poweroff only — full
+    cuems-admin sudo still requires a password. New file (not an edit of
+    99-cuems-poweroff) to avoid a conffile prompt on upgrade. The bridge key
+    is additionally locked to this one command via a forced-command entry in
+    cuems-admin's authorized_keys (shipped by cuems-power-bridge deploy-keys).
+
+ -- Ion Reguera <ion@stagelab.coop>  Wed, 03 Jun 2026 19:11:53 +0200
+
+cuems-common (1.3.0-6) unstable; urgency=medium
+
+  * videocomposer: order VC after plymouth-quit-wait.service for the DRM-
+    master handoff (canonical [Unit] After=, replacing the runtime
+    ExecStartPre=plymouth --wait).
+  * jack-alsa-bridges: move StartLimit IntervalSec/Burst to [Unit] so
+    systemd honours them (they were silently ignored in [Service]).
+
+ -- Ion Reguera <ion@stagelab.coop>  Mon, 01 Jun 2026 21:25:32 +0200
+
+cuems-common (1.3.0-5) unstable; urgency=medium
+
+  * Retire the legacy per-conffile dpkg-divert + .cuems mechanism for eight
+    config files (it diverted several other packages' conffiles -- systemd,
+    isc-dhcp-server, isc-dhcp-client, avahi, xserver -- and the .cuems copy
+    sources are obsolete, so the copies were dead). postinst now migrates:
+    - journald/rsyslog policy moves to drop-ins (journald.conf.d/cuems.conf,
+      rsyslog.d/cuems.conf); their main conffiles are un-diverted and handed
+      back to systemd/rsyslog.
+    - dhclient.conf, isc-dhcp-server default, Xwrapper.config, hostapd.conf
+      (unused; cuems uses /run/cuems/hostapd.conf) are un-diverted + restored
+      to their owning package; cuems no longer ships them.
+    - avahi-daemon.conf + dhcpd.conf have no drop-in, so they stay a divert but
+      ship as /usr/share/cuems/ templates installed by postinst on FIRST
+      install only (operator edits survive upgrades). The avahi template no
+      longer hardcodes host-name -- avahi falls back to the OS hostname, fixing
+      the cloned-node mDNS collision.
+  * Stop shipping rsyslog.conf, avahi-daemon.conf, dhcpd.conf, hostapd.conf as
+    conffiles.
+
+ -- Ion Reguera <ion@stagelab.coop>  Mon, 01 Jun 2026 19:28:49 +0200
+
+cuems-common (1.3.0-4) unstable; urgency=medium
+
+  * Network interfaces: stop shipping /etc/network/interfaces as a conffile (it
+    is host- and role-specific) and replace the obsolete dpkg-divert +
+    interfaces.cuems mechanism. On FIRST install only, postinst takes over
+    /etc/network/interfaces with a reachable baseline
+    (/usr/share/cuems/interfaces.master), preserving any pre-existing file (e.g.
+    the debian-installer default) at .dpkg-old; on upgrades it is never touched
+    (operator / clone / role-template config wins). This is necessary because a
+    stock Debian interfaces names the original NICs, which our .link files
+    rename to ethernet0/ethernet1/wifi0 -- the stock file would otherwise go
+    stale and drop the network. Role templates (interfaces.master /
+    interfaces.node) still ship under /usr/share/cuems/. The old diversion is
+    removed cleanly (without --rename, leaving the live file as-is) and the
+    stale .dpkg-old dropped.
+
+ -- Ion Reguera <ion@stagelab.coop>  Mon, 01 Jun 2026 12:58:58 +0200
+
+cuems-common (1.3.0-3) unstable; urgency=medium
+
+  * rtpmidid: gate node startup on controller reachability via the
+    cuems-wait-controller ExecStartPre, fixing the cold-boot MTC zombie
+    where rtpmidid raced an unconfigured link-local route (control channel
+    up, no MTC data). No-op on controllers.
+  * videocomposer: wait for Plymouth to release DRM master before start,
+    fixing black panels (modeset "Permission denied") after boot.
+  * rtpmidid: set explicit port=5004 in the node [connect_to].
+  * Ship cuems-power-bridge poweroff sudoers; Shelly power-bridge support.
+  * network: persist Wake-on-LAN via post-up ethtool in interfaces.
+  * link files: correct 10-wifi0.link Path= to N97 default; document the
+    RTL8852BE driver gap on stock bookworm.
+  * Incorporate the debian/bookworm packaging line (merge): controller-engine
+    LD_LIBRARY_PATH for python_rtmidi's bundled libjack; CPU governor set to
+    performance + self-signed SSL cert provisioning in postinst; control
+    dependency refresh (add cpufrequtils, avahi-autoipd, libapache2-mod-dnssd,
+    ifenslave, net-tools; Conflicts network-manager; ddcutil promoted to
+    Depends); xinitrc.cuems conffile override. Built on the
+    debian/bookworm-pre_release_1 integration branch.
+
+ -- Ion Reguera <ion@stagelab.coop>  Mon, 01 Jun 2026 12:15:52 +0200
+
+cuems-common (1.3.0-2) unstable; urgency=medium
+
+  * Fix 10-ethernet0.link Path= to N97 default (pci-0000:01:00.0; was
+    pci-0000:03:00.0 which is the wifi slot on controller hardware).
+    Adds link-files.README documenting the hardware-mismatch hazard.
+
+ -- Ion Reguera <ion@stagelab.coop>  Wed, 20 May 2026 21:04:42 +0200
+
+cuems-common (1.3.0-1) unstable; urgency=medium
+
+  * Network logic fixes: check-ip.sh exit code, ExecStop teardown,
+    hostapd wifi0 bond detach, wifi-auto.sh dynamic-interface rewrite,
+    central /etc/cuems/ap.conf, WoL re-enabled on ethernet .link files
+    (regression fix).
+
+ -- Ion Reguera <ion@stagelab.coop>  Wed, 20 May 2026 20:50:00 +0200
+
+cuems-common (1.2.0-1) unstable; urgency=medium
+
+  * System hardening: pubkey-only sshd, cuems-admin operator account,
+    WPA2-protected AP, opt-in nftables WiFi fence, hostapd unit-override
+    removal.
+
+ -- Ion Reguera <ion@stagelab.coop>  Wed, 20 May 2026 19:36:05 +0200
 
 cuems-common (1.0.0-1) unstable; urgency=medium
 

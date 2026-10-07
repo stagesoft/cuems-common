@@ -1,0 +1,105 @@
+# cuems-common .link files — hardware-specific configuration
+
+cuems-common ships `etc/systemd/network/10-*.link` files that rename
+PCI ethernet/wireless NICs to stable names (`ethernet0`, `ethernet1`,
+`wifi0`) so the rest of the package (bond config, dhcpd interface,
+hostapd, etc) can reference them.
+
+The default values in the shipped package match the **N97 cluster
+node** hardware:
+
+| Logical name | PCI path             | Notes                                                                |
+|--------------|----------------------|----------------------------------------------------------------------|
+| `ethernet0`  | `pci-0000:01:00.0`   | Primary NIC, bond0 primary on controllers                            |
+| `ethernet1`  | `pci-0000:02:00.0`   | Cluster ipv4ll segment                                               |
+| `wifi0`      | `pci-0000:03:00.0`   | Realtek RTL8852BE on N97 + controller; needs `rtw89_8852be` driver   |
+
+## RTL8852BE driver caveat (N97-as-controller)
+
+The `.link` rule for `wifi0` only fires once a driver claims the PCI
+device and creates a netdev. The stock Debian 12 (bookworm) kernel
+ships `rtw89_8852ae` but NOT `rtw89_8852be`, so on an out-of-the-box
+N97 box `lspci -k -s 03:00.0` shows no "Kernel driver in use:" line,
+no `wifi0` appears in `ip link`, and the `10-wifi0.link` rename is a
+silent no-op.
+
+This is fine while the N97 box runs as a **node** — nothing on a node
+binds `wifi0`. It becomes a blocker only on promotion to **controller**
+(hostapd would fail to bind a non-existent interface, and the AP
+self-suppression gates can't evaluate `wifi0`'s carrier state).
+
+Cuems-common does NOT pull in a kernel-side fix automatically — kernel
+selection is a fleet-management decision, not a package one. If/when an
+N97 box is promoted to controller, the operator is responsible for
+ensuring `rtw89_8852be` is available (out-of-tree DKMS build, vendor
+kernel, etc). Verify with `modinfo rtw89_8852be` before relying on the
+WiFi AP.
+
+## If your hardware has different PCI paths
+
+**Check first** — `ls -l /sys/class/net/*/device | grep -v lo` will
+show the actual PCI BDF for each NIC.
+
+If the package defaults don't match your topology, you MUST edit
+`/etc/systemd/network/10-*.link` to use your host's actual PCI paths
+**before** rebooting. Otherwise udev's `net_setup_link` builtin will
+fail to match, fall back to `99-default.link`, and the interfaces
+will come up with kernel-default names (`enp1s0`, `enx*`, etc),
+breaking the bond config and every service that references the
+`ethernet0` / `ethernet1` names.
+
+## Surviving cuems-common upgrades
+
+These files are dpkg conffiles. On upgrade, if you've customized them
+for your hardware, dpkg will prompt:
+
+```
+Configuration file '/etc/systemd/network/10-ethernet0.link'
+ ==> Modified (by you or by a script) since installation.
+ ==> Package distributor has shipped an updated version.
+   What would you like to do about it ?
+```
+
+**Pick `N` (keep your version)** unless you know the new defaults
+match your hardware. Picking `Y` (install package version) on a
+host that doesn't match the N97 default WILL break interface naming
+on the next reboot.
+
+`dpkg -i --force-confnew` is the same outcome, applied silently.
+Never use it on a non-N97 host without verifying.
+
+## Recovering from a broken install
+
+If a force-confnew install (or a wrong `Y` answer to the conffile
+prompt) has corrupted your `.link` files:
+
+```sh
+# Inspect the actual PCI topology
+for iface in ethernet0 ethernet1 wifi0; do
+    [ -e /sys/class/net/$iface ] && \
+        echo "$iface: $(readlink -f /sys/class/net/$iface/device | sed 's|.*/||')"
+done
+# (Or for whichever names the system assigned — check `ip -br link`.)
+
+# Re-write the .link files with the correct paths
+sudo $EDITOR /etc/systemd/network/10-ethernet0.link
+# (set Match=Path=pci-<your-actual-path>)
+
+# Don't reboot until verified — udevadm test-builtin shows what udev would do:
+sudo udevadm test-builtin net_setup_link /sys/class/net/ethernet0 2>&1 | grep ID_NET_LINK_FILE
+# Should print /etc/systemd/network/10-ethernet0.link, NOT 99-default.link
+```
+
+## Why this is a known sharp edge
+
+`Match=Path=` ties the .link to a specific PCI BDF. There is no
+host-portable matching directive that works across the fleet for
+"the NIC the operator wants called ethernet0" — `MACAddress=` is
+per-device, `Driver=` doesn't discriminate between two NICs of the
+same chip, `OriginalName=` matches what the kernel called the device
+before renaming (also topology-dependent).
+
+The long-term fix is to auto-generate per-host .link files at
+postinst time from `/sys/class/net/*/device` (so every host gets a
+correct file regardless of what the package ships). Tracked
+separately. Until then, this README is your safety net.

@@ -1,0 +1,147 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# cuems-gpu-pin — pin the AMD GPU clock to `high` at boot, where measured.
+#
+# WHY (869eq54nj). On the Maxtang FP530 (AMD Picasso, 1002:15d8) sustained
+# multi-4K decode collapses amdgpu's DPM to ~210-277 MHz after the first heavy
+# rung per boot. Only a reboot restores it. Newer GPU firmware does NOT fix it
+# (tested 2/2: the hang and the collapse both reproduce on 20250410-2).
+# Forcing `high` rescues the box, at a measured +8 C (plateau 76.0 C at ~28 C
+# ambient, bench).
+#
+# WHAT `high` ACTUALLY DOES — read this before writing a test against it.
+# `high` is a CEILING, NOT A FLOOR. The SMU still bounds the clock inside the
+# package power budget, so a healthy pinned box runs 550-985 MHz under load and
+# touches 1200 only in bursts. Any check of the form "sclk >= X while pinned"
+# is therefore wrong and will fail on healthy hardware.
+#
+# GATED, deliberately, on `enabled=` in /etc/cuems/gpu-pin.conf, shipped FALSE —
+# the same pattern as cuems-cluster-poweroff. This package ships to every CUEMS
+# host; a fleet-wide upgrade for an unrelated fix must not start pinning clocks
+# (and +8 C) on someone's AMD box that nobody has soaked. Per-host opt-in only.
+#
+# ALLOW-LIST, not vendor-wide: the evidence is Picasso-only. A future AMD SKU
+# gets its own thermal soak, then one line here. This also avoids pinning both
+# GPUs on an iGPU+dGPU host.
+#
+# EXIT CONTRACT (the order matters; cuems-gpu-pin.service asserts on it):
+#   conf missing/unreadable/not enabled  -> log, exit 0   (no-op)
+#   no allow-listed PCI device           -> log, exit 0   (no-op, immediate)
+#   allow-listed device but no DPM knob  -> log, EXIT 1   (loud: the one box
+#                                                          this exists for is
+#                                                          silently unprotected)
+#   write refused / read-back mismatch   -> log, EXIT 1
+# A healthy box never shows a failed unit. An unprotected FP530 always does.
+
+set -uo pipefail
+
+# Overridable ONLY so the conf-gate paths can be exercised off-box (step 1 of
+# the G5 plan; the gate is otherwise never tested until it reaches hardware).
+# Note the boundary: this redirects which *conf* is read, never where the clock
+# is written — there is deliberately no sysfs-root override, because that would
+# let a test pass while the real write path stayed unproven. systemd never sets
+# this, so in production it is always the path below.
+CONF="${CUEMS_GPU_PIN_CONF:-/etc/cuems/gpu-pin.conf}"
+
+# PCI ids we have actually measured. vendor:device, lowercase, no 0x.
+ALLOWLIST="1002:15d8"
+
+# amdgpu binds asynchronously via udev, so the DRM attribute can appear after
+# this unit starts. The wait is bounded and LOGGED — a `ConditionPathExists`
+# on the unit is evaluated once at start and would silently skip the pin on a
+# fast boot, which is the failure mode this whole script exists to avoid.
+WAIT_S=60
+
+enabled=false
+level=high
+
+# shellcheck source=/dev/null
+[ -r "$CONF" ] && . "$CONF"
+
+DRY_RUN=false
+[ "${1:-}" = "--dry-run" ] && DRY_RUN=true
+
+# Plain echo: systemd captures stdout into the journal (SyslogIdentifier).
+log() { echo "$*"; }
+
+case "$enabled" in
+    true|yes|1|on) ;;
+    *) log "disabled (enabled=$enabled in $CONF) — not touching the GPU clock"
+       exit 0 ;;
+esac
+
+# --- 2. is an allow-listed device present? -----------------------------------
+# /sys/bus/pci/devices is populated long before DRM, so this answers instantly
+# on every host. Only when it matches do we pay the wait below — otherwise a
+# Type=oneshot in cuems-node.target would block every Intel box for WAIT_S,
+# which is exactly the hazard cuems-displays-on.service documents in its header.
+targets=""
+for d in /sys/bus/pci/devices/*; do
+    if [ ! -r "$d/vendor" ] || [ ! -r "$d/device" ]; then continue; fi
+    v=$(tr -d '\n' < "$d/vendor"); v=${v#0x}
+    p=$(tr -d '\n' < "$d/device"); p=${p#0x}
+    case " $ALLOWLIST " in
+        *" ${v}:${p} "*) targets="$targets $d" ;;
+    esac
+done
+
+if [ -z "$targets" ]; then
+    log "no allow-listed GPU on this host (allow-list: $ALLOWLIST) — not pinning"
+    exit 0
+fi
+
+# --- 3/4. pin each target ----------------------------------------------------
+rc=0
+for d in $targets; do
+    addr=$(basename "$d")
+    knob="$d/power_dpm_force_performance_level"
+
+    # Bounded, logged wait for the DPM attribute.
+    waited=0
+    while [ ! -e "$knob" ] && [ "$waited" -lt "$WAIT_S" ]; do
+        sleep 1
+        waited=$((waited + 1))
+    done
+
+    if [ ! -e "$knob" ]; then
+        # An allow-listed device with no DPM knob after the wait means amdgpu
+        # did not bind, or bound with dpm off (amdgpu.dpm=0 on a drifted
+        # kernel cmdline — this host has had exactly that class of drift
+        # before). The mitigation is NOT applied on the one machine it was
+        # measured for, so this is loud, not a no-op.
+        log "ERROR $addr: no power_dpm_force_performance_level after ${WAIT_S}s"
+        log "ERROR the GPU clock is NOT pinned on a box that needs it (869eq54nj)"
+        log "ERROR check: amdgpu bound? \`amdgpu.dpm=0\` on the kernel cmdline?"
+        rc=1
+        continue
+    fi
+
+    before=$(cat "$knob" 2>/dev/null || echo "?")
+
+    if [ "$DRY_RUN" = true ]; then
+        log "DRY-RUN $addr: would write '$level' (currently '$before')"
+        continue
+    fi
+
+    if ! echo "$level" > "$knob" 2>/dev/null; then
+        log "ERROR $addr: write of '$level' refused (was '$before')"
+        rc=1
+        continue
+    fi
+
+    # Read back. sysfs accepts the write and reports the effective value, so
+    # this is the only thing that proves the pin took.
+    after=$(cat "$knob" 2>/dev/null || echo "?")
+    if [ "$after" != "$level" ]; then
+        log "ERROR $addr: wrote '$level' but reads back '$after'"
+        rc=1
+        continue
+    fi
+
+    log "$addr: DPM pinned '$before' -> '$after' (869eq54nj; costs ~+8 C)"
+done
+
+exit $rc

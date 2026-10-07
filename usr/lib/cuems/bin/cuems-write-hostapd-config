@@ -1,0 +1,72 @@
+#!/usr/lib/cuems/bin/python3
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+"""Render /run/cuems/hostapd.conf from template + cluster.conf.
+
+Invoked from hostapd.service ExecStartPre on every (re)start. SSID is
+derived from /etc/cuems/cluster.conf (cluster_name=<x> -> "cuems-<x>";
+absent or "default" -> bare "cuems"). The WPA passphrase comes from
+the DEFAULT_WIFI_PASSPHRASE env var (set by the systemd drop-in) or
+falls back to the published default literal below — see
+docs/default-credentials.md for the operator-facing disclosure.
+
+Literal str.replace is injection-safe regardless of passphrase content,
+so operators can rotate to passphrases containing pipes / backslashes /
+ampersands without breaking the renderer.
+"""
+import os
+import re
+import sys
+import tempfile
+import shutil
+from pathlib import Path
+
+TEMPLATE = Path("/usr/share/cuems/hostapd/hostapd.conf.template")
+CLUSTER_CONF = Path("/etc/cuems/cluster.conf")
+OUT = Path("/run/cuems/hostapd.conf")
+
+DEFAULT_PASSPHRASE = "cuems-wifi-default"
+
+
+def derive_ssid() -> str:
+    ssid = "cuems"
+    if CLUSTER_CONF.is_file():
+        for line in CLUSTER_CONF.read_text().splitlines():
+            m = re.match(r"\s*cluster_name\s*=\s*(\S+)", line)
+            if m and m.group(1) != "default":
+                ssid = f"cuems-{m.group(1)}"
+                break
+    return ssid
+
+
+def main() -> int:
+    if not TEMPLATE.is_file():
+        print(
+            f"cuems-write-hostapd-config: missing template {TEMPLATE}",
+            file=sys.stderr,
+        )
+        return 1
+
+    ssid = derive_ssid()
+    passphrase = os.environ.get("DEFAULT_WIFI_PASSPHRASE", DEFAULT_PASSPHRASE)
+
+    body = TEMPLATE.read_text()
+    body = body.replace("@@SSID@@", ssid)
+    body = body.replace("@@WPA_PASSPHRASE@@", passphrase)
+
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        "w", dir=OUT.parent, delete=False
+    ) as tf:
+        tf.write(body)
+        tmp = Path(tf.name)
+    os.chmod(tmp, 0o600)
+    shutil.move(str(tmp), str(OUT))
+
+    print(f"cuems-write-hostapd-config: wrote {OUT} (ssid={ssid})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

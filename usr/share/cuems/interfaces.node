@@ -18,6 +18,8 @@ iface bridge0 inet ipv4ll
     gateway 192.254.1.1
     dns-nameservers 192.254.1.1
     bridge_ports ethernet0 ethernet1
+    post-up /usr/sbin/ethtool -s ethernet0 wol g || true
+    post-up /usr/sbin/ethtool -s ethernet1 wol g || true
 
 
 # wireless wlan0

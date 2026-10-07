@@ -1,6 +1,14 @@
 [Unit]
 Description=cuems-midiconnector
-PartOf=cuems-controller.target
+# Bind to cuems-node.target so the daemon runs on every CUEMS host.
+# cuems-controller.target Requires=cuems-node.target, so controllers
+# also pull it in transitively — no per-role drop-in needed.
+PartOf=cuems-node.target
+# rtpmidid must be up before we scan ALSA seq: the daemon's startup
+# wiring pass would otherwise miss the rtpmidid client and rely on a
+# follow-up CLIENT_START event.
+Requires=rtpmidid.service
+After=rtpmidid.service avahi-daemon.service
 StartLimitBurst=5
 StartLimitIntervalSec=33
 
@@ -8,9 +16,13 @@ StartLimitIntervalSec=33
 User=cuems
 Group=cuems
 SupplementaryGroups=audio
-Type=simple
+# Type=notify so systemd treats the unit as active only once the ALSA
+# port is created and the event loop is running. The daemon calls
+# sd_notify("READY=1") via cuemsutils.tools.SignalEngine.notify_systemd().
+Type=notify
+NotifyAccess=main
 Restart=on-failure
-RestartSec=10
+RestartSec=5
 StandardOutput=journal
 StandardError=journal
 TimeoutStopSec=10
@@ -24,4 +36,4 @@ ProtectHome=read-only
 ReadWritePaths=/opt/cuems_library /tmp
 
 [Install]
-WantedBy=cuems-controller.target
+WantedBy=cuems-node.target

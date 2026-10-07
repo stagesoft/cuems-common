@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 set -e
 
 # CUEMS Common package pre-installation script
@@ -7,6 +10,66 @@ set -e
 
 CUEMS_USER="cuems"
 CUEMS_HOME="/var/lib/cuems"
+
+# Retire the dead acpid power-button conffiles (1.3.0-16). This is the phase
+# that moves them aside; postinst finishes and postrm restores on abort — all
+# three are needed. Hand-written rather than declared in a
+# debian/*.maintscript: that mechanism only reaches scripts carrying debhelper's
+# substitution token, which postinst and postrm here do not have, and adding it would
+# inject dh_installsystemd's snippets for every unit for the first time (see
+# the comment at the top of debian/postinst).
+if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
+    for _cf in /etc/acpi/powerbtn-custom-handler.sh \
+               /etc/acpi/cuems-power-button-waiter.sh \
+               /etc/acpi/events/powerbtn-acpi-support; do
+        dpkg-maintscript-helper rm_conffile "$_cf" 1.3.0-16~ cuems-common -- "$@"
+    done
+    unset _cf
+fi
+
+# Retire the obsolete GRUB display drop-in (1.3.0-19).
+# /etc/default/grub.d/cuems-display.cfg carried `i915.enable_dc=0` for the HDMI
+# warm-restart hack. That hack was REVERTED in April 2026 (bd47669) — the black
+# screen was a monitor-side setup problem, not a GPU/driver one — and the file
+# was dropped from debian/install without an rm_conffile. dpkg therefore marks it
+# `obsolete` and keeps it on disk forever: a fresh install has no such file, but
+# every host upgraded across the revert still appends the parameter to EVERY boot
+# entry, Debian's own included. Nothing in any log says so. Same family as the
+# acpid conffiles above, and hand-written for the same reason.
+if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
+    dpkg-maintscript-helper rm_conffile \
+        /etc/default/grub.d/cuems-display.cfg 1.3.0-19~ cuems-common -- "$@"
+fi
+
+# /etc/network/interfaces and /etc/network/interfaces.cuems were shipped by
+# versions old enough that dpkg still records them as `obsolete` conffiles on
+# every host that came through the divert -> postinst-cp transition — verified
+# on test2 (1.3.0-14) in 2026-08. Two consequences that this retires: `dpkg -S
+# /etc/network/interfaces` still answers cuems-common, which reads as "the
+# package owns the live network config" and it does not; and a `dpkg --purge`
+# would DELETE the host's live /etc/network/interfaces, because obsolete
+# conffiles are removed on purge. The live file is host-specific and must
+# survive purge. Same family as the acpid and grub-display conffiles above.
+# ⚠ rm_conffile MOVES THE LIVE FILE ASIDE. Per dpkg-maintscript-helper's
+# prepare_rm_conffile: unmodified -> .dpkg-remove, which finish_rm_conffile
+# DELETES in the postinst with no backup at all; modified -> .dpkg-backup ->
+# .dpkg-bak. Either way /etc/network/interfaces is gone when the upgrade ends,
+# and the host comes up with no bond0, no DHCP and no address on the next boot
+# — a fault that only shows itself at reboot, hours or days later. The live
+# network config has to survive, so snapshot it here and put it back in the
+# postinst, once dpkg has dropped the conffile record. interfaces.cuems is a
+# dead duplicate and is genuinely meant to go.
+if [ -e /etc/network/interfaces ]; then
+    mkdir -p /var/backups
+    cp -a /etc/network/interfaces /var/backups/cuems-common.interfaces.presave
+fi
+
+if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
+    for _cf in /etc/network/interfaces /etc/network/interfaces.cuems; do
+        dpkg-maintscript-helper rm_conffile "$_cf" 1.3.0-20~ cuems-common -- "$@"
+    done
+fi
+
 
 case "$1" in
     install|upgrade)

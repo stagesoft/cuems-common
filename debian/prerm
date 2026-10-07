@@ -1,0 +1,75 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+set -e
+
+# CUEMS Common package pre-removal script (new in 1.3.0-23).
+#
+# Until now this package had no prerm of its own, so debhelper generated one
+# holding only dh_installsystemd's unit-stop snippet (on `remove`). The token
+# at the end keeps that snippet exactly as it was. It is safe HERE, unlike in
+# postinst/postrm (see the top of debian/postinst): in a prerm debhelper only
+# ever injects the stop-on-remove, never an enable or a restart.
+#
+# What this undoes is the part of the controller network modes that a
+# downgrade would otherwise turn against the host:
+#   - the exit hook symlink would dangle once /usr/lib/cuems/dhclient-hooks/
+#     is gone;
+#   - the guard timer would point at a unit the older package does not ship;
+#   - cuems-wifi.service, if THIS version armed and enabled it, would come
+#     back at the next boot with the older unit's `ip link set ethernet0 down`
+#     takeover — on a box that never had its AP enabled before.
+_undo=no
+case "$1" in
+    remove)
+        _undo=yes
+        ;;
+    upgrade)
+        # `prerm upgrade <new-version>`: only when going back below 1.3.0-23.
+        if [ -n "$2" ] && dpkg --compare-versions "$2" lt 1.3.0-23~; then
+            _undo=yes
+        fi
+        ;;
+esac
+
+if [ "$_undo" = yes ]; then
+    # If the AP data path is up, take it down NOW, while this version's
+    # cuems-ap-path still exists. The older unit's ExecStop only knows
+    # `ip link set ethernet0 up`: after the unpack nothing could move
+    # 192.168.6.1 from wifi0 back to bond0, and the box would have no path
+    # back until a reboot. (On `remove` debhelper's stop, below, does it.)
+    # Only where THIS package put the address on wifi0: never in manual, where
+    # the AP is the site's and stopping it is not ours to do.
+    if [ "$1" = upgrade ] && [ -d /run/systemd/system ] \
+       && [ -x /usr/lib/cuems/bin/cuems-ap-path ] \
+       && [ -r /usr/lib/cuems/net-mode.sh ] \
+       && command -v systemctl >/dev/null 2>&1 \
+       && ( . /usr/lib/cuems/net-mode.sh
+            cuems_net_is_controller && cuems_net_load \
+                && [ "$cuems_net_mode" != manual ] \
+                && cuems_net_has wifi0 "$cuems_net_gw" ); then
+        systemctl stop cuems-wifi.target cuems-wifi.service 2>/dev/null || true
+        /usr/lib/cuems/bin/cuems-ap-path down 2>/dev/null || true
+    fi
+
+    rm -f /etc/dhcp/dhclient-exit-hooks.d/cuems-fallback
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl disable cuems-net-guard.timer 2>/dev/null || true
+        if [ -d /run/systemd/system ]; then
+            systemctl stop cuems-net-guard.timer 2>/dev/null || true
+        fi
+        # net-mode.conf exists from 1.3.0-23 on, so AP_ARMED=yes in it can
+        # only have been written by this version.
+        if grep -qx 'AP_ARMED=yes' /etc/cuems/net-mode.conf 2>/dev/null; then
+            systemctl disable cuems-wifi.service 2>/dev/null || true
+            echo "cuems-common: cuems-wifi.service disabled (its AP was armed by 1.3.0-23)"
+        fi
+    fi
+fi
+unset _undo
+
+#DEBHELPER#
+
+exit 0

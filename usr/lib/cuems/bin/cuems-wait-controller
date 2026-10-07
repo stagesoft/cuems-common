@@ -1,0 +1,20 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# Node-only rtpmidid ExecStartPre. Block until the controller answers a ping
+# so rtpmidid's first RTP-MIDI connect doesn't race an unconfigured
+# link-local route at cold boot and end up a zombie (CK latency pings flow
+# but no MTC ever crosses). Bounded by `timeout`; if it expires we start
+# rtpmidid anyway and let its own retry be the fallback -- never block boot
+# forever. No-op on the controller (detected via /etc/cuems/master.ip, the
+# same role sentinel as every other CUEMS hook). `ping -4` forces IPv4 so we
+# probe the address the RTP session uses, not the fe80:: avahi also publishes.
+
+[ -f /etc/cuems/master.ip ] && exit 0
+
+timeout "${CUEMS_WAIT_CONTROLLER_TIMEOUT:-60}" sh -c \
+    'until ping -4 -c1 -W1 "$1" >/dev/null 2>&1; do sleep 1; done' \
+    _ "${CUEMS_CONTROLLER_HOST:-controller.local}" || true
+exit 0

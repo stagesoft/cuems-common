@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 
 # Script to ensure all CUEMS scripts are executable
 # This can be run before packaging to verify permissions
@@ -19,6 +22,11 @@ echo "Ensuring CUEMS scripts are executable..."
 SCRIPTS=(
     "scripts/check-ip.sh"
     "scripts/wifi-auto.sh"
+    "scripts/cuems-ap-path"
+    "scripts/cuems-bond0-dhclient"
+    "scripts/cuems-net-guard"
+    "scripts/cuems-dhcp-probe"
+    "usr/bin/cuems-net-mode"
     "usr/bin/cuems-healthcheck"
     "usr/bin/cuems-config-node"
     "scripts/validate-systemd.sh"

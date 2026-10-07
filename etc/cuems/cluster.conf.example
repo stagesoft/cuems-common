@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+
+# /etc/cuems/cluster.conf — CUEMS cluster identity (optional)
+#
+# If this file exists, cuems-nodeconf prefixes cluster_name to the OS
+# hostname assigned during node adoption: <cluster_name>-<role_id>
+# (e.g. museo-planta1-controller, museo-planta1-node01).
+#
+# If the file is absent (or cluster_name=default), nodeconf uses role_id
+# without prefix: controller, node01, node02, ...
+#
+# This file is intended for multi-cluster deployments where several CUEMS
+# installations coexist and share infrastructure (e.g. a central log
+# collector). The single-cluster default needs no configuration.
+#
+# To enable:
+#   sudo cp /usr/share/doc/cuems-common/cluster.conf.example /etc/cuems/cluster.conf
+#   sudo $EDITOR /etc/cuems/cluster.conf   # set cluster_name=<your-cluster>
+#
+# After editing, nodes affected must re-run identity application and reboot:
+#   sudo cuems-nodeconf apply-identity
+#   sudo reboot
+#
+# NOTE: cuems-logs reads this file via cuems-nodeconf; --cluster CLI flag
+# is reserved but not implemented yet (single-cluster lookup only).
+
+# cluster_name=default

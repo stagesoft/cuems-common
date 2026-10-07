@@ -7,7 +7,7 @@ ADDITIVE=false
 
 usage() {
     echo "Usage: cuems-ola-profile [--add] <profile> [<profile>...]"
-    echo "Profiles: pro, opendmx, artnet, sacn"
+    echo "Profiles: pro, opendmx, eurolite-mk2, artnet, sacn"
     echo "  --add   Add to current config instead of resetting all plugins first"
     echo ""
     echo "All profiles enable ArtNet + sACN (E1.31) by default (no conflicts)."
@@ -15,10 +15,13 @@ usage() {
     echo "Examples:"
     echo "  cuems-ola-profile pro              # Enttec Pro/DMXking + ArtNet + sACN"
     echo "  cuems-ola-profile opendmx          # Enttec Open DMX + ArtNet + sACN"
+    echo "  cuems-ola-profile eurolite-mk2     # Eurolite USB-DMX512 PRO MK2 (auto-detects FTDI serial)"
+    echo "  cuems-ola-profile eurolite-mk2:SERIAL  # ...or pin an explicit FTDI serial"
     echo "  cuems-ola-profile artnet            # Network-only (ArtNet + sACN)"
     echo ""
     echo "Plugin compatibility:"
     echo "  - 'pro' and 'opendmx' are MUTUALLY EXCLUSIVE (usbpro vs ftdidmx conflict)"
+    echo "  - 'eurolite-mk2' is MUTUALLY EXCLUSIVE with pro/opendmx (FTDI device contention)"
     echo "  - ArtNet and sACN are always enabled (safe with all profiles)"
     exit 1
 }
@@ -41,6 +44,21 @@ disable_all_plugins() {
     done
 }
 
+# Print the serial of every connected FTDI FT232R (VID 0403 / PID 6001),
+# one per line. That is how the Eurolite USB-DMX512 PRO MK2 enumerates
+# (stock FTDI EEPROM), so we use it to auto-pin eurolite_mk2_serial.
+detect_mk2_serials() {
+    local d v p ser
+    for d in /sys/bus/usb/devices/*/; do
+        [[ -r "$d/idVendor" && -r "$d/idProduct" ]] || continue
+        v=$(cat "$d/idVendor" 2>/dev/null || true)
+        p=$(cat "$d/idProduct" 2>/dev/null || true)
+        [[ "$v" == "0403" && "$p" == "6001" ]] || continue
+        ser=$(cat "$d/serial" 2>/dev/null || true)
+        [[ -n "$ser" ]] && echo "$ser"
+    done
+}
+
 [[ $# -eq 0 ]] && usage
 
 # Parse --add flag (can appear anywhere)
@@ -58,14 +76,20 @@ done
 # Conflict check: pro and opendmx are mutually exclusive
 HAS_PRO=false
 HAS_OPENDMX=false
+HAS_MK2=false
 for profile in "${PROFILES[@]}"; do
     case "$profile" in
         pro) HAS_PRO=true ;;
         opendmx) HAS_OPENDMX=true ;;
+        eurolite-mk2|eurolite-mk2:*) HAS_MK2=true ;;
     esac
 done
 if $HAS_PRO && $HAS_OPENDMX; then
     echo "ERROR: 'pro' and 'opendmx' are mutually exclusive (usbpro vs ftdidmx conflict)" >&2
+    exit 1
+fi
+if $HAS_MK2 && { $HAS_PRO || $HAS_OPENDMX; }; then
+    echo "ERROR: 'eurolite-mk2' is mutually exclusive with pro/opendmx (FTDI device contention)" >&2
     exit 1
 fi
 
@@ -106,6 +130,46 @@ for profile in "${PROFILES[@]}"; do
             else
                 echo "  Blacklisted and unloaded ftdi_sio."
             fi
+            ;;
+        eurolite-mk2|eurolite-mk2:*)
+            # Eurolite USB-DMX512 PRO MK2: presents as a stock FTDI FT232R
+            # (VID 0403 / PID 6001). The usbdmx EurolitePro factory claims it
+            # when enable_eurolite_mk2=true OR the device serial is pinned via
+            # eurolite_mk2_serial. With no explicit "eurolite-mk2:<serial>" we
+            # auto-detect the connected FT232R and pin its serial.
+            MK2_SERIAL="${profile#eurolite-mk2}"
+            MK2_SERIAL="${MK2_SERIAL#:}"
+            echo "Enabling profile: eurolite-mk2 (Eurolite USB-DMX512 PRO MK2)"
+            enable_plugin "ola-usbdmx.conf"
+            USBDMX_CONF="$CONF_DIR/ola-usbdmx.conf"
+            if [[ -z "$MK2_SERIAL" ]]; then
+                mapfile -t MK2_FOUND < <(detect_mk2_serials)
+                if [[ ${#MK2_FOUND[@]} -eq 1 ]]; then
+                    MK2_SERIAL="${MK2_FOUND[0]}"
+                    echo "  Auto-detected FTDI FT232R serial: $MK2_SERIAL"
+                elif [[ ${#MK2_FOUND[@]} -gt 1 ]]; then
+                    echo "ERROR: multiple FTDI FT232R devices found: ${MK2_FOUND[*]}" >&2
+                    echo "  Pin one explicitly: cuems-ola-profile eurolite-mk2:<serial>" >&2
+                    exit 1
+                else
+                    echo "  No FTDI FT232R (0403:6001) connected; enabling global MK2"
+                    echo "  detection so the device is claimed once plugged in."
+                fi
+            fi
+            if [[ -n "$MK2_SERIAL" ]]; then
+                sed -i "s/^eurolite_mk2_serial = .*/eurolite_mk2_serial = $MK2_SERIAL/" "$USBDMX_CONF"
+                sed -i 's/^enable_eurolite_mk2 = true/enable_eurolite_mk2 = false/' "$USBDMX_CONF"
+                echo "  Pinned MK2 by FTDI serial: $MK2_SERIAL"
+            else
+                sed -i 's/^enable_eurolite_mk2 = false/enable_eurolite_mk2 = true/' "$USBDMX_CONF"
+                sed -i 's/^eurolite_mk2_serial = .*/eurolite_mk2_serial =/' "$USBDMX_CONF"
+                echo "  Enabled global MK2 detection (any FTDI FT232R)."
+            fi
+            # ftdidmx / usbserial(usbpro) / stageprofi contend for the same FTDI
+            # device; force them off even in --add mode.
+            for c in ola-ftdidmx.conf ola-usbserial.conf ola-stageprofi.conf; do
+                [[ -f "$CONF_DIR/$c" ]] && sed -i 's/^enabled = true/enabled = false/' "$CONF_DIR/$c"
+            done
             ;;
         artnet)
             # Already enabled above, this profile just means no USB DMX

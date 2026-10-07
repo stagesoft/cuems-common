@@ -1,0 +1,46 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# Arm magic-packet Wake-on-LAN on every physical wired NIC.
+#
+# Why a script instead of WakeOnLan=magic in /etc/systemd/network/*.link:
+# the .link files in cuems-common pin Match=Path= to one specific PCI
+# topology (was the dev box's; N97 cluster nodes have different paths).
+# When the [Match] misses, udev's net_setup_link silently falls back to
+# 99-default.link which doesn't set WoL. This script doesn't care about
+# PCI paths — it walks /sys/class/net and arms every physical ether NIC
+# that hardware-supports magic-packet wake. Idempotent; safe to re-run.
+#
+# Wireless interfaces are skipped: WoWLAN is a different ethtool path
+# and needs hostapd cooperation when the NIC is in AP mode.
+
+set -eu
+
+for path in /sys/class/net/*/device; do
+    name=$(basename "$(dirname "$path")")
+
+    # Skip wireless (separate wake-on-wireless mechanism, not handled here).
+    [ -d "/sys/class/net/$name/wireless" ] && continue
+    [ -d "/sys/class/net/$name/phy80211" ] && continue
+
+    # Only ARPHRD_ETHER (type 1) — covers ethernet NICs, excludes loopback,
+    # tunnels, etc. Bond interfaces also report type 1 but have no /device
+    # symlink, so they're already filtered by the /sys/class/net/*/device glob.
+    type=$(cat "/sys/class/net/$name/type" 2>/dev/null || echo 0)
+    [ "$type" = "1" ] || continue
+
+    # Check the NIC firmware actually supports magic-packet WoL. `pumbg`
+    # capability fields appear under "Supports Wake-on:" — the literal
+    # `g` flag means magic-packet.
+    if ! ethtool "$name" 2>/dev/null | grep -qE '^[[:space:]]*Supports Wake-on:.*g'; then
+        continue
+    fi
+
+    if ethtool -s "$name" wol g 2>/dev/null; then
+        echo "cuems-arm-wol: armed WoL on $name"
+    else
+        echo "cuems-arm-wol: failed to arm WoL on $name" >&2
+    fi
+done

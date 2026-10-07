@@ -1,10 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+
 [Unit]
 Description=CUEMS Video Composer (multi-layer video compositor)
 Documentation=https://github.com/cuems/cuems-videocomposer
 PartOf=cuems-node.target
-# Start after display and GPU/DRI are available
-After=graphical.target
-Wants=graphical.target
+# No Wants/After=graphical.target: VC drives DRM/KMS directly. Adding
+# graphical.target closes a systemd ordering cycle
+#   cuems-node.target → cuems-videocomposer.service → graphical.target
+#     → multi-user.target → cuems-controller.target → cuems-node.target
+# that systemd breaks non-deterministically, occasionally killing this
+# unit at boot. graphical.target therefore stays FORBIDDEN here.
+# The DRM-master handoff wait (hold VC until the Plymouth splash quits and
+# releases DRM master) lives in the 40-wait-for-plymouth.conf drop-in, via
+# After=plymouth-quit-wait.service. That is SAFE: plymouth-quit-wait is ordered
+# Before=graphical.target (NOT Before=multi-user.target), so it sits parallel to
+# multi-user.target and OUTSIDE the loop above — see that drop-in for details.
 # Optional: wait for DRI device if udev tags it (dev-dri-card0.device)
 # After=dev-dri-card0.device
 
@@ -16,9 +28,46 @@ Group=cuems
 SupplementaryGroups=video render audio
 # Environment for GPU/display (adjust for your setup)
 Environment=HOME=/var/lib/cuems
-# Generate display config from default_mappings.xml before starting
-ExecStartPre=/usr/lib/cuems/bin/cuems-generate-display-conf
-ExecStart=/usr/bin/cuems-videocomposer
+# Cap glibc's malloc arenas (869en4tqt). The default cap is 8 x nproc = 32 on
+# these boxes, and decode-thread churn warms up ~31 secondary arenas that
+# glibc never unmaps: a bounded ~134 MB RSS plateau measured on the FP530
+# (interleaved n=3 matrix, 2026-08-29). Cap 4 keeps that memory while leaving
+# 3-4 arenas, so render and decode threads are NOT serialised through a single
+# malloc lock (which is why it is 4 and not 1 - cap 1 saves only 38 MB more).
+# Drops were indistinguishable from control. Adopted by Ion 2026-09-02; the
+# measurement is Picasso-only, the mechanism is plain glibc and travels.
+Environment=MALLOC_ARENA_MAX=4
+# Extract videoplayer/output_latency_ms from /etc/cuems/settings.xml
+# into /run/cuems/videocomposer.env. Graceful: integer → flag emitted,
+# "auto"/absent/missing → OUTPUT_LATENCY_FLAG empty.
+ExecStartPre=/usr/lib/cuems/bin/cuems-extract-video-latency
+# Machine-generated (by cuems-extract-video-latency) — OUTPUT_LATENCY_FLAG.
+EnvironmentFile=-/run/cuems/videocomposer.env
+# Operator-tunable — OPERATOR_FLAGS for extra CLI args (e.g. --verbose).
+# See /etc/cuems/videocomposer-flags.env.example for the supported keys.
+# Leading `-` on EnvironmentFile makes a missing file non-fatal.
+EnvironmentFile=-/etc/cuems/videocomposer-flags.env
+ExecStart=/usr/bin/cuems-videocomposer $OPERATOR_FLAGS $OUTPUT_LATENCY_FLAG
+# --- Tuning videocomposer flags per node ---
+# Preferred path (no systemd drop-in needed):
+#   1. Latency: edit /etc/cuems/settings.xml videoplayer/output_latency_ms
+#      (integer 0-500, or "auto" to use the binary's 33 ms default).
+#   2. Other flags (verbose, future CLI options): write them as
+#      OPERATOR_FLAGS="--verbose ..." in /etc/cuems/videocomposer-flags.env.
+#   3. systemctl restart cuems-videocomposer
+#
+# Fallback for one-offs that bypass the XML / env file:
+#   sudo systemctl edit cuems-videocomposer
+#   [Service]
+#   ExecStart=
+#   ExecStart=/usr/bin/cuems-videocomposer --output-latency-ms 33
+# Note: the drop-in pattern loses composition with OPERATOR_FLAGS and
+# OUTPUT_LATENCY_FLAG — you must re-list every flag you want.
+#
+# Latency measurement: typical starting points are 16-33 ms for
+# direct-scanout (DRM/KMS) and 40-66 ms for compositor-mediated
+# (Wayland/X11). Phone camera at 120 fps pointed at a frame-counter
+# overlay.
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal

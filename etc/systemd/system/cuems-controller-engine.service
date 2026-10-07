@@ -1,9 +1,18 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+
 [Unit]
 Description=cuems-controller-engine
 PartOf=cuems-controller.target
 Requires=avahi-daemon.service
-After=network-online.target avahi-daemon.service
-Wants=network-online.target
+# After cuems-videocomposer.service so /run/cuems/display.conf (written by
+# its ExecStartPre cuems-generate-display-conf) is present when the engine
+# reads it. Wants (not Requires) so the controller can start even on hosts
+# without a videocomposer install — the engine raises with a clear error in
+# that case instead of crash-looping silently.
+After=network-online.target avahi-daemon.service cuems-videocomposer.service
+Wants=network-online.target cuems-videocomposer.service
 StartLimitBurst=5
 StartLimitIntervalSec=33
 

@@ -17,11 +17,11 @@ FAILURES=0
 WARNINGS=0
 
 # Expected services per role
-NODE_EXPECTED=(jackd-cuems cuems-hdmi-audio-map jack-alsa-bridges cuems-node-engine cuems-videocomposer cuems-nodeconf)
-CTRL_EXPECTED=(cuems-controller-engine cuems-editor cuems-midiconnector)
+NODE_EXPECTED=(jackd-cuems cuems-hdmi-audio-map jack-alsa-bridges cuems-node-engine cuems-videocomposer cuems-nodeconf cuems-midiconnector)
+CTRL_EXPECTED=(cuems-controller-engine cuems-editor)
 
 # Controller-only services (must NOT appear in node-role Requires)
-CTRL_ONLY=(cuems-controller-engine cuems-editor cuems-midiconnector)
+CTRL_ONLY=(cuems-controller-engine cuems-editor)
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -135,9 +135,9 @@ declare -A PARTOF_MAP=(
     [cuems-videocomposer]="cuems-node.target"
     [cuems-node-engine]="cuems-node.target"
     [cuems-nodeconf]="cuems-node.target"
+    [cuems-midiconnector]="cuems-node.target"
     [cuems-controller-engine]="cuems-controller.target"
     [cuems-editor]="cuems-controller.target"
-    [cuems-midiconnector]="cuems-controller.target"
 )
 
 for svc in "${!PARTOF_MAP[@]}"; do
