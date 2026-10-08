@@ -31,10 +31,15 @@ StandardOutput=journal
 StandardError=journal
 TimeoutStopSec=10
 TimeoutStartSec=60
-ExecStartPre=-/bin/sh -c '/usr/bin/pkill -u cuems -f "xjadeo.*--osc|cuems-audioplayer|cuems-dmxplayer|jack-volume" || true'
+# Kill players a previous engine left behind. The pattern is anchored on
+# argv[0] with an exact binary basename followed by a space (every spawn has
+# arguments), so a `tail -f .../jack-volume.log` or a grep is not killed
+# (869evtdf7). No dollar sign or percent on purpose: systemd and sh would
+# both rewrite it. Keep in step with cuems-engine's PlayerHandler sweeps.
+ExecStartPre=-/bin/sh -c '/usr/bin/pkill -u cuems -f "^([^ ]*/)?((cuems-audioplayer|cuems-dmxplayer|(cuems-)?jack-volume) |xjadeo .*--osc)" || true'
 ExecStartPre=-/bin/sleep 1
 ExecStart=/usr/lib/cuems/bin/node-engine
-ExecStopPost=-/bin/sh -c '/usr/bin/pkill -u cuems -f "xjadeo.*--osc|cuems-audioplayer|cuems-dmxplayer|jack-volume" || true'
+ExecStopPost=-/bin/sh -c '/usr/bin/pkill -u cuems -f "^([^ ]*/)?((cuems-audioplayer|cuems-dmxplayer|(cuems-)?jack-volume) |xjadeo .*--osc)" || true'
 # PrivateTmp=no: CUEMS services share /tmp for NNG IPC sockets
 PrivateTmp=no
 NoNewPrivileges=yes
