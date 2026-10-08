@@ -423,7 +423,7 @@ fi
 # Enable Apache2 modules
 if command -v a2enmod >/dev/null 2>&1; then
     # List of modules to enable (extracted from mods-enabled/)
-    MODULES="access_compat alias auth_basic authn_core authn_file authz_core authz_host authz_user autoindex deflate dir dnssd env filter mime mpm_prefork negotiation proxy proxy_http proxy_wstunnel reqtimeout rewrite setenvif socache_shmcb ssl status"
+    MODULES="access_compat alias auth_basic authn_core authn_file authz_core authz_host authz_user autoindex deflate dir dnssd env filter headers mime mpm_prefork negotiation proxy proxy_http proxy_wstunnel reqtimeout rewrite setenvif socache_shmcb ssl status"
     
     for module in $MODULES; do
         if [ -f /etc/apache2/mods-available/${module}.load ] || [ -f /etc/apache2/mods-available/${module}.conf ]; then
