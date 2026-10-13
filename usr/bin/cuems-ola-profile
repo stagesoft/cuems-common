@@ -1,12 +1,18 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2025 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 set -euo pipefail
 trap 'echo "ERROR: Script interrupted, OLA config may be inconsistent. Check /etc/ola/ manually." >&2; exit 1' INT TERM
 
 CONF_DIR="/etc/ola"
+FTDI_BLACKLIST="/etc/modprobe.d/blacklist-ftdi.conf"
 ADDITIVE=false
+BLACKLIST_FTDI=false
 
 usage() {
     echo "Usage: cuems-ola-profile [--add] <profile> [<profile>...]"
+    echo "       cuems-ola-profile -h|--help"
     echo "Profiles: pro, opendmx, eurolite-mk2, artnet, sacn"
     echo "  --add   Add to current config instead of resetting all plugins first"
     echo ""
@@ -23,7 +29,9 @@ usage() {
     echo "  - 'pro' and 'opendmx' are MUTUALLY EXCLUSIVE (usbpro vs ftdidmx conflict)"
     echo "  - 'eurolite-mk2' is MUTUALLY EXCLUSIVE with pro/opendmx (FTDI device contention)"
     echo "  - ArtNet and sACN are always enabled (safe with all profiles)"
-    exit 1
+    echo "  - 'opendmx' and 'eurolite-mk2' blacklist ftdi_sio (affects ALL FTDI serial"
+    echo "    devices on this machine); 'pro' removes that blacklist"
+    exit "${1:-1}"
 }
 
 enable_plugin() {
@@ -64,11 +72,11 @@ detect_mk2_serials() {
 # Parse --add flag (can appear anywhere)
 PROFILES=()
 for arg in "$@"; do
-    if [[ "$arg" == "--add" ]]; then
-        ADDITIVE=true
-    else
-        PROFILES+=("$arg")
-    fi
+    case "$arg" in
+        -h|--help) usage 0 ;;
+        --add) ADDITIVE=true ;;
+        *) PROFILES+=("$arg") ;;
+    esac
 done
 
 [[ ${#PROFILES[@]} -eq 0 ]] && usage
@@ -82,6 +90,14 @@ for profile in "${PROFILES[@]}"; do
         pro) HAS_PRO=true ;;
         opendmx) HAS_OPENDMX=true ;;
         eurolite-mk2|eurolite-mk2:*) HAS_MK2=true ;;
+        artnet|sacn) ;;
+        *)
+            # Reject before any file is changed: an unknown word must not
+            # leave every plugin disabled.
+            echo "ERROR: Unknown profile: $profile" >&2
+            echo "Available: pro, opendmx, eurolite-mk2[:SERIAL], artnet, sacn" >&2
+            exit 1
+            ;;
     esac
 done
 if $HAS_PRO && $HAS_OPENDMX; then
@@ -121,15 +137,8 @@ for profile in "${PROFILES[@]}"; do
             echo "Enabling profile: opendmx (Enttec Open DMX)"
             enable_plugin "ola-ftdidmx.conf"
             enable_plugin "ola-usbdmx.conf"
-            # ftdidmx needs ftdi_sio OUT — blacklist it
-            # WARNING: this affects ALL FTDI serial devices on this machine
-            echo "blacklist ftdi_sio" > /etc/modprobe.d/blacklist-ftdi.conf
-            if ! modprobe -r ftdi_sio 2>/dev/null; then
-                echo "  WARNING: Could not unload ftdi_sio (device may be in use)." >&2
-                echo "  A reboot is required for the blacklist to take effect." >&2
-            else
-                echo "  Blacklisted and unloaded ftdi_sio."
-            fi
+            # ftdidmx needs ftdi_sio OUT — blacklisted below
+            BLACKLIST_FTDI=true
             ;;
         eurolite-mk2|eurolite-mk2:*)
             # Eurolite USB-DMX512 PRO MK2: presents as a stock FTDI FT232R
@@ -170,6 +179,11 @@ for profile in "${PROFILES[@]}"; do
             for c in ola-ftdidmx.conf ola-usbserial.conf ola-stageprofi.conf; do
                 [[ -f "$CONF_DIR/$c" ]] && sed -i 's/^enabled = true/enabled = false/' "$CONF_DIR/$c"
             done
+            # usbdmx claims the device through libusb, so ftdi_sio must not
+            # hold it. Without the blacklist ftdi_sio binds the FT232R at boot,
+            # before olad starts, and the claim fails with LIBUSB_ERROR_BUSY:
+            # no universe after every reboot (granadella, 2026-10-13).
+            BLACKLIST_FTDI=true
             ;;
         artnet)
             # Already enabled above, this profile just means no USB DMX
@@ -179,16 +193,28 @@ for profile in "${PROFILES[@]}"; do
             # Already enabled above, this profile just means no USB DMX
             echo "Enabling profile: sacn (network-only)"
             ;;
-        *)
-            echo "ERROR: Unknown profile: $profile" >&2
-            echo "Available: pro, opendmx, artnet, sacn" >&2
-            exit 1
-            ;;
     esac
 done
 
-echo "Restarting olad..."
-systemctl restart olad
+if $BLACKLIST_FTDI; then
+    # WARNING: this affects ALL FTDI serial devices on this machine
+    echo "blacklist ftdi_sio" > "$FTDI_BLACKLIST"
+    # Stop olad first: its usbserial plugin may still hold /dev/ttyUSB*,
+    # and then ftdi_sio cannot be unloaded.
+    echo "Stopping olad to release the FTDI device..."
+    systemctl stop olad
+    if ! modprobe -r ftdi_sio 2>/dev/null; then
+        echo "  WARNING: Could not unload ftdi_sio (device may be in use)." >&2
+        echo "  A reboot is required for the blacklist to take effect." >&2
+    else
+        echo "  Blacklisted and unloaded ftdi_sio."
+    fi
+    echo "Starting olad..."
+    systemctl start olad
+else
+    echo "Restarting olad..."
+    systemctl restart olad
+fi
 sleep 1
 echo ""
 echo "Enabled plugins:"
