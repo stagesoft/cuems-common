@@ -60,7 +60,7 @@ AP on `wifi0` for operator laptop access. Nodes (running only
 
 | Field      | Value                                                                     |
 |------------|---------------------------------------------------------------------------|
-| SSID       | `cuems` (or `cuems-<cluster_name>` if `/etc/cuems/cluster.conf` is set)   |
+| SSID       | `Formitgo` (or `Formitgo_<cluster_name>`, or `ssid=` from `/etc/cuems/cluster.conf`) |
 | WPA2 PSK   | `cuems-wifi-default`                                                      |
 | Channel    | 2.4 GHz, channel 1                                                        |
 
@@ -104,8 +104,11 @@ deployment. Recommended hardening pass per node:
    up on next render.)
 
 4. **Optionally rename the SSID per deployment.**
-   Set `cluster_name=<x>` in `/etc/cuems/cluster.conf` so the SSID
-   becomes `cuems-<x>`, then restart `hostapd.service`.
+   The SSID is public, so it carries the commercial name Formitgo, never
+   the internal "cuems". In `/etc/cuems/cluster.conf`, `ssid=<free text>`
+   (spaces allowed, 1-32 bytes, e.g. `ssid=Formitgo deposit`) sets it
+   exactly; otherwise `cluster_name=<x>` gives `Formitgo_<x>`. Then
+   restart `hostapd.service`.
 
 5. **Enable the WiFi-fence nftables ruleset** (see
    `/usr/share/doc/cuems-common/firewall.README`).
