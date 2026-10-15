@@ -1,4 +1,27 @@
-cuems-common (1.3.0-23) UNRELEASED; urgency=medium
+cuems-common (1.3.1-1) UNRELEASED; urgency=medium
+
+  * Coordinated xml-refactor minor (cuems-utils feature 016): every CUEMS
+    repository moves to its own next stable minor. This entry folds the
+    never-shipped 1.3.0-23 UNRELEASED entry below; 1.3.0-23, -24 and -25 were
+    since released from debian/bookworm WITHOUT the /etc/cuems handover, so
+    those numbers stay with the builds that shipped under them.
+  * Depends: cuems-utils (>= 0.1.1), cuems-utils (<< 0.1.2~); was
+    (>= 0.1.0rc16), (<< 0.1.1~). 0.1.0rc16 was released without the public
+    object API this package's tools use.
+  * Breaks: cuems-nodeconf (<< 0.1.1~), was (<< 0.1.0-8): the released
+    cuems-nodeconf 0.1.0-8 and -9 still publish node_type.
+  * Breaks: cuems-power-bridge (<< 0.4.0~), was (<< 0.3.1-1): the released
+    cuems-power-bridge 0.3.1-2, 0.3.2-1 and 0.3.2-2 have no cluster_poweroff
+    module and read node_type; the refactor line moves to 0.4.0-1, leaving
+    the 0.3.x series to the release line.
+  * Maintainer scripts: rm_conffile prior-version 1.3.0-23~ -> 1.3.1~ for
+    /etc/cuems/network_map.{xml,xsd} and /etc/sudoers.d/99-cuems. Released
+    1.3.0-23, -24 and -25 still shipped all three as conffiles, so an upgrade
+    from them would have skipped the network-map handover and left the
+    retired 99-cuems sudo rules active.
+  * NOT YET RECONCILED: the release line debian/bookworm (1.3.0-24, -25) is
+    22 commits ahead and not absorbed. Do not publish until it is, then
+    re-verify the package relations.
 
   * cuems-cluster-poweroff: the two Python heredocs are GONE. The 221 lines of
     cuems-power-bridge code they carried now live in that package, where they
@@ -112,7 +135,7 @@ cuems-common (1.3.0-23) UNRELEASED; urgency=medium
     templates, used by nothing in production, are retired with them.
     docs/node-identity-contract.md carries the derivation rule.
 
- -- Ion Reguera <ion@stagelab.coop>  Thu, 17 Sep 2026 16:19:38 +0000
+ -- Adrià Masip <adria@stagelab.coop>  Thu, 15 Oct 2026 22:30:00 +0200
 
 cuems-common (1.3.0-22) bookworm; urgency=medium
 

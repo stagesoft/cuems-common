@@ -9,8 +9,8 @@ Package: cuems-common
 Architecture: all
 Pre-Depends: adduser
 Depends: ${misc:Depends},
-         cuems-utils (>= 0.1.0rc16),
-         cuems-utils (<< 0.1.1~),
+         cuems-utils (>= 0.1.1),
+         cuems-utils (<< 0.1.2~),
          systemd,
          systemd-journal-remote (>= 247),
          python3,
@@ -54,8 +54,15 @@ Conflicts: network-manager
 # rather than the mismatch surfacing as an AttributeError part-way through a
 # poweroff transaction. Suggests: above is deliberately left unversioned — a
 # host with no bridge at all stays supported.
-Breaks: cuems-nodeconf (<< 0.1.0-8),
-        cuems-power-bridge (<< 0.3.1-1)
+# cuems-utils feature 016 (the coordinated minor bump) moved both bounds with
+# the versions they name. cuems-nodeconf 0.1.0-8 and -9 were released from its
+# rc_1 line still publishing node_type, and cuems-power-bridge 0.3.1-2 was
+# released with no cluster_poweroff module, still reading node_type. Both old
+# bounds admitted those builds. The refactor lines are 0.1.1-1 and 0.4.0-1;
+# power-bridge also released 0.3.2-1 and -2 (still node_type), so its refactor
+# line leaves 0.3.x to the release line.
+Breaks: cuems-nodeconf (<< 0.1.1~),
+        cuems-power-bridge (<< 0.4.0~)
 Description: CUEMS common configuration and systemd services
  This package contains systemd service files, configuration files,
  and scripts required for CUEMS operation.

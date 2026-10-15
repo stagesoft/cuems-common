@@ -5,8 +5,14 @@
 The bound is read out of ``debian/control`` — never a hardcoded copy — and every
 candidate version is judged by ``dpkg --compare-versions``, because Debian version
 ordering is not what the strings suggest: ``0.1.0 < 0.1.0rc16`` is true, and a tilde
-floor ``>= 0.1.0~rc16`` would admit ``0.1.0rc15``. The rc15 case is the regression
+floor ``>= 0.1.0~rc16`` would admit ``0.1.0rc15``. The rc15 case was the regression
 guard for that (analysis C2).
+
+Re-bound by cuems-utils feature 016 (the coordinated minor bump): the bound is now
+``>= 0.1.1``, ``<< 0.1.2~``. ``0.1.0rc16``, the old floor, and ``0.1.0rc17`` were
+released from cuems-utils' debian/bookworm line without the public object API, so
+both are refused now. ``0.1.2`` is the release that removes the deprecated surface,
+so the ceiling refuses it and its pre-releases.
 
 ``dpkg`` missing → skip, naming what was searched; ``CUEMS_REQUIRE_TOOLS=1`` turns
 that skip into a failure (same policy as ``test_sudoers_syntax.py``).
@@ -28,8 +34,8 @@ SEARCH_DIRS = ["/usr/bin", "/bin"]
 
 _OPS = {">=": "ge", "<<": "lt", "<=": "le", ">>": "gt", "=": "eq"}
 
-REFUSED = ["0.1.0rc14", "0.1.0rc15", "0.1.0", "0.1.1~rc1", "0.1.1"]
-ADMITTED = ["0.1.0rc16", "0.1.0rc17", "0.1.0+final"]
+REFUSED = ["0.1.0rc16", "0.1.0rc16+1", "0.1.0rc17", "0.1.0", "0.1.1~rc1", "0.1.2~rc1", "0.1.2"]
+ADMITTED = ["0.1.1", "0.1.1-1", "0.1.1+b1"]
 
 
 def _dpkg() -> str:

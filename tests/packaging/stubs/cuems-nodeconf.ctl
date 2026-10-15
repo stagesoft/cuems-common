@@ -1,10 +1,11 @@
 # SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# equivs template for a STUB cuems-nodeconf at a PRE-CUTOVER version (0.1.0-7),
-# instantiated by tests/packaging/release-gate-demo.sh (@VERSION@ substituted).
-# Mirrors the real package's CUEMS relationships as of ../cuems-nodeconf 478bc49
-# ("release: cuems-nodeconf 0.1.0-7"): a floor on cuems-utils, a floor on
+# equivs template for a STUB cuems-nodeconf at a PRE-CUTOVER version (0.1.0-9 since
+# cuems-utils feature 016; was 0.1.0-7), instantiated by
+# tests/packaging/release-gate-demo.sh (@VERSION@ substituted). Mirrors the real
+# package's CUEMS relationships as released on origin/rc_1 at 0.1.0-9, identical
+# to ../cuems-nodeconf 478bc49 ("release: cuems-nodeconf 0.1.0-7"): a floor on cuems-utils, a floor on
 # cuems-common, and NO Breaks — this is the version that knows only the retired
 # discovery key. Its other dependencies (python3-zeroconf, avahi-daemon, ...) are
 # left out deliberately: only the relationships under test are reproduced.

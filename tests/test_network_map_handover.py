@@ -29,13 +29,13 @@ def test_all_three_scripts_run_rm_conffile_for_both_paths():
         assert "rm_conffile" in text, name
         for path in PATHS:
             assert path in text, f"{name} does not name {path}"
-        assert "1.3.0-23~" in text, f"{name}: prior-version must be 1.3.0-23~"
+        assert "rm_conffile \"$_cf\" 1.3.1~" in text, f"{name}: prior-version must be 1.3.1~ (016: 1.3.0-23..-25 shipped the conffiles)"
 
 
 def test_preinst_snapshots_the_live_map_before_the_move():
     text = (DEBIAN / "preinst").read_text(encoding="utf-8")
     snapshot = text.index("cuems-common.network_map.xml.presave")
-    move = text.index('rm_conffile "$_cf" 1.3.0-23~')
+    move = text.index('rm_conffile "$_cf" 1.3.1~')
     assert snapshot < move, "the snapshot must precede rm_conffile"
 
 

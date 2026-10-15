@@ -63,7 +63,9 @@ fi
 # reason at the top of debian/postinst; the same line is needed in preinst,
 # postinst and postrm.
 if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
-    dpkg-maintscript-helper rm_conffile /etc/sudoers.d/99-cuems 1.3.0-23~ cuems-common -- "$@"
+    # cuems-utils 016: prior-version 1.3.1~, was 1.3.0-23~. Released 1.3.0-23..-25
+    # still shipped 99-cuems, so the old value left its retired rules active.
+    dpkg-maintscript-helper rm_conffile /etc/sudoers.d/99-cuems 1.3.1~ cuems-common -- "$@"
 fi
 
 # /etc/network/interfaces and /etc/network/interfaces.cuems were shipped by
@@ -141,7 +143,9 @@ fi
 # This block runs BEFORE the conversion loop below, which must find the map.
 if command -v dpkg-maintscript-helper >/dev/null 2>&1; then
     for _cf in /etc/cuems/network_map.xml /etc/cuems/network_map.xsd; do
-        dpkg-maintscript-helper rm_conffile "$_cf" 1.3.0-23~ cuems-common -- "$@"
+        # cuems-utils 016: prior-version 1.3.1~, was 1.3.0-23~. Released 1.3.0-23..-25
+        # still shipped these as conffiles, so the old value skipped this handover.
+        dpkg-maintscript-helper rm_conffile "$_cf" 1.3.1~ cuems-common -- "$@"
     done
     unset _cf
 fi
