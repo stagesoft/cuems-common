@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 Source: cuems-common
 Section: admin
 Priority: optional
@@ -29,6 +32,7 @@ Depends: ${misc:Depends},
          net-tools,
          iproute2,
          ethtool,
+         tpm2-tools,
          chrony (>= 4.0),
          edid-decode,
          cpufrequtils,
