@@ -10,6 +10,13 @@ display-conf (videocomposer's ExecStartPre) copies the operator override
 verbatim to /run/cuems/display.conf on every VC start, so the file is the
 persistent authority.
 
+On a re-run the tool rewrites only the keys it owns -- `canvas_region=` and
+`resolution=` per output, `canvas_layout=` and `canvas_size=` globally,
+recognised by the STRIPPED key -- and carries every other line (refresh=,
+blend=, enabled=, color_*, unknown keys, comments) over as the raw line,
+verbatim, in place. A section whose connector is not detected now is kept
+unless the operator answers `drop`.
+
 Run as root:  sudo cuems-display-setup
 Inspect:      sudo cuems-display-setup --probe
 """
@@ -27,10 +34,36 @@ import xml.etree.ElementTree as ET
 
 DISPLAY_CONF = '/etc/cuems/display.conf'
 DEFAULT_MAPPINGS_XML = '/etc/cuems/default_mappings.xml'
-PROJECT_MAPPINGS_XSD = '/etc/cuems/project_mappings.xsd'
+SETTINGS_XML = '/etc/cuems/settings.xml'
+# The venv copy is the authoritative schema: cuemsutils builds its schemas
+# dir from the package directory, so every CUEMS component validates against
+# it. /etc/cuems/project_mappings.xsd is vestigial and lacks the mandatory
+# <id> this tool inserts -- validating against it is a confident false FAIL.
+PROJECT_MAPPINGS_XSD = ('/usr/lib/cuems/lib/python3.11/site-packages/'
+                        'cuemsutils/xml/schemas/project_mappings.xsd')
+PROJECT_MAPPINGS_XSD_GLOB = ('/usr/lib/cuems/lib/python3*/site-packages/'
+                             'cuemsutils/xml/schemas/project_mappings.xsd')
 MASTER_IP_SENTINEL = '/etc/cuems/master.ip'
 SHOW_LOCK_PATH = '/tmp/cuems.show.lock'
 CMS_NAMESPACE = 'https://stagelab.coop/cuems/'
+
+# Keys this tool owns. A line is classed as owned by its STRIPPED key, so
+# `canvas_region = ...`, `  canvas_region=...` and `canvas_region=...` are
+# the same owned key: every variant is dropped and exactly one canonical
+# column-0 line is written. Carrying a spaced copy would split the readers:
+# the engine (configparser) strips keys and honours it, the VC does not strip
+# keys and ignores it, and the two then compute different canvases.
+OWNED_OUTPUT_KEYS = ('canvas_region', 'resolution')
+OWNED_GLOBAL_KEYS = ('canvas_layout', 'canvas_size')
+# Carried keys a geometry change makes questionable: asked about, one by one.
+GEOMETRY_BOUND_KEYS = ('refresh', 'blend')
+# Carried keys kept without a question: a device calibration, not geometry.
+COLOR_KEY_PREFIX = 'color_'
+AUTHORED_HEADER_PREFIX = '# Authored by cuems-display-setup'
+# Raw lines round-trip byte for byte: no newline translation (newline='') and
+# undecodable bytes carried through (surrogateescape).
+CONF_ENCODING = 'utf-8'
+CONF_ERRORS = 'surrogateescape'
 
 # ---------------------------------------------------------------------------
 # Hardware probe
@@ -143,49 +176,182 @@ def _read_edid_name(edid_path):
 
 
 # ---------------------------------------------------------------------------
-# Pre-fill from existing display.conf
+# Existing display.conf: raw model (preserve what we do not own)
 # ---------------------------------------------------------------------------
 
 
-def load_existing_display_conf(path=DISPLAY_CONF):
-    """Return {connector: {x, y, width, height, resolution?}} from
-    /etc/cuems/display.conf so re-runs can pre-fill defaults. Empty dict
-    if file missing.
+class ConfSection:
+    """One `[...]` section of display.conf, kept as raw lines.
+
+    header     the raw header line, verbatim (with its own line ending)
+    connector  the connector of an `[output:<connector>]` header, else None
+    lines      the raw body lines, verbatim (with their own line endings)
+    dropped    indices into `lines` the operator chose not to keep
+    drop       True when the operator answered `drop` for the whole section
     """
+
+    def __init__(self, header, connector):
+        self.header = header
+        self.connector = connector
+        self.lines = []
+        self.dropped = set()
+        self.drop = False
+
+
+class RawDisplayConf:
+    """display.conf as raw lines: the global preamble, then the sections."""
+
+    def __init__(self):
+        self.preamble = []
+        self.sections = []
+
+
+def read_display_conf_raw(path=None):
+    """Return the file's text with its line endings untouched, or None."""
+    path = path or DISPLAY_CONF
     if not os.path.isfile(path):
+        return None
+    with open(path, encoding=CONF_ENCODING, errors=CONF_ERRORS,
+              newline='') as f:
+        return f.read()
+
+
+def _printable(text):
+    """Text safe to print: bytes carried through surrogateescape (not valid
+    UTF-8) are shown as U+FFFD; the file itself keeps them."""
+    return text.encode(CONF_ENCODING, CONF_ERRORS).decode(CONF_ENCODING,
+                                                          'replace')
+
+
+def split_raw_lines(text):
+    """Split on '\\n', each line keeping its own terminator ('\\n' or
+    '\\r\\n'); a last line without a terminator is kept without one."""
+    parts = text.split('\n')
+    lines = [p + '\n' for p in parts[:-1]]
+    if parts[-1]:
+        lines.append(parts[-1])
+    return lines
+
+
+def line_key(raw):
+    """Return the STRIPPED key of a `key=value` line; None for a blank line,
+    a comment or a line without '='."""
+    s = raw.strip()
+    if not s or s.startswith('#') or '=' not in s:
+        return None
+    return s.split('=', 1)[0].strip()
+
+
+def _is_section_header(raw):
+    # Like the VC: '[' opens a header and anything after its ']' is ignored.
+    s = raw.strip()
+    return s.startswith('[') and ']' in s
+
+
+def _section_connector(raw):
+    m = re.match(r'^\[output:([^\]]+)\]', raw.strip())
+    return m.group(1) if m else None
+
+
+def parse_display_conf_raw(text):
+    """Return a RawDisplayConf holding every line of `text` verbatim."""
+    conf = RawDisplayConf()
+    current = None
+    for raw in split_raw_lines(text):
+        if _is_section_header(raw):
+            current = ConfSection(raw, _section_connector(raw))
+            conf.sections.append(current)
+        elif current is None:
+            conf.preamble.append(raw)
+        else:
+            current.lines.append(raw)
+    return conf
+
+
+def owned_values(section):
+    """Return {owned key: stripped value} of a section (last line wins)."""
+    vals = {}
+    for raw in section.lines:
+        key = line_key(raw)
+        if key in OWNED_OUTPUT_KEYS:
+            vals[key] = raw.split('=', 1)[1].strip()
+    return vals
+
+
+def owned_lines_are_canonical(section):
+    """True when every owned line of the section starts at column 0 with
+    its exact key and no owned key is repeated."""
+    seen = set()
+    for raw in section.lines:
+        key = line_key(raw)
+        if key not in OWNED_OUTPUT_KEYS:
+            continue
+        if key in seen or not raw.startswith(key + '='):
+            return False
+        seen.add(key)
+    return True
+
+
+def canonical_carried_lines(section):
+    """Lines of a section this run has no new values for (its connector is
+    not detected now). Verbatim when its owned lines are already canonical;
+    otherwise each owned key becomes ONE canonical line, carrying the value
+    of its last line (the engine's reading: configparser strips keys and the
+    last duplicate wins), at the place of the first owned line."""
+    if owned_lines_are_canonical(section):
+        return list(section.lines)
+    values = owned_values(section)
+    out = []
+    anchor = None
+    for raw in section.lines:
+        if line_key(raw) in OWNED_OUTPUT_KEYS:
+            if anchor is None:
+                anchor = len(out)
+            continue
+        out.append(raw)
+    canonical = [f'{k}={values[k]}\n' for k in OWNED_OUTPUT_KEYS if k in values]
+    out[anchor or 0:anchor or 0] = canonical
+    return out
+
+
+def _parse_region(value):
+    """'x,y,w,h' -> (x, y, w, h); None when absent or malformed."""
+    if value is None:
+        return None
+    parts = value.split(',')
+    if len(parts) != 4:
+        return None
+    try:
+        return tuple(int(p.strip()) for p in parts)
+    except ValueError:
+        return None
+
+
+def load_existing_display_conf(path=None):
+    """Return {connector: {x, y, width, height, resolution?, refresh?}} from
+    /etc/cuems/display.conf so re-runs can pre-fill defaults. Empty dict
+    if file missing. Keys are read stripped, the last line wins.
+    """
+    text = read_display_conf_raw(path)
+    if text is None:
         return {}
     out = {}
-    current = None
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith('#'):
+    for section in parse_display_conf_raw(text).sections:
+        if section.connector is None:
+            continue
+        entry = out.setdefault(section.connector, {})
+        for raw in section.lines:
+            key = line_key(raw)
+            if key is None:
                 continue
-            m = re.match(r'^\[output:(.+)\]$', line)
-            if m:
-                current = m.group(1)
-                out[current] = {}
-                continue
-            if current is None or '=' not in line:
-                continue
-            key, val = line.split('=', 1)
-            key, val = key.strip(), val.strip()
+            val = raw.split('=', 1)[1].strip()
             if key == 'canvas_region':
-                parts = val.split(',')
-                if len(parts) == 4:
-                    try:
-                        out[current].update({
-                            'x': int(parts[0]),
-                            'y': int(parts[1]),
-                            'width': int(parts[2]),
-                            'height': int(parts[3]),
-                        })
-                    except ValueError:
-                        pass
-            elif key == 'resolution':
-                out[current]['resolution'] = val
-            elif key == 'refresh':
-                out[current]['refresh'] = val
+                region = _parse_region(val)
+                if region is not None:
+                    entry.update(dict(zip(('x', 'y', 'width', 'height'),
+                                          region)))
+            elif key in ('resolution', 'refresh'):
+                entry[key] = val
     return out
 
 
@@ -450,20 +616,191 @@ def select_canvas_size(regions):
 # ---------------------------------------------------------------------------
 
 
-def compose_display_conf(outputs, resolutions, regions, canvas_size):
-    """Return the textual display.conf for the chosen layout."""
-    ts = datetime.datetime.now().isoformat(timespec='seconds')
-    lines = [f'# Authored by cuems-display-setup on {ts}',
-             'canvas_layout=custom']
+def _ask_drop_section(connector):
+    while True:
+        answer = prompt(f'  {connector}: keep or drop its section?',
+                        default='keep').strip().lower()
+        if answer in ('keep', 'drop'):
+            return answer == 'drop'
+        print('Answer "keep" or "drop".')
+
+
+def _ask_keep_line(connector, line):
+    return prompt_yes_no(f'  {connector}: keep "{_printable(line)}"?',
+                         default=True)
+
+
+def review_existing_sections(conf, outputs, resolutions, regions,
+                             ask_drop_section=None, ask_keep_line=None):
+    """Decide, with the operator, about the lines this run does not own.
+
+    Mutates `conf`:
+    - a section whose connector is not detected now is KEPT verbatim, with a
+      notice; only an explicit `drop` removes it (a projector that is off
+      during a re-run is the normal case);
+    - when an output's resolution or region changes, each carried `refresh=`
+      and `blend=` line of that output is asked about (a carried refresh=
+      next to a new resolution can select an interlaced mode or none; a
+      carried blend= was set for the previous layout);
+    - `color_*` lines are kept without a question (device calibration),
+      with one notice per changed output.
+    The askers are injectable for tests.
+    """
+    ask_drop_section = ask_drop_section or _ask_drop_section
+    ask_keep_line = ask_keep_line or _ask_keep_line
+    detected = {o['connector']: (res, tuple(region))
+                for o, res, region in zip(outputs, resolutions, regions)}
+
+    absent_answers = {}
+    reviewed = set()
+    for section in conf.sections:
+        c = section.connector
+        if c is None:
+            continue
+        if c not in detected:
+            if c not in absent_answers:
+                old = owned_values(section)
+                where = _printable(old.get('canvas_region', 'none'))
+                print(f'NOTICE: {c} not detected now -- section kept '
+                      f'(canvas_region {where}); answer `drop` to remove it')
+                absent_answers[c] = ask_drop_section(c)
+            section.drop = absent_answers[c]
+            if not section.drop and not owned_lines_are_canonical(section):
+                print(f'NOTICE: {c}: spaced, indented or repeated '
+                      f'{"/".join(OWNED_OUTPUT_KEYS)} lines rewritten as one '
+                      'canonical line each (the value of the last one, as '
+                      'the engine reads it)')
+            continue
+        if c in reviewed:
+            # A duplicate section: its owned lines go, the rest is carried;
+            # the first section of the connector got the questions.
+            continue
+        reviewed.add(c)
+        new_res, new_region = detected[c]
+        old = owned_values(section)
+        old_res = old.get('resolution')
+        old_region = _parse_region(old.get('canvas_region'))
+        if old_res == new_res and old_region == new_region:
+            continue
+        change = _printable(f'{old_res or "-"} at {old_region or "-"} -> '
+                            f'{new_res} at {new_region}')
+        colour_keys = []
+        for i, raw in enumerate(section.lines):
+            key = line_key(raw)
+            if key in GEOMETRY_BOUND_KEYS:
+                line = raw.strip()
+                if key == 'refresh':
+                    why = ('with the new resolution it can select an '
+                           'interlaced mode or none')
+                else:
+                    why = 'it was set for the previous layout'
+                print(f'NOTICE: {c} changed ({change}); carried '
+                      f'"{_printable(line)}": {why}')
+                if not ask_keep_line(c, line):
+                    section.dropped.add(i)
+            elif key is not None and key.startswith(COLOR_KEY_PREFIX):
+                colour_keys.append(key)
+        if colour_keys:
+            print(f'NOTICE: {c}: kept as they are (device calibration): '
+                  f'{", ".join(colour_keys)}')
+
+
+def _join_lines(lines):
+    """Join raw lines; any line but the last gets a '\\n' if it has none."""
+    out = []
+    for i, line in enumerate(lines):
+        if i < len(lines) - 1 and not line.endswith('\n'):
+            line += '\n'
+        out.append(line)
+    return ''.join(out)
+
+
+def compose_display_conf(outputs, resolutions, regions, canvas_size,
+                         existing=None, timestamp=None):
+    """Return the textual display.conf for the chosen layout.
+
+    `existing` is the RawDisplayConf of the current file (after
+    review_existing_sections), or None for a fresh file. Owned lines are
+    written canonical (column 0, '\\n'-terminated) where the first owned
+    line of their block was; everything else is carried verbatim, in place.
+    The tool's own lines always end in '\\n', even in a CRLF file: the VC
+    compares some values untrimmed (`canvas_layout=custom\\r` is not
+    "custom").
+    """
+    ts = timestamp or datetime.datetime.now().isoformat(timespec='seconds')
+    owned_global = ['canvas_layout=custom\n']
     if canvas_size is not None:
-        lines.append(f'canvas_size={canvas_size[0]}x{canvas_size[1]}')
-    lines.append('')
+        owned_global.append(f'canvas_size={canvas_size[0]}x{canvas_size[1]}\n')
+    owned_output = {}
     for o, res, (x, y, w, h) in zip(outputs, resolutions, regions):
-        lines.append(f'[output:{o["connector"]}]')
-        lines.append(f'canvas_region={x},{y},{w},{h}')
-        lines.append(f'resolution={res}')
-        lines.append('')
-    return '\n'.join(lines).rstrip() + '\n'
+        owned_output[o['connector']] = [f'canvas_region={x},{y},{w},{h}\n',
+                                        f'resolution={res}\n']
+
+    lines = [f'{AUTHORED_HEADER_PREFIX} on {ts}\n']
+
+    if existing is None:
+        lines += owned_global + ['\n']
+        sections = []
+    else:
+        carried = []
+        anchor = None
+        for raw in existing.preamble:
+            if raw.strip().startswith(AUTHORED_HEADER_PREFIX):
+                continue  # the header is rewritten once, never stacked
+            if line_key(raw) in OWNED_GLOBAL_KEYS:
+                if anchor is None:
+                    anchor = len(carried)
+                continue
+            carried.append(raw)
+        if anchor is None:
+            anchor = 0
+        carried[anchor:anchor] = owned_global
+        lines += carried
+        sections = existing.sections
+
+    written = set()
+    for section in sections:
+        if section.drop:
+            continue
+        c = section.connector
+        if c is None:
+            # Not an [output:] section: verbatim.
+            lines.append(section.header)
+            lines += section.lines
+            continue
+        if c not in owned_output:
+            # Not detected now: kept, verbatim unless its owned lines were
+            # not canonical (a spaced copy must never be carried, r7).
+            lines.append(section.header)
+            lines += canonical_carried_lines(section)
+            continue
+        body = []
+        anchor = None
+        for i, raw in enumerate(section.lines):
+            if line_key(raw) in OWNED_OUTPUT_KEYS:
+                if anchor is None:
+                    anchor = len(body)
+                continue
+            if i in section.dropped:
+                continue
+            body.append(raw)
+        if c not in written:
+            body[anchor or 0:anchor or 0] = owned_output[c]
+            written.add(c)
+        lines.append(section.header)
+        lines += body
+
+    for o in outputs:
+        c = o['connector']
+        if c in written:
+            continue
+        if lines and lines[-1].strip():
+            lines.append('\n')  # blank line between sections
+        lines.append(f'[output:{c}]\n')
+        lines += owned_output[c]
+        written.add(c)
+
+    return _join_lines(lines)
 
 
 def install_display_conf(content, no_backup=False):
@@ -482,7 +819,10 @@ def install_display_conf(content, no_backup=False):
         shutil.copy2(target, backup)
         print(f'Backed up previous display.conf to {backup}')
     tmp = os.path.join(target_dir, f'.display.conf.tmp.{os.getpid()}')
-    with open(tmp, 'w') as f:
+    # newline='': no translation, so carried CRLF lines stay CRLF and the
+    # tool's own lines stay LF.
+    with open(tmp, 'w', encoding=CONF_ENCODING, errors=CONF_ERRORS,
+              newline='') as f:
         f.write(content)
     os.chmod(tmp, 0o644)
     os.rename(tmp, target)
@@ -545,7 +885,7 @@ def update_default_mappings(connector, name):
     tree = ET.parse(DEFAULT_MAPPINGS_XML)
     root = tree.getroot()
 
-    settings_path = '/etc/cuems/settings.xml'
+    settings_path = SETTINGS_XML
     local_uuid = None
     if os.path.isfile(settings_path):
         try:
@@ -595,32 +935,64 @@ def update_default_mappings(connector, name):
     mapped_el = ET.SubElement(mappings_el, 'mapped_to')
     mapped_el.text = connector
 
-    ts = datetime.datetime.now().strftime('%Y-%m-%dT%H-%M-%S')
-    backup = f'{DEFAULT_MAPPINGS_XML}.bak-{ts}'
-    shutil.copy2(DEFAULT_MAPPINGS_XML, backup)
-    print(f'Backed up XML to {backup}')
-
+    # Write a temp file next to the target, validate THAT, and only then
+    # rename it into place: a failed validation leaves the original as it
+    # was, and nothing is half-written.
     ET.indent(tree, space='    ')
     tmp = f'{DEFAULT_MAPPINGS_XML}.tmp.{os.getpid()}'
-    tree.write(tmp, xml_declaration=True, encoding='utf-8')
-    os.rename(tmp, DEFAULT_MAPPINGS_XML)
+    try:
+        tree.write(tmp, xml_declaration=True, encoding='utf-8')
+        if validate_mappings_xml(tmp) is False:
+            os.unlink(tmp)
+            sys.exit(f'ERROR: {DEFAULT_MAPPINGS_XML} NOT changed '
+                     '(the edited XML fails the schema)')
+        ts = datetime.datetime.now().strftime('%Y-%m-%dT%H-%M-%S')
+        backup = f'{DEFAULT_MAPPINGS_XML}.bak-{ts}'
+        shutil.copy2(DEFAULT_MAPPINGS_XML, backup)
+        print(f'Backed up XML to {backup}')
+        os.rename(tmp, DEFAULT_MAPPINGS_XML)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
     print(f'Wrote {DEFAULT_MAPPINGS_XML} (id={next_id}, name={name!r}, mapped_to={connector})')
 
+
+def find_project_mappings_xsd():
+    """Return the venv's project_mappings.xsd, or None when absent."""
     if os.path.isfile(PROJECT_MAPPINGS_XSD):
-        try:
-            subprocess.run(
-                ['xmllint', '--noout', '--schema', PROJECT_MAPPINGS_XSD,
-                 DEFAULT_MAPPINGS_XML],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            print('xmllint --schema passed')
-        except subprocess.CalledProcessError as e:
-            print('ERROR: xmllint validation failed; reverting from backup')
-            print(e.stderr)
-            shutil.copy2(backup, DEFAULT_MAPPINGS_XML)
-            sys.exit(1)
+        return PROJECT_MAPPINGS_XSD
+    matches = sorted(glob.glob(PROJECT_MAPPINGS_XSD_GLOB))
+    return matches[0] if matches else None
+
+
+def validate_mappings_xml(xml_path):
+    """Validate against the venv schema with xmllint.
+
+    Returns True (valid), False (invalid, xmllint's errors printed) or None
+    (skipped with a notice: the schema or xmllint is not installed).
+    """
+    xsd = find_project_mappings_xsd()
+    if xsd is None:
+        print(f'NOTICE: schema not found ({PROJECT_MAPPINGS_XSD}); '
+              'skipping validation')
+        return None
+    try:
+        result = subprocess.run(
+            ['xmllint', '--noout', '--schema', xsd, xml_path],
+            capture_output=True,
+            text=True,
+        )
+    except OSError as e:  # FileNotFoundError: xmllint is not installed
+        print(f'NOTICE: cannot run xmllint ({e}); skipping validation '
+              '(xmllint is in the libxml2-utils package)')
+        return None
+    if result.returncode != 0:
+        print(f'ERROR: xmllint --schema {xsd} failed:')
+        print(result.stderr)
+        return False
+    print(f'xmllint --schema passed ({xsd})')
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -693,15 +1065,27 @@ def cmd_interactive(args):
                 update_default_mappings(o['connector'], friendly)
 
     existing = load_existing_display_conf()
+    existing_text = read_display_conf_raw()
+    existing_conf = None
+    if existing_text is not None:
+        existing_conf = parse_display_conf_raw(existing_text)
+        if '\r\n' in existing_text:
+            print(f'NOTICE: {DISPLAY_CONF} has CRLF line endings. Its lines are '
+                  'carried as they are, but the VC keeps the \\r in values '
+                  '(enabled=true\\r reads as false); consider dos2unix.')
     outputs = reorder_connectors(outputs)
     resolutions = select_resolutions(outputs, existing)
     regions = select_layout(outputs, resolutions)
     canvas_size = select_canvas_size(regions)
 
-    content = compose_display_conf(outputs, resolutions, regions, canvas_size)
+    if existing_conf is not None:
+        print()
+        review_existing_sections(existing_conf, outputs, resolutions, regions)
+    content = compose_display_conf(outputs, resolutions, regions, canvas_size,
+                                   existing=existing_conf)
     print()
     print('=' * 60)
-    print(content, end='')
+    print(_printable(content), end='')
     print('=' * 60)
 
     if args.no_install or args.dry_run:

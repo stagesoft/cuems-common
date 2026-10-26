@@ -30,6 +30,10 @@ usr/lib/cuems/bin/cuems-write-rtpmidid-config usr/lib/cuems/bin/
 usr/lib/cuems/bin/cuems-write-hostapd-config usr/lib/cuems/bin/
 usr/lib/cuems/bin/cuems-gpu-pin usr/lib/cuems/bin/
 usr/lib/cuems/bin/cuems-generate-display-conf usr/lib/cuems/bin/
+# Operator tool that authors /etc/cuems/display.conf. Never shipped before
+# (copied by hand where it was used): the package now owns the path, so dpkg
+# silently overwrites a hand-copied, possibly patched copy (not a conffile).
+usr/lib/cuems/bin/cuems-display-setup usr/lib/cuems/bin/
 
 # Opt-in HDMI helpers (cuems-videocomposer pre/post-start drop-ins
 # ship as examples under /usr/share/; operator copies to /etc/ on
