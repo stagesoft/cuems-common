@@ -1,3 +1,22 @@
+cuems-common (1.3.0-26) bookworm; urgency=medium
+
+  * cuems-display-setup preserves the keys it does not own: it rewrites
+    only canvas_region/resolution per output and canvas_layout/canvas_size
+    (recognised by the stripped key, one canonical line each) and carries
+    every other line verbatim (refresh=, blend=, enabled=, color_*,
+    comments, CRLF); absent connectors are kept unless the operator answers
+    `drop`; refresh=/blend= are confirmed on a geometry change. Needed by
+    the per-output color of cuems-videocomposer 0.1.2-12 (color_* keys in
+    display.conf). --update-mappings validates against the venv schema,
+    before the file is replaced, and no longer crashes without xmllint.
+  * cuems-display-setup is now shipped in the package. NOTE: dpkg silently
+    overwrites a hand-copied /usr/lib/cuems/bin/cuems-display-setup (same
+    path, not a conffile); a locally patched copy is lost.
+  * Tests: tests/test_display_setup_preserve.py and
+    tests/test_generate_display_conf.py (29 passed on an N97, PR #11).
+
+ -- Ion Reguera <ion@stagelab.coop>  Tue, 03 Nov 2026 00:26:13 +0100
+
 cuems-common (1.3.0-25) bookworm; urgency=medium
 
   * apache: index.html and assets/i18n/*.json are served with
