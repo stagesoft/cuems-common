@@ -4,9 +4,11 @@
 # SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 """Render /run/cuems/hostapd.conf from template + cluster.conf.
 
-Invoked from hostapd.service ExecStartPre on every (re)start. SSID is
-derived from /etc/cuems/cluster.conf (cluster_name=<x> -> "cuems-<x>";
-absent or "default" -> bare "cuems"). The WPA passphrase comes from
+Invoked from hostapd.service ExecStartPre on every (re)start. The SSID is
+public, so it carries the commercial name Formitgo, never the internal
+"cuems". From /etc/cuems/cluster.conf: ssid=<free text> wins (spaces
+allowed, 1-32 bytes); else cluster_name=<x> -> "Formitgo_<x>"; absent or
+"default" -> bare "Formitgo". The WPA passphrase comes from
 the DEFAULT_WIFI_PASSPHRASE env var (set by the systemd drop-in) or
 falls back to the published default literal below — see
 docs/default-credentials.md for the operator-facing disclosure.
@@ -29,15 +31,34 @@ OUT = Path("/run/cuems/hostapd.conf")
 DEFAULT_PASSPHRASE = "cuems-wifi-default"
 
 
+BRAND = "Formitgo"
+
+
+def valid_ssid(ssid: str) -> bool:
+    return 1 <= len(ssid.encode()) <= 32 and ssid.isprintable()
+
+
 def derive_ssid() -> str:
-    ssid = "cuems"
+    explicit = derived = None
     if CLUSTER_CONF.is_file():
         for line in CLUSTER_CONF.read_text().splitlines():
+            m = re.match(r"\s*ssid\s*=\s*(.*?)\s*$", line)
+            if m and explicit is None:
+                explicit = m.group(1)
             m = re.match(r"\s*cluster_name\s*=\s*(\S+)", line)
-            if m and m.group(1) != "default":
-                ssid = f"cuems-{m.group(1)}"
-                break
-    return ssid
+            if m and derived is None and m.group(1) != "default":
+                derived = f"{BRAND}_{m.group(1)}"
+    if explicit is not None:
+        if valid_ssid(explicit):
+            return explicit
+        print(
+            f"cuems-write-hostapd-config: ignoring invalid ssid={explicit!r} "
+            "(needs 1-32 bytes, printable)",
+            file=sys.stderr,
+        )
+    if derived and valid_ssid(derived):
+        return derived
+    return BRAND
 
 
 def main() -> int:
