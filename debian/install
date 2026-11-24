@@ -249,6 +249,13 @@ usr/share/cuems/* usr/share/cuems/
 etc/apache2/sites-available/cuems-ui.conf etc/apache2/sites-available/
 etc/apache2/sites-available/cuems-ui-ssl.conf etc/apache2/sites-available/
 
+# Project exports (1amfwm7kana). Both under /usr, so neither is a conffile: the
+# apache snippet (symlinked into conf-available and enabled by the postinst,
+# undone by the prerm) serves /exports from /var/lib/cuems/exports, which the
+# tmpfiles rule creates and cleans by age. Nothing new under /etc owned by dpkg.
+usr/share/cuems/apache2/cuems-exports.conf usr/share/cuems/apache2/
+usr/lib/tmpfiles.d/cuems-exports.conf usr/lib/tmpfiles.d/
+
 # ACPI scripts: RETIRED in 1.3.0-16, removed via debian/cuems-common.maintscript.
 # They never ran — acpid is not installed on any CUEMS host (verified on isil,
 # test2 and both Medina controllers), so the physical power button has always been
