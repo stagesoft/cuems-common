@@ -70,6 +70,32 @@ if [ "$_undo" = yes ]; then
 fi
 unset _undo
 
+# Project exports (1amfwm7kana). The apache conf is enabled by this package's
+# postinst, so take it away with the package: on remove, and on a downgrade
+# below the release that introduced it (`prerm upgrade <new-version>`; the
+# older package does not ship the snippet, and a dangling link would leave a
+# conf that includes nothing). The folder and its zips stay (removed on purge).
+# The version is a literal, to be set to the release number on release day.
+_undo_exports=no
+case "$1" in
+    remove)
+        _undo_exports=yes
+        ;;
+    upgrade)
+        if [ -n "$2" ] && dpkg --compare-versions "$2" lt 1.3.0-27~; then
+            _undo_exports=yes
+        fi
+        ;;
+esac
+if [ "$_undo_exports" = yes ]; then
+    if command -v a2disconf >/dev/null 2>&1; then
+        a2disconf -q cuems-exports >/dev/null 2>&1 || true
+    fi
+    rm -f /etc/apache2/conf-enabled/cuems-exports.conf \
+          /etc/apache2/conf-available/cuems-exports.conf
+fi
+unset _undo_exports
+
 #DEBHELPER#
 
 exit 0
