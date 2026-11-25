@@ -93,6 +93,16 @@ if [ "$_undo_exports" = yes ]; then
     fi
     rm -f /etc/apache2/conf-enabled/cuems-exports.conf \
           /etc/apache2/conf-available/cuems-exports.conf
+    # On remove, the running apache keeps serving /exports from what it loaded,
+    # and with the tmpfiles rule gone nothing would clean it: reload. On a
+    # downgrade the older package's postinst reloads apache itself.
+    if [ "$1" = remove ]; then
+        if command -v invoke-rc.d >/dev/null 2>&1; then
+            invoke-rc.d apache2 reload >/dev/null 2>&1 || true
+        elif command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet apache2.service; then
+            systemctl reload apache2.service >/dev/null 2>&1 || true
+        fi
+    fi
 fi
 unset _undo_exports
 
