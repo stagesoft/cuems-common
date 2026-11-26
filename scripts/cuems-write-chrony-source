@@ -22,7 +22,7 @@ On slave:
     /etc/chrony/conf.d/cuems.conf (maxdistance 16 + makestep 1 -1
     to absorb large initial offsets from freshly-cloned hardware).
   - Takes the controller's address by the shared rule (controller.local unless
-    it is this host, else network_map.xml) and writes
+    it gives a loopback address, else network_map.xml) and writes
     /etc/chrony/sources.d/cuems-master.sources with one line:
         server <master-ip> iburst minpoll 4 maxpoll 6
 
@@ -39,8 +39,9 @@ from pathlib import Path
 # The rule for the controller's address is shared with the other helpers. It sits
 # beside bin/ once installed, and under usr/lib/cuems/ in the source tree.
 sys.dont_write_bytecode = True
-sys.path[:0] = [str(Path(__file__).resolve().parents[1]),
-                str(Path(__file__).resolve().parents[1] / "usr/lib/cuems")]
+# Appended, never prepended: /usr/lib/cuems is also the shared venv's directory.
+sys.path += [str(Path(__file__).resolve().parents[1]),
+             str(Path(__file__).resolve().parents[1] / "usr/lib/cuems")]
 from cuems_controller_address import controller_address  # noqa: E402
 
 MASTER_MARKER = Path("/etc/cuems/master.ip")

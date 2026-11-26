@@ -113,3 +113,5 @@ def test_the_package_installs_the_rule_where_the_helpers_look():
         assert 'controller_address' in text
         # A root service must not leave a __pycache__ inside the package's tree.
         assert 'sys.dont_write_bytecode = True' in text
+        # Appended: a root script must not look first in another package's tree.
+        assert 'sys.path +=' in text and 'sys.path[:0]' not in text

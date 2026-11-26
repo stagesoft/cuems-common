@@ -8,7 +8,8 @@ One rule for every helper that needs its address, in the order the engine uses
 (cuems-engine, BaseEngine.get_controller_ip):
 
 1. the name `controller.local` (mDNS, or a line in /etc/hosts), unless it
-   answers with this host itself;
+   answers with a loopback or unspecified address, which is how a box sees its
+   own name;
 2. the <ip> of the controller's entry in network_map.xml.
 
 A node's map need not list its controller for the first to work.
@@ -38,7 +39,7 @@ def controller_address(network_map, resolve=socket.gethostbyname):
     address = from_name(resolve)
     if address:
         return address
-    why = f'{CONTROLLER_NAME} gives no address of another host'
+    why = f'{CONTROLLER_NAME} gives no usable address'
     try:
         root = ET.parse(network_map).getroot()
     except OSError:
