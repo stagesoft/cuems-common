@@ -440,6 +440,37 @@ if command -v a2enmod >/dev/null 2>&1; then
     fi
 fi
 
+# =========================================================================
+# Project exports (1amfwm7kana)
+# =========================================================================
+# cuems-editor writes a project's zip to /var/lib/cuems/exports and the browser
+# fetches it at /exports. The folder comes from a tmpfiles rule (created here
+# at once, cleaned by age afterwards); /exports comes from an apache snippet
+# shipped under /usr/share (not a conffile), symlinked into conf-available and
+# enabled below. Placed BEFORE "Configure Apache2 sites" so that block's reload
+# loads it; this block adds no reload of its own. On every host, no role
+# condition: roles flip without a reinstall, and on a node it is an empty folder
+# and an unused Alias.
+#
+# Every line is guarded: a failure warns on stderr and never fails the
+# configure (set -e is on; it must not stop the rest of this script). A box
+# where a2enconf failed is caught by cuems-editor itself, which refuses to
+# export unless /etc/apache2/conf-enabled/cuems-exports.conf exists.
+if command -v systemd-tmpfiles >/dev/null 2>&1; then
+    systemd-tmpfiles --create /usr/lib/tmpfiles.d/cuems-exports.conf || \
+        echo "WARNING: could not create /var/lib/cuems/exports; project export will not work until it exists" >&2
+fi
+if [ -f /usr/share/cuems/apache2/cuems-exports.conf ] \
+   && [ -d /etc/apache2/conf-available ] \
+   && command -v a2enconf >/dev/null 2>&1; then
+    ln -sf /usr/share/cuems/apache2/cuems-exports.conf /etc/apache2/conf-available/cuems-exports.conf || \
+        echo "WARNING: could not link /etc/apache2/conf-available/cuems-exports.conf" >&2
+    a2enconf -q cuems-exports >/dev/null 2>&1 || \
+        echo "WARNING: could not enable the apache conf cuems-exports; project export will not be served" >&2
+else
+    echo "WARNING: apache2 or the cuems-exports snippet not found; project export will not be served" >&2
+fi
+
 # Configure Apache2 sites
 if command -v a2dissite >/dev/null 2>&1 && command -v a2ensite >/dev/null 2>&1; then
     # Disable all existing enabled sites first
