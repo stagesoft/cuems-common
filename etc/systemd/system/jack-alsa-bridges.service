@@ -22,6 +22,11 @@ Environment="JACK_NO_AUDIO_RESERVATION=1"
 LimitRTPRIO=95
 LimitMEMLOCK=infinity
 
+# The bridge exists for one card, hw:HID (USB audio). Without it the unit is
+# skipped, not failed. The wait covers a card that enumerates late at boot or
+# comes back after a short USB drop. A drop-in that bridges another card clears
+# this with an empty ExecCondition= and sets its own.
+ExecCondition=/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9 10; do test -e /proc/asound/HID && exit 0; sleep 0.5; done; exit 1'
 ExecStartPre=/bin/bash -c 'for i in $(seq 1 60); do jack_lsp > /dev/null 2>&1 && exit 0; sleep 0.5; done; exit 1'
 ExecStartPre=/bin/bash -c '/usr/sbin/alsactl -E HOME=/run/alsa restore HID 2>/dev/null || amixer -c HID set PCM 95%% unmute 2>/dev/null || true'
 ExecStart=/usr/bin/zita-j2a -j usb_audio -d hw:HID,0 -r 48000 -p 512 -n 3

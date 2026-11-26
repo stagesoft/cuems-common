@@ -5,7 +5,9 @@
 [Unit]
 Description=cuems-node-engine
 PartOf=cuems-node.target
-Requires=avahi-daemon.service jackd-cuems.service jack-alsa-bridges.service
+# jack-alsa-bridges is ordered below and not required: a box with no USB audio
+# interface still plays.
+Requires=avahi-daemon.service jackd-cuems.service
 # After cuems-videocomposer.service so /run/cuems/display.conf (written by
 # its ExecStartPre cuems-generate-display-conf) is present when the engine
 # reads it in NodeEngine.set_video_outputs.
