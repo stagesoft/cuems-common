@@ -1,0 +1,496 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+
+"""cuems-set-role on a temporary root.
+
+The cases come from the manual lists that this command replaces. They prove what
+is written and which units are switched; that a node then boots, finds its
+controller and plays is AC22 and AC23, on rigs.
+"""
+
+import importlib.machinery
+import importlib.util
+import os
+import pathlib
+import re
+import subprocess
+import xml.etree.ElementTree as ET
+
+import pytest
+
+from test_firstboot import BornBox, MINTED, SENTINEL, fb
+from test_platform import PROFILES, cp
+
+REPO = pathlib.Path(__file__).resolve().parent.parent
+TOOL = REPO / 'usr/bin/cuems-set-role'
+
+
+def load_tool():
+    loader = importlib.machinery.SourceFileLoader('cuems_set_role', str(TOOL))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+sr = load_tool()
+
+INTERFACES = 'etc/network/interfaces'
+MAP = 'etc/cuems/network_map.xml'
+NODE_ADDR = '169.254.0.11'
+
+# What a standalone controller from the image has switched on.
+BORN_UNITS = {
+    'cuems-node.target': 'enabled',
+    'cuems-controller.target': 'enabled',
+    'cuems-controller-engine.service': 'enabled',
+    'cuems-editor.service': 'enabled',
+    'cuems-power-bridge.service': 'enabled',
+    'cuems-cluster-poweroff.service': 'enabled',
+    'systemd-journal-remote.service': 'enabled',
+    'systemd-journal-remote.socket': 'enabled',
+    'systemd-journal-upload.service': 'disabled',
+    'cuems-nodeconf.service': 'disabled',
+}
+
+
+class Cluster(BornBox):
+    """A box after its first boot, with the controller's switches on."""
+
+    def __init__(self, root):
+        super().__init__(root)
+        self.units = {'cuems-gradient-motiond.service': 'disabled'}
+        self.path_active, self.path_stops = False, True
+        self.unowned, self.events = set(), []
+        assert fb.first_boot(self.system(), cp, PROFILES, mint=lambda: MINTED, wait=0) == fb.DONE
+        for name in ('interfaces.master', 'interfaces.node'):
+            self.write(f'usr/share/cuems/{name}', (REPO / 'usr/share/cuems' / name).read_text())
+        self.write(INTERFACES, self.read('usr/share/cuems/interfaces.master'))
+        self.write('etc/cuems/master.ip', '')
+        self.write('etc/cuems/master.lock', '')
+        self.write('etc/avahi/avahi-daemon.conf', '[server]\nuse-ipv4=yes\n')
+        self.units = dict(BORN_UNITS)
+        self.path_active = True
+        self.calls = []
+
+    def run(self, argv):
+        # The first boot's own reboot request goes the plain way.
+        if argv[0] not in ('systemctl', 'dpkg') or argv[1] == '--no-block':
+            return super().run(argv)
+        self.calls.append(argv)
+
+        def result(code, out=''):
+            return subprocess.CompletedProcess(argv, code, out, '')
+
+        if argv[0] == 'dpkg':
+            return result(1 if argv[-1] in self.unowned else 0)
+        verb, unit = argv[1], argv[-1]
+        if verb == 'daemon-reload':
+            return result(0)
+        if unit == 'cuems-controller.path':
+            if verb == 'stop':
+                self.events.append(('stop path', self.exists('etc/cuems/master.lock')))
+                self.path_active = not self.path_stops
+                return result(0)
+            if verb == 'is-active':
+                return result(0 if self.path_active else 3)
+        if verb == 'is-enabled':
+            state = self.units.get(unit)
+            return result(0 if state == 'enabled' else 1, f'{state}\n' if state else '')
+        if verb in self.fail:
+            return result(1)
+        if verb == 'enable' and self.units.get(unit) == 'masked':
+            return result(1)
+        self.units[unit] = {'enable': 'enabled', 'disable': 'disabled',
+                            'mask': 'masked', 'unmask': 'disabled'}[verb]
+        return result(0)
+
+    def role(self, role, **kwargs):
+        if role == 'node':
+            kwargs.setdefault('address', NODE_ADDR)
+        return sr.set_role(self.system(), cp, role, **kwargs)
+
+    def nodes(self):
+        tree = ET.fromstring(self.read(MAP).encode())
+        return [{c.tag: c.text for c in node} for node in tree.find('node_list')]
+
+    def own(self):
+        return next(n for n in self.nodes() if n['uuid'] == MINTED)
+
+    def snapshot(self):
+        """Every file under etc, by content."""
+        return {str(p.relative_to(self.root)): p.read_bytes()
+                for p in (self.root / 'etc').rglob('*') if p.is_file()}
+
+
+@pytest.fixture
+def box(tmp_path):
+    return Cluster(tmp_path)
+
+
+def stanza(text, iface):
+    """The `iface` line of an interface and the indented lines under it."""
+    match = re.search(rf'^iface {iface} .*\n(?:[ \t]+.*\n)*', text, re.M)
+    assert match, iface
+    return match.group(0)
+
+
+def pins(box):
+    return [line for line in box.read('etc/hosts').splitlines() if 'controller.local' in line]
+
+
+# --- becoming a node -------------------------------------------------------------
+
+def test_a_node_has_no_role_flags(box):
+    box.role('node')
+    assert not box.exists('etc/cuems/master.ip')
+    assert not box.exists('etc/cuems/master.lock')
+
+
+def test_a_node_switches_the_controller_units_off_and_masks_its_engine(box):
+    box.role('node')
+    for unit in ('cuems-controller.target', 'cuems-editor.service', 'cuems-power-bridge.service',
+                 'cuems-cluster-poweroff.service', 'systemd-journal-remote.service',
+                 'systemd-journal-remote.socket'):
+        assert box.units[unit] == 'disabled', unit
+    # Masked: installing the engine package again cannot start it.
+    assert box.units['cuems-controller-engine.service'] == 'masked'
+    assert box.units['cuems-node.target'] == 'enabled'
+    assert box.units['systemd-journal-upload.service'] == 'enabled'
+
+
+def test_a_node_bridges_both_ports_with_its_own_address_and_no_router(box):
+    box.role('node')
+    text = box.read(INTERFACES)
+    bridge = stanza(text, 'bridge0')
+    assert bridge.startswith('iface bridge0 inet static\n')
+    assert f'address {NODE_ADDR}\n' in bridge and 'netmask 255.255.0.0\n' in bridge
+    assert 'bridge_ports ethernet0 ethernet1' in bridge
+    assert not re.search(r'^\s*(gateway|dns-nameservers)\b', text, re.M)
+    assert 'bond0' not in text
+
+
+def test_a_node_leaves_the_wifi_down(box):
+    box.role('node')
+    auto = [line.split()[1:] for line in box.read(INTERFACES).splitlines()
+            if line.startswith('auto ')]
+    assert ['lo'] in auto and not any('wifi0' in words for words in auto)
+
+
+def test_the_interfaces_file_it_replaces_is_kept(box):
+    before = box.read(INTERFACES)
+    box.role('node')
+    assert box.read(INTERFACES + sr.BACKUP) == before
+
+
+@pytest.mark.parametrize('controller', ['169.254.0.1', '169.254.7.7'])
+def test_a_node_pins_controller_local_to_its_controller(box, controller):
+    box.role('node', controller=controller)
+    assert pins(box) == [f'{controller}\tcontroller.local\t# cuems-set-role']
+
+
+def test_a_node_publishes_itself_as_a_node_with_its_own_uuid(box):
+    box.role('node')
+    record = box.read('etc/avahi/services/cuems.service')
+    assert 'node_type=slave' in record and 'node_type=master' not in record
+    assert re.findall(r'uuid=([^<]*)', record) == [MINTED]
+
+
+def test_a_template_that_lost_the_uuid_still_publishes_this_box(box):
+    """An upgrade of the package puts the sentinel back in the templates."""
+    path = 'usr/share/cuems/cuems.service.slave'
+    box.write(path, box.read(path).replace(MINTED, SENTINEL))
+    box.role('node')
+    assert re.findall(r'uuid=([^<]*)', box.read('etc/avahi/services/cuems.service')) == [MINTED]
+
+
+def test_the_node_map_has_itself_and_a_controller_to_send_logs_to(box):
+    """Journal upload and chrony read the controller's <ip> from this file."""
+    result = box.role('node')
+    own = box.own()
+    assert (own['node_type'], own['ip'], own['role_id']) == ('NodeType.slave', NODE_ADDR, 'node01')
+    masters = [n for n in box.nodes() if n['node_type'] == 'NodeType.master']
+    assert [m['ip'] for m in masters] == ['169.254.0.1']
+    assert masters[0]['uuid'] == SENTINEL
+    assert any('not listed' in w for w in result.warnings)
+
+
+def test_a_controller_already_listed_gets_the_link_address_and_no_placeholder(box):
+    other = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    box.write(MAP, box.read(MAP).replace('</node_list>', f'''    <node>
+            <uuid>{other}</uuid>
+            <mac>020000000001</mac>
+            <name>x</name>
+            <node_type>NodeType.master</node_type>
+            <ip>127.0.0.1</ip>
+            <role_id>controller</role_id>
+        </node>
+    </node_list>'''))
+    box.role('node')
+    masters = [n for n in box.nodes() if n['node_type'] == 'NodeType.master']
+    assert [(m['uuid'], m['ip']) for m in masters] == [(other, '169.254.0.1')]
+
+
+@pytest.mark.parametrize('address, role_id', [
+    ('169.254.0.11', 'node01'), ('169.254.0.12', 'node02'), ('169.254.0.26', 'node16')])
+def test_the_role_id_follows_the_link_address(box, address, role_id):
+    box.role('node', address=address)
+    assert box.own()['role_id'] == role_id
+
+
+@pytest.mark.parametrize('address', [None, '', '169.254.0.1', '169.254.0.10', '169.254.0.27',
+                                     '192.168.1.20', '169.254.0.011', 'node01'])
+def test_only_the_addresses_the_jump_allows_are_accepted(box, address):
+    before = box.snapshot()
+    with pytest.raises(sr.RoleError):
+        box.role('node', address=address)
+    assert box.snapshot() == before and box.calls == []
+
+
+def test_the_accepted_addresses_are_the_ones_the_ssh_jump_ships():
+    config = (REPO / 'etc/ssh/sshd_config.d/50-cuems.conf').read_text()
+    assert sorted(re.findall(r'(169\.254\.0\.\d+):22', config)) == sorted(sr.NODE_ADDRESSES)
+
+
+@pytest.mark.parametrize('controller', [NODE_ADDR, '10.1.2.3', 'controller.local', '169.254.0.999'])
+def test_a_controller_address_must_be_another_link_local_one(box, controller):
+    with pytest.raises(sr.RoleError):
+        box.role('node', controller=controller)
+
+
+def test_an_unowned_rtpmidid_override_is_set_aside(box):
+    """A hand-made copy in /etc hides the packaged one, and the role with it."""
+    rel = 'etc/systemd/system/rtpmidid.service.d/cuems-node-group.conf'
+    box.write(rel, '[Service]\n')
+    box.unowned.add('/' + rel)
+    box.role('node')
+    assert not box.exists(rel) and box.exists(rel + '.cuems-disabled')
+
+
+def test_an_rtpmidid_file_a_package_owns_stays(box):
+    rel = 'etc/systemd/system/rtpmidid.service.d/cuems-node-group.conf'
+    box.write(rel, '[Service]\n')
+    box.role('node')
+    assert box.exists(rel)
+
+
+# --- becoming a controller --------------------------------------------------------
+
+def test_a_controller_puts_its_link_address_on_the_cluster_port(box):
+    box.role('controller')
+    cluster = stanza(box.read(INTERFACES), 'ethernet1')
+    assert cluster.startswith('iface ethernet1 inet static\n')
+    assert 'address 169.254.0.1\n' in cluster and 'netmask 255.255.0.0\n' in cluster
+    assert 'wol g' in cluster
+    assert stanza(box.read(INTERFACES), 'bond0').startswith('iface bond0 inet dhcp')
+
+
+def test_a_controller_keeps_the_bond_stanza_the_site_set(box):
+    """cuems-net-mode and sites edit bond0; only the cluster port is the role's."""
+    own = box.read(INTERFACES).replace(
+        'iface bond0 inet dhcp\n', 'iface bond0 inet static\n\taddress 192.168.9.2/24\n')
+    box.write(INTERFACES, own)
+    box.role('controller')
+    assert 'address 192.168.9.2/24' in stanza(box.read(INTERFACES), 'bond0')
+
+
+def test_there_and_back_gives_the_same_controller(box):
+    box.role('controller')
+    born = box.snapshot()
+    born_units = dict(box.units)
+    box.role('node')
+    box.path_active = True
+    box.role('controller')
+    after = box.snapshot()
+    kept = INTERFACES + sr.BACKUP
+    born.pop(kept, None), after.pop(kept, None)
+    assert after == born
+    assert box.units == born_units
+
+
+def test_a_controller_switches_its_units_on_and_unmasks_the_engine(box):
+    box.role('node')
+    box.path_active = True
+    box.role('controller')
+    for unit, state in BORN_UNITS.items():
+        assert box.units[unit] == state, unit
+
+
+def test_a_controller_is_pinned_to_itself_and_publishes_itself_as_one(box):
+    box.role('controller')
+    assert pins(box) == ['127.0.0.1\tcontroller.local\t# cuems-set-role']
+    assert 'node_type=master' in box.read('etc/avahi/services/cuems.service')
+    own = box.own()
+    assert (own['node_type'], own['ip'], own['role_id']) == (
+        'NodeType.master', '127.0.0.1', 'controller')
+    assert [n['uuid'] for n in box.nodes()] == [MINTED]
+
+
+def test_another_listed_controller_is_demoted_with_a_warning(box):
+    other = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    box.write(MAP, box.read(MAP).replace('</node_list>', f'''    <node>
+            <uuid>{other}</uuid><mac>02</mac><name>x</name>
+            <node_type>NodeType.master</node_type><ip>169.254.0.1</ip>
+            <role_id>controller</role_id>
+        </node>
+    </node_list>'''))
+    result = box.role('controller')
+    entry = next(n for n in box.nodes() if n['uuid'] == other)
+    assert entry['node_type'] == 'NodeType.slave' and 'role_id' not in entry
+    assert any(other in w for w in result.warnings)
+
+
+def test_the_controller_path_is_stopped_before_the_lock_file_appears(box):
+    """systemd watches that file: creating it would start the controller at once."""
+    box.role('node')
+    box.path_active, box.events = True, []
+    box.role('controller')
+    assert box.events == [('stop path', False)]
+
+
+def test_if_the_path_cannot_be_stopped_nothing_is_written(box):
+    box.role('node')
+    box.path_active, box.path_stops = True, False
+    before = box.snapshot()
+    with pytest.raises(sr.RoleError, match='cuems-controller.path'):
+        box.role('controller')
+    assert box.snapshot() == before
+
+
+def test_nothing_is_ever_started_or_restarted(box):
+    box.role('node')
+    box.path_active = True
+    box.role('controller')
+    verbs = {c[1] for c in box.calls if c[0] == 'systemctl'}
+    assert not verbs & {'start', 'restart', 'reload', 'isolate', 'reboot'}
+    assert not any('--now' in c for c in box.calls)
+    assert [c for c in box.calls if c[:2] == ['systemctl', 'stop']] == [
+        ['systemctl', 'stop', 'cuems-controller.path']]
+
+
+def test_a_site_network_mode_is_pointed_out_when_the_bond_is_rewritten(box):
+    box.role('node')
+    box.path_active = True
+    box.write('etc/cuems/net-mode.conf', 'NET_MODE=cable-static\n')
+    assert any('cuems-net-mode cable-static' in w for w in box.role('controller').warnings)
+
+
+# --- the name ------------------------------------------------------------------------
+
+def test_one_run_writes_the_name_everywhere(box):
+    box.write('etc/avahi/avahi-daemon.conf', '[server]\nhost-name=oldname\nuse-ipv4=yes\n')
+    box.role('node', hostname='sala-node01')
+    assert box.read('etc/hostname') == 'sala-node01\n'
+    assert '127.0.1.1\tsala-node01' in box.read('etc/hosts').splitlines()
+    assert 'host-name=sala-node01' in box.read('etc/avahi/avahi-daemon.conf').splitlines()
+    assert box.own()['hostname'] == 'sala-node01'
+
+
+def test_with_no_name_given_the_box_keeps_its_own_and_the_map_says_it(box):
+    name = box.read('etc/hostname').strip()
+    box.role('node')
+    assert box.read('etc/hostname').strip() == name
+    assert box.own()['hostname'] == name
+
+
+def test_without_a_host_name_line_avahi_conf_is_left_alone(box):
+    before = box.read('etc/avahi/avahi-daemon.conf')
+    box.role('node', hostname='sala-node01')
+    assert box.read('etc/avahi/avahi-daemon.conf') == before
+
+
+@pytest.mark.parametrize('name', ['Sala', 'sala_1', '-sala', 'sala.local', 'a' * 64, 'localhost'])
+def test_a_bad_name_is_refused(box, name):
+    with pytest.raises(sr.RoleError):
+        box.role('controller', hostname=name)
+
+
+def test_a_node_cannot_be_called_controller(box):
+    with pytest.raises(sr.RoleError):
+        box.role('node', hostname='controller')
+
+
+# --- the rules ------------------------------------------------------------------------
+
+def test_it_refuses_while_a_project_is_loaded(box):
+    box.write('tmp/cuems.show.lock', '')
+    before = box.snapshot()
+    with pytest.raises(cp.ProjectLoaded):
+        box.role('node')
+    assert box.snapshot() == before and box.calls == []
+
+
+def test_it_refuses_while_the_first_boot_is_pending(box):
+    box.write('var/lib/cuems/firstboot.armed', '')
+    with pytest.raises(sr.RoleError, match='first boot'):
+        box.role('node')
+
+
+def test_a_box_without_an_identity_cannot_become_a_node(box):
+    box.write('etc/cuems/settings.xml', box.read('etc/cuems/settings.xml').replace(MINTED, SENTINEL))
+    box.write(MAP, box.read(MAP).replace(MINTED, SENTINEL))
+    with pytest.raises(sr.RoleError, match='identity'):
+        box.role('node')
+
+
+def test_the_recipe_can_set_the_born_controller_before_there_is_an_identity(box):
+    box.write('etc/cuems/settings.xml', box.read('etc/cuems/settings.xml').replace(MINTED, SENTINEL))
+    box.write(MAP, box.read(MAP).replace(MINTED, SENTINEL))
+    (box.root / 'etc/avahi/services/cuems.service').unlink()
+    box.role('controller')
+    assert not box.exists('etc/avahi/services/cuems.service')
+    assert [n['uuid'] for n in box.nodes()] == [SENTINEL]
+
+
+def test_a_second_run_changes_nothing_and_says_so(box):
+    box.role('node')
+    before = box.snapshot()
+    box.calls.clear()
+    result = box.role('node')
+    assert result.changes == []
+    assert box.snapshot() == before
+    assert not [c for c in box.calls if c[1] in ('enable', 'disable', 'mask', 'unmask')]
+
+
+def test_a_dry_run_lists_the_changes_and_makes_none(box):
+    before = box.snapshot()
+    result = box.role('node', dry_run=True)
+    assert result.changes and box.snapshot() == before
+    assert box.units == BORN_UNITS
+
+
+def test_a_unit_that_cannot_be_switched_is_an_error_to_run_again(box):
+    box.fail.add('mask')
+    with pytest.raises(sr.RoleError, match='again'):
+        box.role('node')
+    box.fail.clear()
+    box.role('node')
+    assert box.units['cuems-controller-engine.service'] == 'masked'
+
+
+def test_a_unit_of_a_package_that_is_not_installed_is_skipped(box):
+    del box.units['cuems-power-bridge.service']
+    box.role('node')
+    assert 'cuems-power-bridge.service' not in box.units
+
+
+def test_a_missing_engine_unit_is_an_error_before_anything_is_written(box):
+    del box.units['cuems-node.target']
+    before = box.snapshot()
+    with pytest.raises(sr.RoleError, match='cuems-node.target'):
+        box.role('node')
+    assert box.snapshot() == before
+
+
+def test_exit_codes_and_the_call_for_a_reboot(box, capsys):
+    run = lambda *argv: sr.main(list(argv), system=box.system(), platform=cp)
+    assert run('node', NODE_ADDR, '--hostname', 'sala-node01') == 0
+    out = capsys.readouterr().out
+    assert 'Reboot' in out and 'etc/network/interfaces' in out
+    assert run('node', '169.254.0.99') == 1
+    box.write('tmp/cuems.show.lock', '')
+    assert run('node', NODE_ADDR) == 6
+    with pytest.raises(SystemExit) as e:
+        run('node')
+    assert e.value.code == 2

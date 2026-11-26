@@ -1,0 +1,468 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+
+"""cuems-set-role - make this box a controller or a node.
+
+    sudo cuems-set-role controller [--hostname NAME]
+    sudo cuems-set-role node ADDRESS [--controller ADDRESS] [--hostname NAME]
+
+ADDRESS is the node's own address on the cluster link, 169.254.0.11 to .26. The
+controller's is 169.254.0.1 unless --controller says otherwise.
+
+Run by an operator, never by a package script. It writes files and switches
+units on and off; it starts and restarts nothing: reboot to apply. It is
+reversible and safe to run twice. It does not use cuems-nodeconf, and listing a
+node on its controller is still done by hand (docs/set-role.md).
+
+Exit codes: 0 done; 1 refused or failed; 2 usage; 6 a project is loaded.
+"""
+
+import argparse
+import dataclasses
+import importlib.machinery
+import importlib.util
+import ipaddress
+import os
+import pathlib
+import re
+import sys
+import xml.etree.ElementTree as ET
+from xml.sax.saxutils import escape
+
+PLATFORM_TOOL = '/usr/bin/cuems-platform'
+
+CONTROLLER_ADDRESS = '169.254.0.1'
+# The same list as PermitOpen in sshd_config.d/50-cuems.conf: a node outside it
+# cannot be reached through its controller.
+NODE_ADDRESSES = tuple(f'169.254.0.{n}' for n in range(11, 27))
+
+SENTINEL = '00000000-0000-0000-0000-000000000000'
+SETTINGS = 'etc/cuems/settings.xml'
+NETWORK_MAP = 'etc/cuems/network_map.xml'
+ROLE_FLAGS = ('etc/cuems/master.ip', 'etc/cuems/master.lock')
+INTERFACES = 'etc/network/interfaces'
+BACKUP = '.cuems-before-set-role'
+HOSTS = 'etc/hosts'
+HOSTNAME = 'etc/hostname'
+AVAHI_CONF = 'etc/avahi/avahi-daemon.conf'
+AVAHI_RECORD = 'etc/avahi/services/cuems.service'
+NET_MODE_CONF = 'etc/cuems/net-mode.conf'
+RTPMIDID_SHADOW = 'etc/systemd/system/rtpmidid.service.d/cuems-node-group.conf'
+ARMED = 'var/lib/cuems/firstboot.armed'
+CONTROLLER_PATH = 'cuems-controller.path'
+ENGINE = 'cuems-controller-engine.service'
+
+# The order of the elements of a node in network_map.xsd.
+NODE_FIELDS = ('uuid', 'mac', 'name', 'node_type', 'ip', 'adopted', 'online',
+               'role_id', 'alias', 'hostname')
+PIN_MARK = '# cuems-set-role'
+
+CONTROLLER_UNITS = ('cuems-controller.target', ENGINE, 'cuems-editor.service',
+                    'cuems-power-bridge.service', 'cuems-cluster-poweroff.service',
+                    'systemd-journal-remote.socket', 'systemd-journal-remote.service')
+UNITS = {
+    'controller': {'unmask': (ENGINE,),
+                   'enable': ('cuems-node.target',) + CONTROLLER_UNITS,
+                   'disable': ('systemd-journal-upload.service', 'cuems-nodeconf.service'),
+                   'mask': (),
+                   'required': ('cuems-node.target', 'cuems-controller.target', ENGINE)},
+    'node': {'unmask': (),
+             'enable': ('cuems-node.target', 'systemd-journal-upload.service'),
+             'disable': CONTROLLER_UNITS + ('cuems-nodeconf.service',),
+             # Masked, not only disabled: installing the engine package enables
+             # and starts both engines on any box.
+             'mask': (ENGINE,),
+             'required': ('cuems-node.target',)},
+}
+
+
+class RoleError(Exception):
+    pass
+
+
+@dataclasses.dataclass
+class Result:
+    changes: list
+    warnings: list
+
+
+# --- what is asked ------------------------------------------------------------
+
+def check_arguments(role, address, controller, hostname):
+    if role == 'node':
+        if address not in NODE_ADDRESSES:
+            raise RoleError(f'a node address is one of {NODE_ADDRESSES[0]} to '
+                            f'{NODE_ADDRESSES[-1]}, not "{address}"')
+        try:
+            other = ipaddress.IPv4Address(controller)
+        except ValueError:
+            other = None
+        if not other or not other.is_link_local or controller == address:
+            raise RoleError(f'the controller address must be another link-local address, '
+                            f'not "{controller}"')
+    elif address is not None:
+        raise RoleError('a controller takes no address')
+    if hostname is not None:
+        if (not re.fullmatch(r'[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?', hostname)
+                or hostname == 'localhost'):
+            raise RoleError(f'"{hostname}" is not a host name: lower-case letters, digits and '
+                            'hyphens, 63 at most')
+        if role == 'node' and hostname == 'controller':
+            raise RoleError('a node cannot be called "controller"')
+
+
+def own_uuid(system, role):
+    try:
+        root = ET.fromstring((system.read(SETTINGS) or '').encode())
+    except ET.ParseError as e:
+        raise RoleError(f'/{SETTINGS} is missing or not XML: {e}')
+    value = (root.findtext('Settings/node/uuid') or '').strip()
+    if not re.fullmatch(r'[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', value):
+        raise RoleError(f'/{SETTINGS} holds no uuid: "{value}"')
+    # The sentinel is allowed for one thing: the recipe setting the born state.
+    if value == SENTINEL and role == 'node':
+        raise RoleError('this box has no identity yet: it cannot become a node')
+    return value
+
+
+# --- the files ------------------------------------------------------------------
+
+def required_text(system, rel):
+    text = system.read(rel)
+    if text is None:
+        raise RoleError(f'/{rel} is missing')
+    return text
+
+
+def set_stanza(text, iface, address):
+    """Give an interface a static address, keeping its other indented lines."""
+    pattern = re.compile(rf'^iface {iface} inet \w+[ \t]*\n((?:[ \t]+.*\n)*)', re.M)
+    match = pattern.search(text)
+    if not match:
+        raise RoleError(f'no "iface {iface}" in the interfaces file')
+    kept = [line for line in match.group(1).splitlines(True)
+            if line.split()[:1] not in (['address'], ['netmask'])]
+    new = (f'iface {iface} inet static\n    address {address}\n    netmask 255.255.0.0\n'
+           + ''.join(kept))
+    return text[:match.start()] + new + text[match.end():]
+
+
+def interfaces_text(system, role, address, warnings):
+    current = system.read(INTERFACES) or ''
+    if not current.endswith('\n'):
+        current += '\n'
+    if role == 'node':
+        text = required_text(system, 'usr/share/cuems/interfaces.node')
+        # No Wi-Fi on a node: it is left defined and down.
+        text = re.sub(r'^auto lo wifi0[ \t]*$', 'auto lo', text, flags=re.M)
+        return set_stanza(text, 'bridge0', address)
+    if re.search(r'^iface bond0 ', current, re.M):
+        # bond0 belongs to the site and to cuems-net-mode: only the cluster
+        # port is the role's.
+        return set_stanza(current, 'ethernet1', CONTROLLER_ADDRESS)
+    mode = re.findall(r'^NET_MODE=(\S+)', system.read(NET_MODE_CONF) or '', re.M)
+    if mode and mode[-1] in ('cable-static', 'ap'):
+        warnings.append(f'the network file is the standard controller one. After the reboot run '
+                        f'`cuems-net-mode {mode[-1]}` to set that mode again')
+    return set_stanza(required_text(system, 'usr/share/cuems/interfaces.master'),
+                      'ethernet1', CONTROLLER_ADDRESS)
+
+
+def hosts_text(system, pin, hostname):
+    lines, named = [], hostname is None
+    for line in (system.read(HOSTS) or '127.0.0.1\tlocalhost\n').splitlines():
+        words = line.split('#')[0].split()
+        if hostname and words[:1] == ['127.0.1.1']:
+            if not named:
+                lines.append(f'127.0.1.1\t{hostname}')
+                named = True
+            continue
+        if 'controller.local' in words[1:]:
+            others = [w for w in words[1:] if w != 'controller.local']
+            if others:
+                lines.append(f'{words[0]}\t{" ".join(others)}')
+            continue
+        lines.append(line)
+    if not named:
+        lines.insert(1, f'127.0.1.1\t{hostname}')
+    lines.insert(1, f'{pin}\tcontroller.local\t{PIN_MARK}')
+    return '\n'.join(lines) + '\n'
+
+
+def avahi_record(system, role, uuid):
+    kind = 'master' if role == 'controller' else 'slave'
+    text = required_text(system, f'usr/share/cuems/cuems.service.{kind}')
+    # Whatever uuid the template carries: an upgrade puts the sentinel back.
+    return re.sub(r'(<txt-record>uuid=)[^<]*(</txt-record>)', rf'\g<1>{uuid}\g<2>', text)
+
+
+def node_block(fields):
+    inner = ''.join(f'            <{key}>{escape(fields[key])}</{key}>\n'
+                    for key in NODE_FIELDS if fields.get(key) is not None)
+    return f'<node>\n{inner}        </node>'
+
+
+def network_map_text(system, role, uuid, address, controller, name, warnings):
+    text = required_text(system, NETWORK_MAP)
+    found = []
+    for match in re.finditer(r'<node>.*?</node>', text, re.S):
+        try:
+            fields = {c.tag: c.text or '' for c in ET.fromstring(match.group(0))}
+        except ET.ParseError as e:
+            raise RoleError(f'/{NETWORK_MAP}: a node cannot be read: {e}')
+        unknown = set(fields) - set(NODE_FIELDS)
+        if unknown:
+            raise RoleError(f'/{NETWORK_MAP}: unknown elements in a node: {sorted(unknown)}')
+        found.append((match, fields))
+    if sum(f.get('uuid') == uuid for _, f in found) != 1:
+        raise RoleError(f'/{NETWORK_MAP} must list this box ({uuid}) exactly once')
+
+    new, controller_listed = [], False
+    for match, fields in found:
+        fields = dict(fields)
+        mine = fields.get('uuid') == uuid
+        placeholder = not mine and fields.get('uuid') == SENTINEL
+        master = fields.get('node_type') == 'NodeType.master'
+        if mine:
+            fields['node_type'] = 'NodeType.master' if role == 'controller' else 'NodeType.slave'
+            fields['ip'] = '127.0.0.1' if role == 'controller' else address
+            fields['role_id'] = ('controller' if role == 'controller'
+                                 else f'node{int(address.rsplit(".", 1)[1]) - 10:02d}')
+            # The engine names the fade target by this and gradient-motiond
+            # keeps only what carries the OS host name.
+            fields['hostname'] = name
+        elif role == 'controller':
+            if placeholder:
+                new.append((match, None))
+                continue
+            if master:
+                fields['node_type'] = 'NodeType.slave'
+                if fields.get('role_id') == 'controller':
+                    del fields['role_id']
+                warnings.append(f'{fields["uuid"]} was listed as controller and is now a node '
+                                'in this map: check the map')
+        elif master:
+            fields['ip'] = controller
+            controller_listed = True
+        new.append((match, fields))
+
+    pieces, end = [], 0
+    for match, fields in new:
+        before = text[end:match.start()]
+        if fields is None:
+            pieces.append(before.rstrip(' \t\n'))
+        else:
+            pieces += [before, node_block(fields)]
+        end = match.end()
+    result = ''.join(pieces) + text[end:]
+
+    if role == 'node' and not controller_listed:
+        # Log upload and chrony take the controller's address from this file,
+        # and fail without a controller in it.
+        entry = node_block({
+            'uuid': SENTINEL, 'mac': '000000000000', 'name': 'controller.local',
+            'node_type': 'NodeType.master', 'ip': controller, 'adopted': 'True',
+            'online': 'True', 'role_id': 'controller', 'alias': 'controller (not listed yet)'})
+        result, count = re.subn(r'([ \t]*)</node_list>',
+                                lambda m: f'        {entry}\n{m.group(1)}</node_list>', result)
+        if count != 1:
+            raise RoleError(f'/{NETWORK_MAP} has no </node_list>')
+        warnings.append('the controller is not listed in this map: a placeholder holds its '
+                        'address. Put its real entry here when the cluster is put together')
+    try:
+        ET.fromstring(result.encode())
+    except ET.ParseError as e:
+        raise RoleError(f'/{NETWORK_MAP} would not be XML: {e}')
+    return result
+
+
+def same_map(a, b):
+    """Equal apart from layout, so that a second run changes nothing."""
+    def shape(text):
+        root = ET.fromstring(text.encode())
+        return [[(c.tag, c.text or '') for c in node] for node in root.iter('node')]
+    return shape(a) == shape(b)
+
+
+def planned_files(system, role, uuid, address, controller, hostname, warnings):
+    """What each file has to hold. None means it must not exist."""
+    name = hostname or required_text(system, HOSTNAME).strip()
+    files = {}
+    for flag in ROLE_FLAGS:
+        if role == 'node':
+            files[flag] = None
+        else:
+            files[flag] = system.read(flag) or ''
+    files[INTERFACES] = interfaces_text(system, role, address, warnings)
+    files[HOSTS] = hosts_text(system, '127.0.0.1' if role == 'controller' else controller,
+                              hostname)
+    new_map = network_map_text(system, role, uuid, address, controller, name, warnings)
+    current_map = system.read(NETWORK_MAP)
+    files[NETWORK_MAP] = current_map if same_map(current_map, new_map) else new_map
+    if uuid != SENTINEL:
+        files[AVAHI_RECORD] = avahi_record(system, role, uuid)
+    if hostname:
+        files[HOSTNAME] = f'{hostname}\n'
+        conf = system.read(AVAHI_CONF)
+        if conf is not None:
+            # With no host-name line avahi publishes the OS host name.
+            files[AVAHI_CONF] = re.sub(r'^[ \t]*host-name=.*$', f'host-name={hostname}', conf,
+                                       flags=re.M)
+    return files
+
+
+# --- the units ---------------------------------------------------------------------
+
+def unit_state(system, unit):
+    """"enabled", "disabled", "masked"…, or "" when the unit does not exist."""
+    done = system.run(['systemctl', 'is-enabled', unit])
+    lines = (done.stdout or '').split()
+    return lines[0] if lines else ''
+
+
+def planned_units(system, role):
+    wanted = UNITS[role]
+    states = {u: unit_state(system, u)
+              for u in sorted({u for key in ('unmask', 'enable', 'disable', 'mask')
+                               for u in wanted[key]} | set(wanted['required']))}
+    missing = [u for u in wanted['required'] if not states[u]]
+    if missing:
+        raise RoleError(f'these units do not exist here: {", ".join(missing)}')
+    steps = []
+    for unit in wanted['unmask']:
+        if states[unit] == 'masked':
+            steps.append(('unmask', unit))
+            states[unit] = 'disabled'
+    for unit in wanted['disable']:
+        if states[unit] == 'enabled':
+            steps.append(('disable', unit))
+    for unit in wanted['enable']:
+        if states[unit] == 'disabled':
+            steps.append(('enable', unit))
+    for unit in wanted['mask']:
+        if states[unit] and states[unit] != 'masked':
+            steps.append(('mask', unit))
+    return steps, [u for u in wanted['enable'] if states[u] == 'masked']
+
+
+def rtpmidid_shadow(system, role):
+    if role != 'node' or not system.path(RTPMIDID_SHADOW).exists():
+        return False
+    return system.run(['dpkg', '-S', '/' + RTPMIDID_SHADOW]).returncode != 0
+
+
+# --- the run --------------------------------------------------------------------------
+
+def set_role(system, platform, role, address=None, controller=CONTROLLER_ADDRESS,
+             hostname=None, dry_run=False):
+    if system.path(platform.SHOW_LOCK).exists():
+        raise platform.ProjectLoaded(
+            f'/{platform.SHOW_LOCK} exists: a project is loaded. Unload it (after STOP) or '
+            'reboot, then run this again.')
+    check_arguments(role, address, controller, hostname)
+    if system.path(ARMED).exists():
+        raise RoleError('the first boot of this box has not finished: it has no identity to '
+                        'give a role to')
+    uuid = own_uuid(system, role)
+
+    # Everything that can say no is asked before the first change.
+    warnings = []
+    files = planned_files(system, role, uuid, address, controller, hostname, warnings)
+    changed = {rel: text for rel, text in files.items() if system.read(rel) != text}
+    steps, masked = planned_units(system, role)
+    warnings += [f'{unit} is masked and stays off: unmask it by hand if it should run'
+                 for unit in masked]
+    shadow = rtpmidid_shadow(system, role)
+
+    changes = [f'{"remove" if text is None else "write"} /{rel}'
+               for rel, text in changed.items()]
+    if shadow:
+        changes.append(f'set aside /{RTPMIDID_SHADOW} (no package owns it)')
+    changes += [f'{verb} {unit}' for verb, unit in steps]
+    result = Result(changes, warnings)
+    if dry_run or not changes:
+        return result
+
+    if changed.get('etc/cuems/master.lock') is not None:
+        # systemd watches this file and would start the controller target the
+        # moment it appears. Stopping the watcher stops nothing it started.
+        system.run(['systemctl', 'stop', CONTROLLER_PATH])
+        if system.run(['systemctl', 'is-active', '--quiet', CONTROLLER_PATH]).returncode == 0:
+            raise RoleError(f'{CONTROLLER_PATH} could not be stopped: nothing was written')
+
+    if INTERFACES in changed and system.read(INTERFACES) is not None:
+        system.write(INTERFACES + BACKUP, system.read(INTERFACES))
+    for rel, text in changed.items():
+        if text is None:
+            system.path(rel).unlink(missing_ok=True)
+        else:
+            system.write(rel, text)
+    if shadow:
+        path = system.path(RTPMIDID_SHADOW)
+        path.rename(path.with_name(path.name + '.cuems-disabled'))
+    failed = [f'{verb} {unit}' for verb, unit in steps
+              if system.run(['systemctl', verb, unit]).returncode != 0]
+    if failed:
+        raise RoleError(f'could not {"; ".join(failed)}. The files are written: fix that and '
+                        'run the same command again, before rebooting. A copy of the unit '
+                        'under /etc/systemd/system stops it being masked')
+    return result
+
+
+def load_platform_tool(path=PLATFORM_TOOL):
+    loader = importlib.machinery.SourceFileLoader('cuems_platform', path)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[loader.name] = module
+    loader.exec_module(module)
+    return module
+
+
+def main(argv=None, system=None, platform=None):
+    parser = argparse.ArgumentParser(prog='cuems-set-role',
+                                     description='Make this box a controller or a node.')
+    roles = parser.add_subparsers(dest='role', required=True)
+    controller = roles.add_parser('controller', help='this box leads a cluster, or plays alone')
+    node = roles.add_parser('node', help='this box plays for a controller')
+    node.add_argument('address', help="this node's address on the cluster link")
+    node.add_argument('--controller', default=CONTROLLER_ADDRESS,
+                      help="the controller's address on that link (default %(default)s)")
+    for sub in (controller, node):
+        sub.add_argument('--hostname', help="the box's name (default: keep it)")
+        sub.add_argument('--dry-run', action='store_true',
+                         help='say what would change and change nothing')
+    args = parser.parse_args(argv)
+
+    if platform is None:
+        sys.dont_write_bytecode = True
+        platform = load_platform_tool()
+    system = system or platform.System()
+    try:
+        if not args.dry_run and system.root == pathlib.Path('/') and os.geteuid() != 0:
+            raise RoleError('this needs root')
+        result = set_role(system, platform, args.role,
+                          address=getattr(args, 'address', None),
+                          controller=getattr(args, 'controller', CONTROLLER_ADDRESS),
+                          hostname=args.hostname, dry_run=args.dry_run)
+    except platform.ProjectLoaded as e:
+        print(f'cuems-set-role: ERROR: {e}', file=sys.stderr)
+        return platform.ProjectLoaded.exit_code
+    except RoleError as e:
+        print(f'cuems-set-role: ERROR: {e}', file=sys.stderr)
+        return 1
+    for warning in result.warnings:
+        print(f'cuems-set-role: WARNING: {warning}', file=sys.stderr)
+    if not result.changes:
+        print(f'already a {args.role} set up like this: nothing changed')
+        return 0
+    for change in result.changes:
+        print(f'{"would " if args.dry_run else ""}{change}')
+    if not args.dry_run:
+        print(f'This box is now set up as a {args.role}. Reboot to apply it.')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
