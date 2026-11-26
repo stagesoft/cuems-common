@@ -15,6 +15,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — development on `rc_1` / `main`
 
+### Base image work (not released, no version yet)
+
+- **`net.ipv4.ip_forward = 0`.** An upgrade changes it at the next boot on every box whose sysctl file was not edited by hand. A site that needs forwarding sets it in its own file under `/etc/sysctl.d/`.
+- **SSH jump to the nodes:** `AllowTcpForwarding local` with `PermitOpen` for port 22 of `169.254.0.11`–`169.254.0.26` only (it was `no`).
+- **Audio with nothing plugged:** `jack-alsa-bridges` is skipped when the `HID` card is absent; `cuems-node-engine` no longer requires it; `cuems-hdmi-audio-map` succeeds with no screen and `jackd-cuems` only `Wants=` it. A site drop-in that bridges a card other than `HID` must clear `ExecCondition=`.
+- **JACK defaults:** `/usr/share/cuems/jack.default` (internal analog output) is copied to `/etc/default/jack` only when that file is missing.
+- **Depends:** `bridge-utils`, `tpm2-tools`.
+- `interfaces.node`: the off-subnet gateway and DNS of `bridge0` are gone.
+- Avahi templates carry the all-zero sentinel uuid. A procedure that replaced the old literal uuid in them has to replace the sentinel.
+- Public names: the GRUB recovery entry is `FormitGo Recovery (<kver>)`; a newly generated TLS certificate is `CN=formitgo.local, O=FormitGo` (existing certificates are kept).
+
 MTC-bias latency compensation completed for the video pipeline; audio stack hardened against Pipewire/Wireplumber interference; OLA DMX infrastructure packaged as first-class CUEMS services; all services migrated to the dedicated `cuems` system user with uniform security hardening.
 
 ### Added
