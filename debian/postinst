@@ -98,6 +98,12 @@ if [ -d /usr/lib/cuems/bin ]; then
     fi
 fi
 
+# JACK settings of this box: copied only when missing, never overwritten. Not a
+# conffile, so that no upgrade asks about, or changes, a site's own file.
+if [ ! -e /etc/default/jack ] && [ -r /usr/share/cuems/jack.default ]; then
+    install -m 0644 /usr/share/cuems/jack.default /etc/default/jack
+fi
+
 if [ -f /usr/bin/cuems-hdmi-audio-map ]; then
     chmod +x /usr/bin/cuems-hdmi-audio-map
 fi

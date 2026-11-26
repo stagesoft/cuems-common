@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# /etc/default/jack, read by jackd-cuems.service. The package copies this file
+# there only when it is missing; after that the file belongs to the box and no
+# upgrade touches it.
+#
+# Default: the internal analog output. "Analog" is the ALSA id the platform
+# profile gives that card on every platform. For another device (a USB
+# interface, the HDMI outputs as multi_hdmi) edit the -d argument.
+# jackd-cuems.service sets the user; do not add a USER= line.
+
+DAEMON_ARGS="-R -dalsa -dhw:Analog,0 -r48000 -p512 -n3"
