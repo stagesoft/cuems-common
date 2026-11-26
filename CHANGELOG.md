@@ -22,6 +22,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Audio with nothing plugged:** `jack-alsa-bridges` is skipped when the `HID` card is absent; `cuems-node-engine` no longer requires it; `cuems-hdmi-audio-map` succeeds with no screen and `jackd-cuems` only `Wants=` it. A site drop-in that bridges a card other than `HID` must clear `ExecCondition=`. A USB card that is away for more than 5 s is not re-bridged by itself (before, retries covered about 50 s): `systemctl start jack-alsa-bridges`.
 - **JACK defaults:** `/usr/share/cuems/jack.default` (internal analog output) is copied to `/etc/default/jack` only when that file is missing.
 - **New: `cuems-platform {detect|apply|check}`** and platform profiles under `/usr/share/cuems/platform/`. No package script runs it: an upgrade changes no kernel line, port name or sound card id. `apply` is for the first boot and for an operator. No profile is accepted yet. On a box already in use, `apply` can swap the two wired ports (N97 on the packaged `.link` files) and leaves the analog card's saved mixer levels behind; it refuses while `/etc/default/jack` opens that card by its old id.
+- **New: the first boot** (`cuems-firstboot`, its target, rescue service and systemd generator) gives a box written from the base image its own identity. All of it is inert without `/var/lib/cuems/firstboot.armed`, which no package script creates: an upgrade changes nothing. See `docs/first-boot.md`.
+- The web certificate is made by `/usr/lib/cuems/bin/cuems-make-tls-cert`, used by the postinst and the first boot.
+- **Recommends:** `cloud-guest-utils`, `gdisk`.
 - **Depends:** `bridge-utils`, `tpm2-tools`.
 - `interfaces.node`: the off-subnet gateway and DNS of `bridge0` are gone.
 - Avahi templates carry the all-zero sentinel uuid. A procedure that replaced the old literal uuid in them has to replace the sentinel.

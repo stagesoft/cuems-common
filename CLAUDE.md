@@ -127,6 +127,7 @@ Standardize on **controller/node** for all new code, docs, strings, log messages
 
 ## Field notes / gotchas
 
+- **First boot** (`docs/first-boot.md`): armed only by `/var/lib/cuems/firstboot.armed`, and only the image seal creates it. No package script may create it. While armed the box boots `cuems-firstboot.target`, which must pull in nothing else.
 - **Platform profiles** (`cuems-platform`, `usr/share/cuems/platform/<id>/platform.conf`, `docs/platform-profiles.md`): never write a PCI address into a profile or a udev rule. The same model exists with its devices at different addresses; ports and the analog card are found per box by rule. No package script runs `cuems-platform apply`.
 - **rtpmidid role-aware config + cold-boot avahi race** are documented in the rtpmidid CLAUDE.md (cuems-common ships the templates + drop-in). Current state: fix released in cuems-common 1.3.0-10 + rtpmidid 26.06~1stagelab1.
 - **`cuems-node-engine.service` cleanup is by binary name** (1.3.0-24, 869evtdf7): its `ExecStartPre`/`ExecStopPost` `pkill -u cuems -f` is anchored on argv[0] (`cuems-audioplayer`, `cuems-dmxplayer`, `jack-volume`/`cuems-jack-volume`, legacy `xjadeo … --osc`), so logs being tailed are no longer killed. A player installed under another name escapes it (and the engine's own sweeps); the engine warns at start. The pattern deliberately has no `$` or `%` (systemd + `sh` would rewrite them).

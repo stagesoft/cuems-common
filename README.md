@@ -223,6 +223,9 @@ Pipewire, pipewire-pulse, and wireplumber are **masked system-wide** via `/etc/s
 | `check-ip.sh [ap\|dhcpd\|hostapd]` | ExecCondition of `cuems-wifi.service`, `isc-dhcp-server.service`, `hostapd.service` | The three gates of the AP. Returns 0 (proceed), 1 (skip quietly) or 255 (`/etc/cuems/ap.conf` missing: the unit fails). |
 | `cuems-ap-path {up\|down\|release-wifi}` | `cuems-wifi.service` ExecStartPost / ExecStop, `hostapd.service` ExecStopPost | Moves the gateway address between bond0 and wifi0; re-enslaves wifi0 to the bond after the AP stops. |
 | `cuems-net-guard` | `cuems-net-guard.service` | One pass of the network guard. |
+| `cuems-firstboot` | `cuems-firstboot.service`, only on an armed box | Gives a box written from the base image its identity: keys, uuid, hostname, platform settings, certificate, root partition. See `docs/first-boot.md`. |
+| `cuems-firstboot-rescue` | `cuems-firstboot-rescue.service`, when the first boot fails | DHCP client on every wired port, SSH, console message. |
+| `cuems-make-tls-cert` | `postinst`, `cuems-firstboot` | Makes the self-signed web certificate when there is none. |
 | `cuems-dhcp-probe [IFACE]` | `cuems-net-guard` | Sends `DHCPDISCOVER` only. Exit 0 offer, 2 none, 1 error. Takes no lease. |
 | `cuems-bond0-dhclient {status\|start\|stop\|restart\|active-for}` | `cuems-net-guard`, `cuems-net-mode` | The DHCP client of bond0 outside `ifup`/`ifdown`. |
 | `wifi-auto.sh` | Manual / operator | Stops `isc-dhcp-server`, brings down the WiFi interface, then brings it up on the `wifi-out` profile for an external network connection. |

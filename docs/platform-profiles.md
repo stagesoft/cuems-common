@@ -118,8 +118,9 @@ have to pass on it. No box has been read. Its profile has no port rule and no
 analog codec, so `apply` refuses it. **i3-1215U** and **Core Ultra 5 125U** are data
 only, for boxes bought for trials.
 
-The starting `default_mappings.xml` of each platform is not here yet: it belongs
-to the first boot, which installs it only where a box has none.
+N97 and FP530 also carry a starting `default_mappings.xml` beside the profile:
+every video output and the internal analog output. The first boot installs it
+only where a box has none (`first-boot.md`); `apply` never writes it.
 
 ## Adding a platform
 
