@@ -44,7 +44,7 @@ it runs is decided elsewhere. No package script runs it.
 | | controller | node |
 |---|---|---|
 | `/etc/cuems/master.ip`, `master.lock` | present | absent |
-| Units on | node target; controller target, both controller services, power bridge and cluster power-off where installed; journal collector | node target; journal upload |
+| Units on | node target; controller target, both controller services, cluster power-off where installed; journal collector; the power bridge only if this command switched it off | node target; journal upload |
 | Units off | journal upload | controller target, editor, power bridge, cluster power-off, journal collector; **`cuems-controller-engine` masked** |
 | `/etc/network/interfaces` | `ethernet1` static `169.254.0.1/16`; an existing `bond0` stanza is kept | `bridge0` over both wired ports with the node's address; no gateway; Wi-Fi left down |
 | `/etc/hosts` | `controller.local` is the box itself | `controller.local` is the controller's link address |
@@ -68,13 +68,35 @@ to controller unmasks it. A copy of the
 engine unit under `/etc/systemd/system` prevents masking: the command says so
 before it changes anything.
 
+**The power bridge is the installation's choice.** Making a node switches it off
+and notes it (`/var/lib/cuems/set-role.switched-off`); going back to controller
+switches it on again only then. The command never switches on a bridge that was
+off, so whoever wants it on a controller enables it.
+
+## What a node needs
+
+**cuems-engine 0.1.0rc4-1 or later.** From that release the engine finds its
+controller by `controller.local`. An older one reads only the network map, and
+on a node whose map lists no controller it restarts for ever. The command warns.
+`systemctl --failed` shows nothing while a unit is restarting in a loop: look at
+`systemctl show -p NRestarts` too.
+
 ## The name
 
-`--hostname` writes the host name, the `127.0.1.1` line, an Avahi `host-name=`
-line if there is one, and `<hostname>` in the box's own map entry, in one run.
-**Rename a box only this way:** the engine names the fade target by the map and
-gradient-motiond filters on the host name, so any other rename drops every fade
-with no error. Without `--hostname` the box keeps its name.
+`--hostname` writes the host name, the `127.0.1.1` line, and `<hostname>` in the
+box's own map entry, in one run. **Rename a box only this way:** the engine names
+the fade target by the map and gradient-motiond filters on the host name, so any
+other rename drops every fade with no error. Without `--hostname` the box keeps
+its name.
+
+**Avahi.** With no `host-name=` line it announces the host name. A line that
+follows the host name (or says `controller`) is changed with it. **A line pinned
+to anything else, usually the MAC, is kept**: the box stays reachable as
+`<pin>.local`, and the command says so.
+
+**A node cannot be called `controller`**, by its host name or by Avahi's line: it
+would answer for `controller.local`. The command refuses until `--hostname` gives
+it another name.
 
 Nodes find their controller by `controller.local`, which their `/etc/hosts`
 pins to its link address, so the controller may have any name. Whoever looks for
@@ -94,6 +116,9 @@ find a controller named otherwise.
 - Outputs, Wi-Fi name and passphrase, passwords: commissioning.
 
 ## The state a box is born in
+
+The command does not switch the power bridge on: whether a box is born with it
+enabled is for the recipe to say.
 
 A box is born with the controller form of everything above. **The image recipe
 gets there by running `cuems-set-role controller`** during the install, while

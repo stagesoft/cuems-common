@@ -63,6 +63,7 @@ class Cluster(BornBox):
         self.units = {'cuems-gradient-motiond.service': 'disabled'}
         self.path_active, self.path_stops = False, True
         self.unowned, self.events = set(), []
+        self.engine_version = None
         assert fb.first_boot(self.system(), cp, PROFILES, mint=lambda: MINTED, wait=0) == fb.DONE
         for name in ('interfaces.master', 'interfaces.node'):
             self.write(f'usr/share/cuems/{name}', (REPO / 'usr/share/cuems' / name).read_text())
@@ -72,10 +73,16 @@ class Cluster(BornBox):
         self.write('etc/avahi/avahi-daemon.conf', '[server]\nuse-ipv4=yes\n')
         self.units = dict(BORN_UNITS)
         self.path_active = True
+        self.engine_version = '0.1.0rc6-5'
         self.calls = []
 
     def run(self, argv):
         # The first boot's own reboot request goes the plain way.
+        if argv[:3] == ['dpkg-query', '-W', '-f=${Version}'] and argv[-1] == 'cuems-engine':
+            version = self.engine_version
+            return subprocess.CompletedProcess(argv, 0 if version else 1, version or '', '')
+        if argv[:2] == ['dpkg', '--compare-versions']:
+            return subprocess.run(argv, capture_output=True, text=True)
         if argv[0] not in ('systemctl', 'dpkg') or argv[1] == '--no-block':
             return super().run(argv)
         self.calls.append(argv)
@@ -423,8 +430,12 @@ def test_a_site_network_mode_is_pointed_out_when_the_bond_is_rewritten(box):
 
 # --- the name ------------------------------------------------------------------------
 
+def avahi_pin(box, name):
+    box.write('etc/avahi/avahi-daemon.conf', f'[server]\nhost-name={name}\nuse-ipv4=yes\n')
+
+
 def test_one_run_writes_the_name_everywhere(box):
-    box.write('etc/avahi/avahi-daemon.conf', '[server]\nhost-name=oldname\nuse-ipv4=yes\n')
+    avahi_pin(box, box.read('etc/hostname').strip())
     box.role('node', hostname='sala-node01')
     assert box.read('etc/hostname') == 'sala-node01\n'
     assert '127.0.1.1\tsala-node01' in box.read('etc/hosts').splitlines()
@@ -576,3 +587,94 @@ def test_nodeconf_is_left_alone_in_both_roles(box, state):
     box.role('controller')
     assert box.units.get('cuems-nodeconf.service') == state
     assert not [c for c in box.calls if 'cuems-nodeconf.service' in c]
+
+
+# --- found on the first rig test ---------------------------------------------------
+
+@pytest.mark.parametrize('version, warned', [
+    ('0.1.0rc2-1', True), ('0.1.0rc3-9', True), ('0.1.0rc4-1', False),
+    ('0.1.0rc6-5', False), ('0.1.1-1', False), (None, False)])
+def test_a_node_with_an_engine_too_old_to_find_its_controller_is_warned(box, version, warned):
+    """Before 0.1.0rc4-1 the engine only read the map: with no controller listed
+    it restarted for ever."""
+    box.engine_version = version
+    result = box.role('node', dry_run=True)
+    assert any('0.1.0rc4-1' in w for w in result.warnings) is warned
+
+
+def test_a_controller_is_not_warned_about_the_engine(box):
+    box.engine_version = '0.1.0rc2-1'
+    assert not any('0.1.0rc4-1' in w for w in box.role('controller').warnings)
+
+
+@pytest.mark.parametrize('hostname, pinned', [
+    ('controller', None), ('controller', '021122334402'), ('sala', 'controller')])
+def test_a_node_is_refused_while_it_would_still_be_called_controller(box, hostname, pinned):
+    box.write('etc/hostname', hostname + '\n')
+    if pinned:
+        avahi_pin(box, pinned)
+    before = box.snapshot()
+    with pytest.raises(sr.RoleError, match='--hostname'):
+        box.role('node')
+    assert box.snapshot() == before
+    box.role('node', hostname='sala-node01')
+
+
+@pytest.mark.parametrize('old_pin', ['0013a1b2c3d4', 'stage-left'])
+def test_a_name_pinned_in_avahi_is_kept_by_a_rename(box, old_pin):
+    """A pin that does not follow the host name was set on purpose (the MAC, so
+    that the box is always reachable by it)."""
+    avahi_pin(box, old_pin)
+    before = box.read('etc/avahi/avahi-daemon.conf')
+    result = box.role('node', hostname='sala-node01')
+    assert box.read('etc/avahi/avahi-daemon.conf') == before
+    assert any(old_pin in w and 'sala-node01' in w for w in result.warnings)
+    assert box.read('etc/hostname') == 'sala-node01\n'
+
+
+def test_a_pin_called_controller_follows_the_rename(box):
+    avahi_pin(box, 'controller')
+    box.role('node', hostname='sala-node01')
+    assert 'host-name=sala-node01' in box.read('etc/avahi/avahi-daemon.conf').splitlines()
+
+
+BRIDGE = 'cuems-power-bridge.service'
+
+
+def test_a_power_bridge_that_was_off_stays_off(box):
+    box.units[BRIDGE] = 'disabled'
+    box.role('controller')
+    assert box.units[BRIDGE] == 'disabled'
+    box.role('node')
+    box.path_active = True
+    box.role('controller')
+    assert box.units[BRIDGE] == 'disabled'
+
+
+def test_a_power_bridge_the_command_switched_off_comes_back_once(box):
+    box.role('node')
+    assert box.units[BRIDGE] == 'disabled'
+    box.role('node', address='169.254.0.12')
+    box.path_active = True
+    box.role('controller')
+    assert box.units[BRIDGE] == 'enabled'
+    # Switched off by hand afterwards: that is somebody's decision.
+    box.units[BRIDGE] = 'disabled'
+    box.role('controller')
+    assert box.units[BRIDGE] == 'disabled'
+
+
+def test_the_memory_of_the_bridge_survives_a_failed_run(box):
+    box.fail.add('mask')
+    with pytest.raises(sr.RoleError):
+        box.role('node')
+    box.fail.clear()
+    box.role('node')
+    box.path_active = True
+    box.role('controller')
+    assert box.units[BRIDGE] == 'enabled'
+
+
+def test_a_dry_run_does_not_touch_that_memory(box):
+    box.role('node', dry_run=True)
+    assert not box.exists(sr.REMEMBERED)

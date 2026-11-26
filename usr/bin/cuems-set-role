@@ -59,6 +59,10 @@ AVAHI_RECORD = 'etc/avahi/services/cuems.service'
 NET_MODE_CONF = 'etc/cuems/net-mode.conf'
 RTPMIDID_SHADOW = 'etc/systemd/system/rtpmidid.service.d/cuems-node-group.conf'
 ARMED = 'var/lib/cuems/firstboot.armed'
+# The optional units this command switched off itself, one per line.
+REMEMBERED = 'var/lib/cuems/set-role.switched-off'
+# Before this release the engine found the controller only in the network map.
+ENGINE_FINDS_BY_NAME = '0.1.0rc4-1'
 CONTROLLER_PATH = 'cuems-controller.path'
 ENGINE = 'cuems-controller-engine.service'
 
@@ -66,6 +70,10 @@ ENGINE = 'cuems-controller-engine.service'
 NODE_FIELDS = ('uuid', 'mac', 'name', 'node_type', 'ip', 'adopted', 'online',
                'role_id', 'alias', 'hostname')
 PIN_MARK = '# cuems-set-role'
+
+# Switched on for a controller only when this command is what switched them off:
+# whether a controller runs them is the installation's choice.
+OPTIONAL_UNITS = ('cuems-power-bridge.service',)
 
 CONTROLLER_UNITS = ('cuems-controller.target', ENGINE, 'cuems-editor.service',
                     'cuems-power-bridge.service', 'cuems-cluster-poweroff.service',
@@ -133,6 +141,33 @@ def own_uuid(system, role):
     if value == SENTINEL and role == 'node':
         raise RoleError('this box has no identity yet: it cannot become a node')
     return value
+
+
+def pinned_avahi_name(system):
+    match = re.findall(r'^[ \t]*host-name=[ \t]*(\S*)', system.read(AVAHI_CONF) or '', re.M)
+    return match[-1] if match else None
+
+
+def check_node_name(system, hostname):
+    """A node that calls itself "controller" answers for controller.local."""
+    name = hostname or (system.read(HOSTNAME) or '').strip()
+    pinned = pinned_avahi_name(system)
+    if name == 'controller' or (hostname is None and pinned == 'controller'):
+        raise RoleError('this box is called "controller", and a node must not be: give it '
+                        'its name with --hostname NAME')
+
+
+def engine_warning(system):
+    done = system.run(['dpkg-query', '-W', '-f=${Version}', 'cuems-engine'])
+    version = (done.stdout or '').strip()
+    if done.returncode != 0 or not version:
+        return None
+    if system.run(['dpkg', '--compare-versions', version, 'lt',
+                   ENGINE_FINDS_BY_NAME]).returncode != 0:
+        return None
+    return (f'cuems-engine {version} looks for the controller only in the network map: as a '
+            f'node it needs {ENGINE_FINDS_BY_NAME} or later, or the controller listed in the '
+            'map, or its engine restarts for ever')
 
 
 # --- the files ------------------------------------------------------------------
@@ -320,10 +355,17 @@ def planned_files(system, role, uuid, address, controller, hostname, warnings):
     if hostname:
         files[HOSTNAME] = f'{hostname}\n'
         conf = system.read(AVAHI_CONF)
-        if conf is not None:
-            # With no host-name line avahi publishes the OS host name.
+        pinned = pinned_avahi_name(system)
+        old = (system.read(HOSTNAME) or '').strip()
+        # With no host-name line avahi publishes the OS host name. A line that
+        # follows the host name follows the new one. Any other was pinned on
+        # purpose, usually to the MAC: it stays.
+        if pinned in (old, 'controller', hostname):
             files[AVAHI_CONF] = re.sub(r'^[ \t]*host-name=.*$', f'host-name={hostname}', conf,
                                        flags=re.M)
+        elif pinned:
+            warnings.append(f'avahi keeps its pinned name "{pinned}": the box is still found '
+                            f'as {pinned}.local, not as {hostname}.local')
     return files
 
 
@@ -336,8 +378,13 @@ def unit_state(system, unit):
     return lines[0] if lines else ''
 
 
+def remembered_units(system):
+    return {u for u in (system.read(REMEMBERED) or '').split() if u in OPTIONAL_UNITS}
+
+
 def planned_units(system, role):
     wanted = UNITS[role]
+    remembered = remembered_units(system)
     states = {u: unit_state(system, u)
               for u in sorted({u for key in ('unmask', 'enable', 'disable', 'mask')
                                for u in wanted[key]} | set(wanted['required']))}
@@ -358,14 +405,15 @@ def planned_units(system, role):
         if states[unit] == 'enabled':
             steps.append(('disable', unit))
     for unit in wanted['enable']:
-        if states[unit] == 'disabled':
+        if states[unit] == 'disabled' and (unit not in OPTIONAL_UNITS or unit in remembered):
             steps.append(('enable', unit))
     for unit in wanted['mask']:
         # The engine even when it is not installed: a later install must find
         # it masked.
         if states[unit] != 'masked' and (states[unit] or unit == ENGINE):
             steps.append(('mask', unit))
-    return steps, [u for u in wanted['enable'] if states[u] == 'masked']
+    return steps, [u for u in wanted['enable']
+                   if states[u] == 'masked' and (u not in OPTIONAL_UNITS or u in remembered)]
 
 
 def rtpmidid_shadow(system, role):
@@ -383,6 +431,8 @@ def set_role(system, platform, role, address=None, controller=CONTROLLER_ADDRESS
             f'/{platform.SHOW_LOCK} exists: a project is loaded. Unload it (after STOP) or '
             'reboot, then run this again.')
     check_arguments(role, address, controller, hostname)
+    if role == 'node':
+        check_node_name(system, hostname)
     if system.path(ARMED).exists():
         raise RoleError('the first boot of this box has not finished: it has no identity to '
                         'give a role to')
@@ -390,6 +440,10 @@ def set_role(system, platform, role, address=None, controller=CONTROLLER_ADDRESS
 
     # Everything that can say no is asked before the first change.
     warnings = []
+    if role == 'node':
+        old_engine = engine_warning(system)
+        if old_engine:
+            warnings.append(old_engine)
     files = planned_files(system, role, uuid, address, controller, hostname, warnings)
     changed = {rel: text for rel, text in files.items() if system.read(rel) != text}
     steps, masked = planned_units(system, role)
@@ -403,8 +457,19 @@ def set_role(system, platform, role, address=None, controller=CONTROLLER_ADDRESS
         changes.append(f'set aside /{RTPMIDID_SHADOW} (no package owns it)')
     changes += [f'{verb} {unit}' for verb, unit in steps]
     result = Result(changes, warnings)
-    if dry_run or not changes:
+    if dry_run:
         return result
+    if not changes:
+        if role == 'controller':
+            system.path(REMEMBERED).unlink(missing_ok=True)
+        return result
+
+    # Noted before anything is switched off, so that a run that fails half way
+    # does not forget it.
+    switched_off = {u for verb, u in steps if verb == 'disable' and u in OPTIONAL_UNITS}
+    if switched_off:
+        system.write(REMEMBERED, ''.join(f'{u}\n' for u in
+                                         sorted(switched_off | remembered_units(system))))
 
     if changed.get('etc/cuems/master.lock') is not None:
         # systemd watches this file and would start the controller target the
@@ -429,6 +494,8 @@ def set_role(system, platform, role, address=None, controller=CONTROLLER_ADDRESS
         raise RoleError(f'could not {"; ".join(failed)}. The files are written: fix that and '
                         'run the same command again, before rebooting. A copy of the unit '
                         'under /etc/systemd/system stops it being masked')
+    if role == 'controller':
+        system.path(REMEMBERED).unlink(missing_ok=True)
     return result
 
 
