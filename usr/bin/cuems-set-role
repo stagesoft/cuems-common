@@ -150,18 +150,20 @@ def pinned_avahi_name(system):
 
 def check_node_name(system, hostname):
     """A node that calls itself "controller" answers for controller.local."""
-    name = hostname or (system.read(HOSTNAME) or '').strip()
-    pinned = pinned_avahi_name(system)
+    # mDNS names match whatever the case.
+    name = (hostname or (system.read(HOSTNAME) or '').strip()).lower()
+    pinned = (pinned_avahi_name(system) or '').lower()
     if name == 'controller' or (hostname is None and pinned == 'controller'):
         raise RoleError('this box is called "controller", and a node must not be: give it '
                         'its name with --hostname NAME')
 
 
 def engine_warning(system):
-    done = system.run(['dpkg-query', '-W', '-f=${Version}', 'cuems-engine'])
-    version = (done.stdout or '').strip()
-    if done.returncode != 0 or not version:
+    done = system.run(['dpkg-query', '-W', '-f=${db:Status-Status} ${Version}', 'cuems-engine'])
+    words = (done.stdout or '').split()
+    if done.returncode != 0 or len(words) != 2 or words[0] != 'installed':
         return None
+    version = words[1]
     if system.run(['dpkg', '--compare-versions', version, 'lt',
                    ENGINE_FINDS_BY_NAME]).returncode != 0:
         return None
@@ -360,7 +362,7 @@ def planned_files(system, role, uuid, address, controller, hostname, warnings):
         # With no host-name line avahi publishes the OS host name. A line that
         # follows the host name follows the new one. Any other was pinned on
         # purpose, usually to the MAC: it stays.
-        if pinned in (old, 'controller', hostname):
+        if pinned in (old, hostname) or (pinned or '').lower() == 'controller':
             files[AVAHI_CONF] = re.sub(r'^[ \t]*host-name=.*$', f'host-name={hostname}', conf,
                                        flags=re.M)
         elif pinned:

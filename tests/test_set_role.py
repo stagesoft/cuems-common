@@ -74,13 +74,18 @@ class Cluster(BornBox):
         self.units = dict(BORN_UNITS)
         self.path_active = True
         self.engine_version = '0.1.0rc6-5'
+        self.engine_status = 'installed'
         self.calls = []
 
     def run(self, argv):
         # The first boot's own reboot request goes the plain way.
-        if argv[:3] == ['dpkg-query', '-W', '-f=${Version}'] and argv[-1] == 'cuems-engine':
-            version = self.engine_version
-            return subprocess.CompletedProcess(argv, 0 if version else 1, version or '', '')
+        if argv[:2] == ['dpkg-query', '-W'] and argv[-1] == 'cuems-engine':
+            if not self.engine_version:
+                return subprocess.CompletedProcess(argv, 1, '', '')
+            # Removed but not purged keeps its version, with another status.
+            out = argv[2].replace('-f=', '').replace('${db:Status-Status}', self.engine_status)
+            return subprocess.CompletedProcess(
+                argv, 0, out.replace('${Version}', self.engine_version), '')
         if argv[:2] == ['dpkg', '--compare-versions']:
             return subprocess.run(argv, capture_output=True, text=True)
         if argv[0] not in ('systemctl', 'dpkg') or argv[1] == '--no-block':
@@ -678,3 +683,20 @@ def test_the_memory_of_the_bridge_survives_a_failed_run(box):
 def test_a_dry_run_does_not_touch_that_memory(box):
     box.role('node', dry_run=True)
     assert not box.exists(sr.REMEMBERED)
+
+
+def test_a_removed_engine_is_not_warned_about(box):
+    box.engine_version, box.engine_status = '0.1.0rc2-1', 'config-files'
+    assert not any('0.1.0rc4-1' in w for w in box.role('node', dry_run=True).warnings)
+
+
+@pytest.mark.parametrize('hostname, pinned', [('Controller', None), ('sala', 'CONTROLLER')])
+def test_controller_in_any_case_is_still_controller(box, hostname, pinned):
+    """mDNS names match whatever the case."""
+    box.write('etc/hostname', hostname + '\n')
+    if pinned:
+        avahi_pin(box, pinned)
+    with pytest.raises(sr.RoleError, match='--hostname'):
+        box.role('node')
+    box.role('node', hostname='sala-node01')
+    assert 'CONTROLLER' not in box.read('etc/avahi/avahi-daemon.conf')
