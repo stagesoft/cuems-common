@@ -1,0 +1,594 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+
+"""cuems-platform - the hardware settings of the box this runs on.
+
+One image serves several kinds of box. What differs between them lives in a
+profile, /usr/share/cuems/platform/<id>/platform.conf (format and fields:
+docs/platform-profiles.md).
+
+    cuems-platform detect             print the platform id, or "unknown"
+    cuems-platform apply [--dry-run]  write this platform's settings
+    cuems-platform check              compare the running box with its profile
+
+`apply` is run by the first boot or by an operator, never by a package script.
+It only writes files: nothing changes until the next reboot. It refuses while a
+project is loaded.
+
+PCI addresses are not written down in the profiles. The same model of box exists
+with its devices at different addresses, so the network ports and the analog
+sound card are found on each box by a rule.
+
+Exit codes: 0 done / all checks pass; 1 a check failed, or another error;
+2 usage; 3 unknown platform; 4 the network ports do not fit the rule (nothing
+was written); 5 update-initramfs or update-grub failed (run apply again);
+6 a project is loaded.
+"""
+
+import argparse
+import dataclasses
+import os
+import pathlib
+import re
+import subprocess
+import sys
+
+PROFILE_DIR = '/usr/share/cuems/platform'
+
+GRUB_CFG = 'etc/default/grub.d/cuems-platform.cfg'
+MODPROBE_CONF = 'etc/modprobe.d/cuems-platform.conf'
+ANALOG_RULE = 'etc/udev/rules.d/70-cuems-analog-card.rules'
+LINK_DIR = 'etc/systemd/network'
+GPU_PIN_CONF = 'etc/cuems/gpu-pin.conf'
+# Set by the engine while a project is loaded; /tmp is emptied at boot.
+SHOW_LOCK = 'tmp/cuems.show.lock'
+# Rebuild commands still owed, so that a failed one is not forgotten.
+PENDING = 'var/lib/cuems/platform.pending'
+
+ANALOG_ID = 'Analog'
+PORT_NAMES = ('ethernet0', 'ethernet1', 'wifi0')
+# A box without Wi-Fi still needs a wifi0 file: it replaces the package's own,
+# which would rename whatever sits at its fixed address. This matches nothing.
+NO_WIFI_MATCH = 'pci-none-no-wifi-card'
+
+PCI_ADDRESS = re.compile(r'^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$')
+CLASS_ETHERNET, CLASS_WIFI, CLASS_DISPLAY = '0200', '0280', '03'
+
+# Kernel command line words every CUEMS box may carry.
+BASE_CMDLINE_WORDS = ('ro', 'quiet', 'splash')
+BASE_CMDLINE_PREFIXES = ('BOOT_IMAGE=', 'root=', 'initrd=')
+
+HEADER = ('# Written by cuems-platform for the "{id}" platform. Do not edit: the next\n'
+          '# `cuems-platform apply` overwrites it.\n')
+
+
+class PlatformError(Exception):
+    exit_code = 1
+
+
+class ProfileError(PlatformError):
+    pass
+
+
+class UnknownPlatform(PlatformError):
+    exit_code = 3
+
+
+class PortsDoNotFit(PlatformError):
+    exit_code = 4
+
+
+class RebuildFailed(PlatformError):
+    exit_code = 5
+
+
+class ProjectLoaded(PlatformError):
+    exit_code = 6
+
+
+def run_command(argv):
+    try:
+        return subprocess.run(argv, capture_output=True, text=True)
+    except FileNotFoundError as e:
+        return subprocess.CompletedProcess(argv, 127, '', str(e))
+
+
+class System:
+    """The box: a file tree and a way to run commands. Tests supply both."""
+
+    def __init__(self, root='/', run=run_command):
+        self.root = pathlib.Path(root)
+        self.run = run
+
+    def path(self, rel):
+        return self.root / rel
+
+    def read(self, rel):
+        try:
+            return self.path(rel).read_text(errors='replace')
+        except OSError:
+            return None
+
+    def write(self, rel, text):
+        path = self.path(rel)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        mode = path.stat().st_mode & 0o7777 if path.exists() else 0o644
+        tmp = path.with_name(path.name + '.cuems-tmp')
+        with open(tmp, 'w') as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+
+    def glob(self, pattern):
+        return sorted(self.root.glob(pattern))
+
+
+# --- profiles ------------------------------------------------------------------
+
+@dataclasses.dataclass
+class Profile:
+    id: str
+    accepted: bool
+    cpu_model: str
+    gpu_pci_id: str = ''
+    kernel_params: list = dataclasses.field(default_factory=list)
+    ethernet_order: str = ''
+    analog_codec: str = ''
+    hda_index: str = ''
+    usb_audio_index: str = ''
+    gpu_pin: bool = False
+    firmware: list = dataclasses.field(default_factory=list)
+    aperture_mb: str = ''
+    vram_mb: str = ''
+    secure_boot: str = ''
+    tpm: str = ''
+    manual: list = dataclasses.field(default_factory=list)
+
+    def modprobe_lines(self):
+        lines = []
+        if self.hda_index:
+            lines.append(f'options snd_hda_intel index={self.hda_index}')
+        if self.usb_audio_index:
+            lines.append(f'options snd_usb_audio index={self.usb_audio_index}')
+        return lines
+
+
+def parse_profile(path):
+    fields = {f.name: f for f in dataclasses.fields(Profile) if f.name != 'id'}
+    values = {}
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        key, sep, value = line.partition('=')
+        key, value = key.strip(), value.strip()
+        where = f'{path}:{number}'
+        if not sep or key not in fields:
+            raise ProfileError(f'{where}: unknown line or key "{key}"')
+        if key == 'manual':
+            values.setdefault(key, []).append(value)
+            continue
+        if key in values:
+            raise ProfileError(f'{where}: "{key}" given twice')
+        if key in ('accepted', 'gpu_pin'):
+            if value not in ('true', 'false'):
+                raise ProfileError(f'{where}: "{key}" must be true or false')
+            values[key] = value == 'true'
+        elif key in ('kernel_params', 'firmware'):
+            values[key] = value.split()
+        else:
+            values[key] = value
+    if 'accepted' not in values or not values.get('cpu_model'):
+        raise ProfileError(f'{path}: "accepted" and "cpu_model" are required')
+    if values.get('ethernet_order', '') not in ('', 'ascending', 'descending'):
+        raise ProfileError(f'{path}: ethernet_order must be ascending or descending')
+    return Profile(id=path.parent.name, **values)
+
+
+def load_profiles(directory=PROFILE_DIR):
+    paths = sorted(pathlib.Path(directory).glob('*/platform.conf'))
+    if not paths:
+        raise ProfileError(f'no profiles under {directory}')
+    return {p.parent.name: parse_profile(p) for p in paths}
+
+
+# --- reading the box -------------------------------------------------------------
+
+def pci_devices(system):
+    """(address, class, "vendor:device") of every PCI device, by address."""
+    found = []
+    for path in system.glob('sys/bus/pci/devices/*'):
+        values = []
+        for name in ('class', 'vendor', 'device'):
+            text = system.read(path.relative_to(system.root) / name)
+            values.append((text or '').strip().removeprefix('0x'))
+        cls, vendor, device = values
+        found.append((path.name, cls, f'{vendor}:{device}'))
+    return found
+
+
+def cpu_model(system):
+    for line in (system.read('proc/cpuinfo') or '').splitlines():
+        if line.startswith('model name'):
+            return line.partition(':')[2].strip()
+    return ''
+
+
+def gpu_address(system, profile):
+    for address, cls, ids in pci_devices(system):
+        if cls.startswith(CLASS_DISPLAY) and ids == profile.gpu_pci_id:
+            return address
+    return None
+
+
+def detect(system, profiles):
+    """The profile that matches this box, or None. DMI is not used."""
+    model = cpu_model(system)
+    matches = [p for p in profiles.values()
+               if re.search(p.cpu_model, model)
+               and (not p.gpu_pci_id or gpu_address(system, p))]
+    return matches[0] if len(matches) == 1 else None
+
+
+def assign_ports(system, profile):
+    """Which PCI address gets which name.
+
+    Counted by PCI class, so a card whose driver is missing still takes part.
+    """
+    if not profile.ethernet_order:
+        raise PortsDoNotFit(f'the ports of the "{profile.id}" platform have not been read yet')
+    devices = pci_devices(system)
+    wired = sorted(a for a, cls, _ in devices if cls.startswith(CLASS_ETHERNET))
+    wifi = sorted(a for a, cls, _ in devices if cls.startswith(CLASS_WIFI))
+    if len(wired) != 2 or len(wifi) > 1:
+        raise PortsDoNotFit(
+            f'the "{profile.id}" rule needs two wired PCI ports and at most one Wi-Fi card; '
+            f'found wired {wired or "none"}, Wi-Fi {wifi or "none"}')
+    if profile.ethernet_order == 'descending':
+        wired.reverse()
+    return {'ethernet0': wired[0], 'ethernet1': wired[1],
+            'wifi0': wifi[0] if wifi else None}
+
+
+def sound_cards(system):
+    """(number, ALSA id, PCI address or None) of every sound card."""
+    cards = []
+    for path in system.glob('proc/asound/card[0-9]*'):
+        number = path.name[4:]
+        card_id = (system.read(path.relative_to(system.root) / 'id') or '').strip()
+        device = system.path(f'sys/class/sound/card{number}/device')
+        address = os.path.basename(os.path.realpath(device)) if device.exists() else ''
+        cards.append((number, card_id, address if PCI_ADDRESS.match(address) else None))
+    return cards
+
+
+def find_analog_card(system, profile):
+    """(PCI address, None) of the internal analog card, or (None, reason)."""
+    if not profile.analog_codec:
+        return None, f'the analog sound card of the "{profile.id}" platform is not known yet'
+    found = []
+    for number, _, address in sound_cards(system):
+        if address is None:
+            continue
+        codecs = [system.read(p.relative_to(system.root)) or ''
+                  for p in system.glob(f'proc/asound/card{number}/codec#*')]
+        if any(re.search(rf'^Codec:.*\b{re.escape(profile.analog_codec)}\b', c, re.M)
+               for c in codecs):
+            found.append(address)
+    if len(found) != 1:
+        return None, (f'expected one PCI sound card with the {profile.analog_codec} codec, '
+                      f'found {len(found)}')
+    return found[0], None
+
+
+# --- apply -----------------------------------------------------------------------
+
+def gpu_pin_text(current, enabled):
+    """gpu-pin.conf with enabled= set (and level=high when on), comments kept."""
+    wanted = {'enabled': 'true' if enabled else 'false'}
+    if enabled:
+        wanted['level'] = 'high'
+    text = current
+    for key, value in wanted.items():
+        line = f'{key}={value}'
+        text, count = re.subn(rf'^{key}=.*$', line, text, flags=re.M)
+        if not count:
+            text = text.rstrip('\n') + f'\n{line}\n'
+    return text
+
+
+def link_text(profile, name, address):
+    match = f'pci-{address}' if address else NO_WIFI_MATCH
+    return HEADER.format(id=profile.id) + f'[Match]\nPath={match}\n\n[Link]\nName={name}\n'
+
+
+def planned_files(system, profile, ports, analog_address):
+    """What each managed file has to contain."""
+    header = HEADER.format(id=profile.id)
+
+    if profile.kernel_params:
+        words = ' '.join(profile.kernel_params)
+        grub = header + f'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT {words}"\n'
+    else:
+        grub = header + '# This platform adds no kernel parameter.\n'
+
+    files = {GRUB_CFG: grub}
+    for name in PORT_NAMES:
+        files[f'{LINK_DIR}/10-{name}.link'] = link_text(profile, name, ports[name])
+    files[MODPROBE_CONF] = header + ''.join(f'{line}\n' for line in profile.modprobe_lines())
+
+    if analog_address:
+        files[ANALOG_RULE] = header + (
+            f'# The internal analog card ({profile.analog_codec}) gets one ALSA id on every\n'
+            f'# platform, so that one /etc/default/jack serves all of them.\n'
+            f'SUBSYSTEM=="sound", KERNEL=="card*", KERNELS=="{analog_address}", '
+            f'ATTR{{id}}="{ANALOG_ID}"\n')
+
+    current = system.read(GPU_PIN_CONF)
+    if current is not None:
+        files[GPU_PIN_CONF] = gpu_pin_text(current, profile.gpu_pin)
+    return files
+
+
+def rebuild_for(rel):
+    if rel == GRUB_CFG:
+        return 'update-grub'
+    if rel == GPU_PIN_CONF:
+        return None
+    return 'update-initramfs'
+
+
+REBUILDS = {'update-initramfs': ['update-initramfs', '-u'],
+            'update-grub': ['update-grub']}
+
+
+@dataclasses.dataclass
+class Result:
+    profile: Profile
+    changed: list
+    reboot_needed: bool
+    warnings: list
+
+
+def apply(system, profiles, dry_run=False):
+    if not dry_run and system.path(SHOW_LOCK).exists():
+        raise ProjectLoaded(f'/{SHOW_LOCK} exists: a project is loaded. Unload it (after STOP) '
+                            'or reboot, then run apply again.')
+    profile = detect(system, profiles)
+    if profile is None:
+        raise UnknownPlatform(f'no profile matches this box (CPU "{cpu_model(system)}")')
+    # Everything that can say no is decided before the first file is written.
+    ports = assign_ports(system, profile)
+    analog, reason = find_analog_card(system, profile)
+    warnings = [] if analog else [f'{reason}: no "{ANALOG_ID}" sound card id was set']
+    if system.read(GPU_PIN_CONF) is None:
+        warnings.append(f'/{GPU_PIN_CONF} is missing: the GPU pin was not set')
+
+    files = planned_files(system, profile, ports, analog)
+    changed = [rel for rel, text in files.items() if system.read(rel) != text]
+    owed = set((system.read(PENDING) or '').split()) & set(REBUILDS)
+    owed |= {rebuild_for(rel) for rel in changed} - {None}
+    result = Result(profile, changed, bool(changed or owed), warnings)
+    if dry_run:
+        return result
+
+    if owed:
+        system.write(PENDING, '\n'.join(sorted(owed)) + '\n')
+    for rel in changed:
+        system.write(rel, files[rel])
+    for name, argv in REBUILDS.items():
+        if name not in owed:
+            continue
+        done = system.run(argv)
+        if done.returncode != 0:
+            raise RebuildFailed(f'{name} failed ({done.returncode}): '
+                                f'{(done.stderr or "").strip()[-500:]}\n'
+                                'The files are written. Run apply again before rebooting.')
+        owed.discard(name)
+        system.write(PENDING, ''.join(f'{n}\n' for n in sorted(owed)))
+    if system.path(PENDING).exists():
+        system.path(PENDING).unlink()
+    return result
+
+
+# --- check -----------------------------------------------------------------------
+
+def check_cmdline(system, profile):
+    words = (system.read('proc/cmdline') or '').split()
+    missing = [p for p in profile.kernel_params if p not in words]
+    extra = [w for w in words
+             if w not in profile.kernel_params and w not in BASE_CMDLINE_WORDS
+             and not w.startswith(BASE_CMDLINE_PREFIXES)]
+    for word in missing:
+        yield 'FAIL', 'kernel parameter', f'{word} is in the profile and not on the command line'
+    for word in extra:
+        yield 'FAIL', 'kernel parameter', f'{word} is declared by no profile'
+    if not words:
+        yield 'FAIL', 'kernel parameter', '/proc/cmdline could not be read'
+    elif not missing and not extra:
+        yield 'PASS', 'kernel parameter', 'the command line matches the profile'
+
+
+def check_modprobe(system, profile):
+    declared = {' '.join(line.split()) for line in profile.modprobe_lines()}
+    present, extra = set(), []
+    for path in system.glob('etc/modprobe.d/*.conf'):
+        for line in (system.read(path.relative_to(system.root)) or '').splitlines():
+            words = line.split()
+            comment = next((i for i, w in enumerate(words) if w.startswith('#')), len(words))
+            words = words[:comment]
+            if not words or words[0] != 'options':
+                continue
+            normal = ' '.join(words)
+            present.add(normal)
+            if normal not in declared:
+                extra.append(f'{path.name}: {normal}')
+    for item in extra:
+        yield 'FAIL', 'modprobe option', f'declared by no profile - {item}'
+    for line in sorted(declared - present):
+        yield 'FAIL', 'modprobe option', f'missing: {line}'
+    if not extra and declared <= present:
+        yield 'PASS', 'modprobe option', 'only what the profile declares'
+
+
+def check_ports(system, profile):
+    try:
+        ports = assign_ports(system, profile)
+    except PortsDoNotFit as e:
+        yield 'FAIL', 'ports', str(e)
+        return
+    for name in PORT_NAMES:
+        rel = f'{LINK_DIR}/10-{name}.link'
+        text = system.read(rel)
+        wanted = link_text(profile, name, ports[name])
+        if text != wanted:
+            yield 'FAIL', 'ports', f'/{rel} is not what the rule gives for this box'
+        elif ports[name] is None:
+            yield 'PASS', 'ports', f'no Wi-Fi card; the {name} rule matches nothing'
+        elif system.path(f'sys/bus/pci/devices/{ports[name]}/net/{name}').is_dir():
+            yield 'PASS', 'ports', f'{name} is {ports[name]}'
+        else:
+            names = [p.name for p in system.glob(f'sys/bus/pci/devices/{ports[name]}/net/*')]
+            now = f'it is named {names[0]}' if names else 'it has no network device (driver?)'
+            yield 'FAIL', 'ports', f'{ports[name]} should be {name}; {now}. Rebooted since apply?'
+
+
+def check_analog_card(system, profile):
+    address, reason = find_analog_card(system, profile)
+    if not profile.analog_codec:
+        yield 'MANUAL', 'analog sound card', reason
+    elif address is None:
+        yield 'FAIL', 'analog sound card', reason
+    else:
+        ids = [card_id for _, card_id, a in sound_cards(system) if a == address]
+        if ids == [ANALOG_ID]:
+            yield 'PASS', 'analog sound card', f'{address} has the id {ANALOG_ID}'
+        else:
+            yield 'FAIL', 'analog sound card', (f'{address} has the id {ids[0] if ids else "?"}, '
+                                                f'not {ANALOG_ID}. Rebooted since apply?')
+
+
+def check_gpu_pin(system, profile):
+    text = system.read(GPU_PIN_CONF) or ''
+    values = re.findall(r'^enabled=(.*)$', text, re.M)
+    on = bool(values) and values[-1].strip() in ('true', 'yes', '1', 'on')
+    if on == profile.gpu_pin:
+        yield 'PASS', 'gpu pin', f'enabled={str(on).lower()}'
+    else:
+        yield 'FAIL', 'gpu pin', (f'/{GPU_PIN_CONF} says enabled={str(on).lower()}, the profile '
+                                  f'says {str(profile.gpu_pin).lower()}')
+
+
+def check_firmware(system, profile):
+    for package in profile.firmware:
+        done = system.run(['dpkg-query', '-W', '-f=${Status}', package])
+        if done.returncode == 0 and 'install ok installed' in done.stdout:
+            yield 'PASS', 'firmware', package
+        else:
+            yield 'FAIL', 'firmware', f'{package} is not installed'
+
+
+def check_bios(system, profile):
+    """BIOS settings that Linux can see. The rest is in the manual list."""
+    if profile.aperture_mb:
+        address = gpu_address(system, profile)
+        lines = (system.read(f'sys/bus/pci/devices/{address}/resource') or '').splitlines()
+        try:
+            start, end = (int(word, 16) for word in lines[2].split()[:2])
+            size = (end - start + 1) // 2**20 if end else 0
+        except (IndexError, ValueError):
+            yield 'MANUAL', 'BIOS aperture size', f'not readable; expected {profile.aperture_mb} MB'
+        else:
+            status = 'PASS' if size == int(profile.aperture_mb) else 'FAIL'
+            yield status, 'BIOS aperture size', f'{size} MB, expected {profile.aperture_mb} MB'
+    if profile.vram_mb:
+        values = [system.read(p.relative_to(system.root))
+                  for p in system.glob('sys/class/drm/card*/device/mem_info_vram_total')]
+        if not values:
+            yield 'MANUAL', 'BIOS video memory', f'not readable; expected {profile.vram_mb} MB'
+        else:
+            size = int(values[0]) // 2**20
+            status = 'PASS' if size == int(profile.vram_mb) else 'FAIL'
+            yield status, 'BIOS video memory', f'{size} MB, expected {profile.vram_mb} MB'
+    if profile.tpm == 'present':
+        if system.path('sys/class/tpm/tpm0').exists():
+            yield 'PASS', 'BIOS TPM', 'present'
+        else:
+            yield 'FAIL', 'BIOS TPM', 'no TPM: enable it in the BIOS'
+    if profile.secure_boot == 'off':
+        found = system.glob('sys/firmware/efi/efivars/SecureBoot-*')
+        try:
+            on = found[0].read_bytes()[4] == 1
+        except (IndexError, OSError):
+            yield 'MANUAL', 'BIOS Secure Boot', 'not readable; expected off'
+        else:
+            yield ('FAIL', 'BIOS Secure Boot', 'on, expected off') if on else (
+                'PASS', 'BIOS Secure Boot', 'off')
+
+
+def check(system, profiles):
+    profile = detect(system, profiles)
+    if profile is None:
+        return [('FAIL', 'platform', f'unknown (CPU "{cpu_model(system)}")')]
+    results = [('PASS', 'platform', profile.id)]
+    if not profile.accepted:
+        results.append(('MANUAL', 'profile', 'not accepted: no box of this platform has passed '
+                                             'the image tests yet'))
+    for part in (check_cmdline, check_modprobe, check_ports, check_analog_card,
+                 check_gpu_pin, check_firmware, check_bios):
+        results.extend(part(system, profile))
+    results.extend(('MANUAL', 'BIOS', item) for item in profile.manual)
+    if system.path(PENDING).exists():
+        results.append(('FAIL', 'apply', 'unfinished: run `cuems-platform apply` again'))
+    return results
+
+
+# --- command line -------------------------------------------------------------------
+
+def main(argv=None, system=None, profile_dir=PROFILE_DIR):
+    parser = argparse.ArgumentParser(prog='cuems-platform',
+                                     description='Hardware settings of this CUEMS box.')
+    commands = parser.add_subparsers(dest='command', required=True)
+    commands.add_parser('detect', help='print the platform id')
+    commands.add_parser('check', help='compare the running box with its profile')
+    apply_parser = commands.add_parser('apply', help="write this platform's settings")
+    apply_parser.add_argument('--dry-run', action='store_true',
+                              help='say what would change and write nothing')
+    args = parser.parse_args(argv)
+    system = system or System()
+
+    try:
+        profiles = load_profiles(profile_dir)
+        if args.command == 'detect':
+            profile = detect(system, profiles)
+            print(profile.id if profile else 'unknown')
+            return 0 if profile else UnknownPlatform.exit_code
+        if args.command == 'check':
+            results = check(system, profiles)
+            for status, name, detail in results:
+                print(f'{status:<6} {name}: {detail}')
+            return 1 if any(status == 'FAIL' for status, _, _ in results) else 0
+        if not args.dry_run and system.root == pathlib.Path('/') and os.geteuid() != 0:
+            raise PlatformError('apply needs root')
+        result = apply(system, profiles, dry_run=args.dry_run)
+        for warning in result.warnings:
+            print(f'cuems-platform: WARNING: {warning}', file=sys.stderr)
+        verb = 'would write' if args.dry_run else 'wrote'
+        for rel in result.changed:
+            print(f'{verb} /{rel}')
+        if not result.reboot_needed and not result.changed:
+            print(f'{result.profile.id}: already applied, nothing changed')
+        elif not args.dry_run:
+            print(f'{result.profile.id}: applied. It takes effect at the next reboot.')
+        return 0
+    except PlatformError as e:
+        print(f'cuems-platform: ERROR: {e}', file=sys.stderr)
+        return e.exit_code
+
+
+if __name__ == '__main__':
+    sys.exit(main())
