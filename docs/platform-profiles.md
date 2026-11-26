@@ -113,8 +113,9 @@ every profile says `accepted=false` until the image tests pass on it.
 | GPU pin | off | on |
 | Video connectors | 3 | 4 |
 
-**N100:** no box has been read. Its profile has no port rule and no analog
-codec, so `apply` refuses it. **i3-1215U** and **Core Ultra 5 125U** are data
+**N100:** compatibility only; the base image is not built for it and does not
+have to pass on it. No box has been read. Its profile has no port rule and no
+analog codec, so `apply` refuses it. **i3-1215U** and **Core Ultra 5 125U** are data
 only, for boxes bought for trials.
 
 The starting `default_mappings.xml` of each platform is not here yet: it belongs
