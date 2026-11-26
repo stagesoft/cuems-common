@@ -55,6 +55,7 @@ usr/share/doc/cuems-common/firewall.README usr/share/doc/cuems-common/
 docs/default-credentials.md usr/share/doc/cuems-common/
 docs/platform-profiles.md usr/share/doc/cuems-common/
 docs/first-boot.md usr/share/doc/cuems-common/
+docs/set-role.md usr/share/doc/cuems-common/
 usr/lib/cuems/bin/cuems-wait-controller usr/lib/cuems/bin/
 
 # rtpmidid role-aware INI templates (read by cuems-write-rtpmidid-config)

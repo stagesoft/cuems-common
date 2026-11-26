@@ -36,7 +36,9 @@ Hooks that depend on role must (a) detect via `master.ip` presence, (b) be idemp
 
 **Planned operation with mandatory reboot. NEVER mid-show.**
 
-Current procedure (nodeconf disabled, hand-managed):
+With `cuems-set-role` (`docs/set-role.md`, from the base image work, not released yet): `sudo cuems-set-role controller [--hostname N]` or `sudo cuems-set-role node <own link address> [--hostname N]`, then reboot. On a node it **masks** `cuems-controller-engine.service`, because installing the engine package enables and starts it on any box.
+
+By hand, where the command is not installed (nodeconf disabled):
 1. Update `<node_type>` in `network_map.xml` for the affected host.
 2. Update `<role_id>` to match (`controller` for master, `nodeNN` for slave).
 3. `touch /etc/cuems/master.ip` (or `rm` to demote).

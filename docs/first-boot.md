@@ -121,8 +121,8 @@ This is the contract with whatever makes the image.
   (`cuems-nodeconf`, which is not enabled on a box from the image) would publish
   the sentinel.
 - It does not set a role, a site name, a Wi-Fi name or any password.
-- The `/etc/hosts` line `127.0.0.1 controller.local # cuems-firstboot` stays. It
-  wins over mDNS, so **whatever makes the box a node must take it out**, or the
-  node looks for its controller in itself.
+- The `/etc/hosts` line `127.0.0.1 controller.local # cuems-firstboot` stays
+  until the box gets a role. It wins over mDNS: a box made a node by hand has to
+  take it out. `cuems-set-role` does (`set-role.md`).
 - The state file is what lets a failed first boot go on. Without it, a box that
   already got its uuid is refused and goes on to its normal boot half born.
