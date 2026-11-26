@@ -52,6 +52,8 @@ MAC_PLACEHOLDER = 'REPLACE-WITH-NODE-MAC'
 UUID = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
 # Example identities that packages ship or have shipped. Never a box's own.
 TEMPLATE_UUID_PREFIXES = ('a3811d78-', '0367f391-')
+# Marked, so that whoever gives the box a role can find it and take it out.
+CONTROLLER_PIN = '127.0.0.1\tcontroller.local\t# cuems-firstboot'
 
 
 class Refused(Exception):
@@ -124,7 +126,8 @@ def check_new(system, state, seed):
         raise Refused('the first boot already finished on this box')
     if seed and state.get('uuid') and seed != state['uuid']:
         raise Failed(f'the seed file names {seed}, but an earlier try already chose '
-                     f'{state["uuid"]}. Remove the seed file, or /{STATE}.')
+                     f'{state["uuid"]} and may have written it. Remove the seed file, or '
+                     'put that uuid in it.')
     text = system.read(SETTINGS)
     if text is None:
         raise Failed(f'/{SETTINGS} is missing: the image was not sealed as it should be')
@@ -132,10 +135,13 @@ def check_new(system, state, seed):
         root = ET.fromstring(text.encode())
     except ET.ParseError as e:
         raise Failed(f'/{SETTINGS} is not XML: {e}')
-    current = (root.findtext('Settings/node/uuid') or '').strip()
+    current = (root.findtext('Settings/node/uuid') or '').strip().lower()
     if current != SENTINEL:
-        if not UUID.fullmatch(current.lower()):
-            raise Failed(f'/{SETTINGS} holds neither the sentinel uuid nor a uuid: "{current}"')
+        # A placeholder or a package's example is a badly sealed image, not a box
+        # with an identity: refusing would put it on the network with that one.
+        if not UUID.fullmatch(current) or current.startswith(TEMPLATE_UUID_PREFIXES):
+            raise Failed(f'/{SETTINGS} holds neither the sentinel uuid nor a box\'s own: '
+                         f'"{current}"')
         if current not in (seed, state.get('uuid')):
             raise Refused(f'/{SETTINGS} already has the identity {current}')
     library = (root.findtext('Settings/library_path') or '/opt/cuems_library').strip('/ \n')
@@ -233,6 +239,8 @@ def write_identity(system, own_uuid, mac, profile):
     """The uuid lives in four places. Everything is read and checked before the
     first one is written; writing again after a failure changes nothing."""
     def fill(text):
+        # A seeded box may already hold its uuid, in any case.
+        text = re.sub(re.escape(own_uuid), own_uuid, text, flags=re.I)
         return text.replace(SENTINEL, own_uuid).replace(MAC_PLACEHOLDER, mac)
 
     writes = {}
@@ -240,7 +248,7 @@ def write_identity(system, own_uuid, mac, profile):
         text = system.read(rel)
         if text is None:
             raise Failed(f'/{rel} is missing')
-        if SENTINEL not in text and own_uuid not in text:
+        if SENTINEL not in text and own_uuid not in text.lower():
             raise Failed(f'/{rel} holds neither the sentinel uuid nor this box\'s: '
                          'the image was not sealed as it should be')
         writes[rel] = fill(text)
@@ -292,7 +300,7 @@ def set_hostname(system, name):
         lines.append(line)
     if not named:
         lines.insert(1, f'127.0.1.1\t{name}')
-    lines.insert(1, '127.0.0.1\tcontroller.local')
+    lines.insert(1, CONTROLLER_PIN)
     system.write('etc/hosts', '\n'.join(lines) + '\n')
     run_checked(system, ['hostname', name])
 

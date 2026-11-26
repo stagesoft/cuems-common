@@ -204,7 +204,8 @@ def test_hosts_gets_the_name_and_the_controller_pin_once(born):
     born.boot()
     lines = born.read('etc/hosts').splitlines()
     assert '127.0.1.1\t021122334402' in lines
-    assert [line for line in lines if 'controller.local' in line] == ['127.0.0.1\tcontroller.local']
+    assert [line for line in lines if 'controller.local' in line] == [fb.CONTROLLER_PIN]
+    assert fb.CONTROLLER_PIN == '127.0.0.1\tcontroller.local\t# cuems-firstboot'
     assert '127.0.0.1\tlocalhost' in lines
 
 
@@ -346,6 +347,22 @@ def test_arming_a_box_that_already_finished_is_refused(born):
     assert born.read('etc/hostname') == 'controller\n'
 
 
+@pytest.mark.parametrize('example', ['a3811d78-1111-4222-8333-444455556666',
+                                     '0367f391-ebf4-48b2-9f26-000000000001'])
+def test_an_example_uuid_left_by_the_seal_fails_and_does_not_disarm(born, example):
+    born.write('etc/cuems/settings.xml', SETTINGS.replace(SENTINEL, example))
+    assert born.boot() == fb.FAILED
+    assert born.exists('var/lib/cuems/firstboot.armed')
+
+
+def test_an_upper_case_uuid_that_the_seed_names_is_this_box(born):
+    born.write('etc/cuems/settings.xml', SETTINGS.replace(SENTINEL, SEEDED.upper()))
+    born.write('etc/cuems/network_map.xml', NETWORK_MAP.replace(SENTINEL, SEEDED.upper()))
+    born.seed(SEEDED)
+    assert born.boot() == fb.DONE
+    assert set(born.uuids().values()) == {SEEDED}
+
+
 # --- failure and resume ------------------------------------------------------------
 
 def test_a_failure_keeps_the_box_armed_and_does_not_reboot(born):
@@ -387,7 +404,10 @@ def test_a_seed_changed_after_a_failure_is_an_error(born):
     born.fail.clear()
     born.seed(OTHER)
     assert born.boot() == fb.FAILED
-    assert 'seed' in born.report()['reason']
+    reason = born.report()['reason']
+    assert 'seed' in reason
+    # Without the state file the half-born box would be refused: never advise it.
+    assert 'firstboot.state' not in reason
 
 
 @pytest.mark.parametrize('rel, text', [
@@ -511,3 +531,16 @@ def test_the_network_guard_does_nothing_on_an_armed_box(tmp_path):
     assert (done.returncode, done.stdout, done.stderr) == (0, '', '')
     script = (REPO / 'scripts/cuems-net-guard').read_text()
     assert script.index('CUEMS_FIRSTBOOT_ARMED') < script.index('. /usr/lib/cuems/net-mode.sh')
+
+
+@pytest.mark.parametrize('service', ['ifup@.service', 'networking.service'])
+def test_ifupdown_configures_nothing_on_an_armed_box(service):
+    rel = f'etc/systemd/system/{service}.d/20-cuems-firstboot.conf'
+    assert NOT_ARMED in (REPO / rel).read_text().splitlines()
+    assert f'etc/systemd/system/{service}.d/* lib/systemd/system/{service}.d/' in (
+        REPO / 'debian/install').read_text()
+
+
+def test_the_rescue_cannot_be_started_on_a_box_in_service():
+    assert 'ConditionPathExists=/var/lib/cuems/firstboot.armed' in unit(
+        'cuems-firstboot-rescue.service').splitlines()

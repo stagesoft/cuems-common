@@ -7,6 +7,8 @@
 [Unit]
 Description=Make a box whose first boot failed reachable
 Documentation=file:/usr/share/doc/cuems-common/first-boot.md
+# It puts DHCP clients on the raw ports: never on a box in service.
+ConditionPathExists=/var/lib/cuems/firstboot.armed
 
 [Service]
 Type=oneshot

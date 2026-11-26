@@ -139,6 +139,8 @@ etc/systemd/system/*.timer lib/systemd/system/
 # Systemd drop-in directories (package-provided overrides)
 etc/systemd/system/avahi-daemon.d/* lib/systemd/system/avahi-daemon.service.d/
 etc/systemd/system/avahi-daemon.socket.d/* lib/systemd/system/avahi-daemon.socket.d/
+etc/systemd/system/ifup@.service.d/* lib/systemd/system/ifup@.service.d/
+etc/systemd/system/networking.service.d/* lib/systemd/system/networking.service.d/
 etc/systemd/system/apache2.service.d/* lib/systemd/system/apache2.service.d/
 etc/systemd/system/hostapd.service.d/* lib/systemd/system/hostapd.service.d/
 etc/systemd/system/isc-dhcp-server.service.d/* lib/systemd/system/isc-dhcp-server.service.d/

@@ -20,9 +20,10 @@ pulls in the basic system and `cuems-firstboot.service`, nothing else: no
 CUEMS service, no network configuration, no DHCP server, no access point, no
 mDNS. A box without an identity cannot disturb the network it is plugged into.
 
-The basic system still brings its timers and sockets, so two things are told to
-stay quiet while armed: `cuems-net-guard` leaves at once, and the Avahi service
-and socket have a condition. **A new unit of this package that is wanted by
+The basic system still brings udev, timers and sockets, so some things are told
+to stay quiet while armed: `cuems-net-guard` leaves at once, and the Avahi
+service and socket, `networking.service` and `ifup@.service` (which udev starts
+for an `allow-hotplug` interface) have a condition. **A new unit of this package that is wanted by
 `timers.target`, `sockets.target`, `paths.target` or `sysinit.target` runs on an
 armed box**: give it the same guard if it can touch the network or needs an
 identity.
@@ -94,7 +95,7 @@ This is the contract with whatever makes the image.
 | `/etc/machine-id` | empty |
 | `/etc/hostname` | `localhost` |
 | packages | `cloud-guest-utils`, `gdisk`, `isc-dhcp-client` and `openssh-server` installed |
-| disks | root is ext4 and the last partition; the EFI partition is mounted at `/boot/efi` |
+| disks | root is ext4 and the last partition, with no separate `/var` (the arming file must be readable before anything is mounted); the EFI partition is mounted at `/boot/efi` |
 
 ```xml
 <cms:CuemsNetworkMap xmlns:cms="https://stagelab.coop/cuems/">
@@ -120,3 +121,8 @@ This is the contract with whatever makes the image.
   (`cuems-nodeconf`, which is not enabled on a box from the image) would publish
   the sentinel.
 - It does not set a role, a site name, a Wi-Fi name or any password.
+- The `/etc/hosts` line `127.0.0.1 controller.local # cuems-firstboot` stays. It
+  wins over mDNS, so **whatever makes the box a node must take it out**, or the
+  node looks for its controller in itself.
+- The state file is what lets a failed first boot go on. Without it, a box that
+  already got its uuid is refused and goes on to its normal boot half born.
