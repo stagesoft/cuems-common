@@ -1,9 +1,20 @@
+<!--
+SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+SPDX-License-Identifier: GPL-3.0-or-later
+SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+-->
+
 # cuems-common .link files — hardware-specific configuration
 
 cuems-common ships `etc/systemd/network/10-*.link` files that rename
 PCI ethernet/wireless NICs to stable names (`ethernet0`, `ethernet1`,
 `wifi0`) so the rest of the package (bond config, dhcpd interface,
 hostapd, etc) can reference them.
+
+`sudo cuems-platform apply` writes these three files for the box it runs on,
+from a rule rather than fixed addresses (see `platform-profiles.md` here). It is
+never run by a package script. The rest of this file describes the defaults and
+how to edit them by hand.
 
 The default values in the shipped package match the **N97 cluster
 node** hardware:
