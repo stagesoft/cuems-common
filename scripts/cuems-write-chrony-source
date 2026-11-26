@@ -21,7 +21,8 @@ On slave:
   - Copies /usr/share/cuems/chrony-client.conf.template to
     /etc/chrony/conf.d/cuems.conf (maxdistance 16 + makestep 1 -1
     to absorb large initial offsets from freshly-cloned hardware).
-  - Reads /etc/cuems/network_map.xml, finds NodeType.master/ip, writes
+  - Takes the controller's address by the shared rule (controller.local unless
+    it is this host, else network_map.xml) and writes
     /etc/chrony/sources.d/cuems-master.sources with one line:
         server <master-ip> iburst minpoll 4 maxpoll 6
 
@@ -31,9 +32,16 @@ historical — it now does more than just sources.d.
 """
 
 import shutil
+import socket
 import sys
-import xml.etree.ElementTree as ET
 from pathlib import Path
+
+# The rule for the controller's address is shared with the other helpers. It sits
+# beside bin/ once installed, and under usr/lib/cuems/ in the source tree.
+sys.dont_write_bytecode = True
+sys.path[:0] = [str(Path(__file__).resolve().parents[1]),
+                str(Path(__file__).resolve().parents[1] / "usr/lib/cuems")]
+from cuems_controller_address import controller_address  # noqa: E402
 
 MASTER_MARKER = Path("/etc/cuems/master.ip")
 NETWORK_MAP = Path("/etc/cuems/network_map.xml")
@@ -78,27 +86,10 @@ def apply_master() -> None:
 
 
 def read_master_ip() -> str:
-    if not NETWORK_MAP.exists():
-        die(f"{NETWORK_MAP} not found — is /etc/cuems populated for this role?")
     try:
-        tree = ET.parse(NETWORK_MAP)
-    except ET.ParseError as e:
-        die(f"failed to parse {NETWORK_MAP}: {e}")
-    root = tree.getroot()
-    elem = root.find("./node_list/node[node_type='NodeType.master']/ip")
-    if elem is None:
-        first_child = list(root)[0].tag if list(root) else "<none>"
-        die(
-            "could not find NodeType.master/ip in network_map.xml — "
-            f"root tag was {root.tag!r}, first child was {first_child!r}. "
-            "Search expression: ./node_list/node[node_type='NodeType.master']/ip. "
-            "If element names are now namespaced (e.g. {http://...}node), "
-            "the helper must be updated."
-        )
-    ip = (elem.text or "").strip()
-    if not ip:
-        die("NodeType.master found but its <ip> tag is empty")
-    return ip
+        return controller_address(NETWORK_MAP, socket.gethostbyname)
+    except LookupError as e:
+        die(str(e))
 
 
 def apply_slave() -> None:
