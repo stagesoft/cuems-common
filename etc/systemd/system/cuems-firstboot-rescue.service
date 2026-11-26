@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+
+# Started only when the first boot fails.
+
+[Unit]
+Description=Make a box whose first boot failed reachable
+Documentation=file:/usr/share/doc/cuems-common/first-boot.md
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# The DHCP clients it starts stay running.
+ExecStart=/usr/lib/cuems/bin/cuems-firstboot-rescue
+StandardOutput=journal+console
+StandardError=journal+console
+SyslogIdentifier=cuems-firstboot-rescue

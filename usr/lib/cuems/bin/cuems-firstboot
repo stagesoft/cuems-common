@@ -1,0 +1,434 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+
+"""cuems-firstboot - give a box written from the base image its own identity.
+
+Run by cuems-firstboot.service, which runs only while
+/var/lib/cuems/firstboot.armed exists. Only the step that seals an image creates
+that file. While it exists the box boots cuems-firstboot.target instead of its
+normal target, so nothing else of CUEMS, and no network service, is running.
+What it needs and what it makes: docs/first-boot.md.
+
+Exit codes: 0 done (or not armed); 10 refused, the box is not new (nothing of
+its own was changed, and it goes on to its normal boot); 1 failed (it stays
+armed, and the rescue service makes it reachable).
+"""
+
+import importlib.machinery
+import importlib.util
+import json
+import os
+import re
+import sys
+import time
+import uuid as uuid_module
+import xml.etree.ElementTree as ET
+
+DONE, FAILED, REFUSED = 0, 1, 10
+
+PLATFORM_TOOL = '/usr/bin/cuems-platform'
+MAKE_TLS_CERT = '/usr/lib/cuems/bin/cuems-make-tls-cert'
+
+ARMED = 'var/lib/cuems/firstboot.armed'
+STATE = 'var/lib/cuems/firstboot.state'
+REPORT = 'var/lib/cuems/firstboot.json'
+# On the EFI partition, so that whoever writes the disk can put it there.
+SEED = 'boot/efi/cuems-seed.txt'
+IMAGE_RELEASE = 'etc/cuems/image-release'
+
+SETTINGS = 'etc/cuems/settings.xml'
+NETWORK_MAP = 'etc/cuems/network_map.xml'
+MAPPINGS = 'etc/cuems/default_mappings.xml'
+AVAHI_TEMPLATES = [f'usr/share/cuems/cuems.service.{k}' for k in ('firstrun', 'master', 'slave')]
+# A box is born a standalone controller.
+BORN_TEMPLATE = 'usr/share/cuems/cuems.service.master'
+AVAHI_RECORD = 'etc/avahi/services/cuems.service'
+BRIDGE_KEY = 'etc/cuems/power-bridge.key'
+
+SENTINEL = '00000000-0000-0000-0000-000000000000'
+MAC_PLACEHOLDER = 'REPLACE-WITH-NODE-MAC'
+UUID = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
+# Example identities that packages ship or have shipped. Never a box's own.
+TEMPLATE_UUID_PREFIXES = ('a3811d78-', '0367f391-')
+
+
+class Refused(Exception):
+    """The box is not new."""
+
+
+class Failed(Exception):
+    pass
+
+
+def say(text):
+    print(text, flush=True)
+
+
+def run_checked(system, argv):
+    done = system.run(argv)
+    if done.returncode != 0:
+        detail = ((done.stderr or '') + (done.stdout or '')).strip()[-500:]
+        raise Failed(f'{" ".join(argv)} failed ({done.returncode}): {detail}')
+    return done.stdout or ''
+
+
+def write_json(system, rel, data):
+    system.write(rel, json.dumps(data, indent=2, sort_keys=True) + '\n')
+
+
+def read_state(system):
+    text = system.read(STATE)
+    if text is None:
+        return {}
+    try:
+        return json.loads(text)
+    except ValueError as e:
+        raise Failed(f'/{STATE} is not readable: {e}')
+
+
+def image_id(system):
+    match = re.search(r'^IMAGE_ID=(.*)$', system.read(IMAGE_RELEASE) or '', re.M)
+    return match.group(1).strip() if match else None
+
+
+def read_seed(system):
+    """The uuid in the seed file, or None when there is no file.
+
+    A file that is there and wrong is an error: minting instead would give the
+    box a new identity when somebody meant it to keep its own.
+    """
+    text = system.read(SEED)
+    if text is None:
+        return None
+    value = text.strip().lower()
+    if (not UUID.fullmatch(value) or value == SENTINEL
+            or value.startswith(TEMPLATE_UUID_PREFIXES)):
+        raise Failed(f'the seed file /{SEED} must hold one real uuid and nothing else')
+    return value
+
+
+# --- the steps ---------------------------------------------------------------------
+
+def make_host_keys(system):
+    """First of all: sshd does not start without them, and making them when
+    there are none orphans nothing."""
+    if not system.glob('etc/ssh/ssh_host_*_key'):
+        run_checked(system, ['ssh-keygen', '-A'])
+
+
+def check_new(system, state, seed):
+    """Raise Refused unless this box may be given an identity. Writes nothing."""
+    if state.get('completed'):
+        raise Refused('the first boot already finished on this box')
+    if seed and state.get('uuid') and seed != state['uuid']:
+        raise Failed(f'the seed file names {seed}, but an earlier try already chose '
+                     f'{state["uuid"]}. Remove the seed file, or /{STATE}.')
+    text = system.read(SETTINGS)
+    if text is None:
+        raise Failed(f'/{SETTINGS} is missing: the image was not sealed as it should be')
+    try:
+        root = ET.fromstring(text.encode())
+    except ET.ParseError as e:
+        raise Failed(f'/{SETTINGS} is not XML: {e}')
+    current = (root.findtext('Settings/node/uuid') or '').strip()
+    if current != SENTINEL:
+        if not UUID.fullmatch(current.lower()):
+            raise Failed(f'/{SETTINGS} holds neither the sentinel uuid nor a uuid: "{current}"')
+        if current not in (seed, state.get('uuid')):
+            raise Refused(f'/{SETTINGS} already has the identity {current}')
+    library = (root.findtext('Settings/library_path') or '/opt/cuems_library').strip('/ \n')
+    if system.glob(f'{library}/projects/*'):
+        raise Refused(f'/{library}/projects holds a project')
+
+
+def netdev_of(system, address):
+    found = system.glob(f'sys/bus/pci/devices/{address}/net/*')
+    return found[0].name if found else None
+
+
+def wait_for_hardware(system, platform, profiles, seconds):
+    """Drivers load while the system boots: give ports and sound card a moment."""
+    deadline = time.monotonic() + seconds
+    while True:
+        profile = platform.detect(system, profiles)
+        if profile:
+            try:
+                ports = platform.assign_ports(system, profile)
+            except platform.PortsDoNotFit:
+                ports = None
+            sound = (not profile.analog_codec
+                     or platform.find_analog_card(system, profile)[0])
+            if ports and netdev_of(system, ports['ethernet0']) and sound:
+                return
+        if time.monotonic() >= deadline:
+            return
+        time.sleep(1)
+
+
+def disable_packaged_links(system, platform):
+    """The package's port files are for one kind of box. On a box they do not
+    fit they must not stay in force."""
+    moved = False
+    for name in platform.PORT_NAMES:
+        path = system.path(f'{platform.LINK_DIR}/10-{name}.link')
+        if path.exists() and platform.OUR_MARK not in path.read_text(errors='replace'):
+            path.rename(path.with_name(path.name + '.cuems-disabled'))
+            moved = True
+    if moved:
+        run_checked(system, ['update-initramfs', '-u'])
+
+
+def apply_platform(system, platform, profiles):
+    try:
+        result = platform.apply(system, profiles)
+    except (platform.UnknownPlatform, platform.PortsDoNotFit) as e:
+        disable_packaged_links(system, platform)
+        raise Failed(str(e))
+    except platform.PlatformError as e:
+        raise Failed(str(e))
+    ports = platform.assign_ports(system, result.profile)
+    return result, ports
+
+
+def permanent_mac(system, address):
+    """ethernet0's own address, found by PCI address: no name is in force yet,
+    and no bond exists that could have changed it."""
+    netdev = netdev_of(system, address)
+    if not netdev:
+        raise Failed(f'the port {address} has no network device (driver or firmware?)')
+    done = system.run(['ethtool', '-P', netdev])
+    match = re.search(r'([0-9a-f]{2}(?::[0-9a-f]{2}){5})', (done.stdout or '').lower())
+    value = match.group(1) if done.returncode == 0 and match else ''
+    if value.replace(':', '') in ('', '0' * 12):
+        value = (system.read(f'sys/class/net/{netdev}/address') or '').strip().lower()
+    value = value.replace(':', '')
+    if not re.fullmatch(r'[0-9a-f]{12}', value) or value == '0' * 12:
+        raise Failed(f'no hardware address for {netdev}')
+    return value
+
+
+def set_own_node(text, own_uuid, mac):
+    """Give the box's own map entry the standalone address and its hostname."""
+    blocks = [m for m in re.finditer(r'<node>.*?</node>', text, re.S)
+              if f'<uuid>{own_uuid}</uuid>' in m.group(0)]
+    if len(blocks) != 1:
+        raise Failed(f'/{NETWORK_MAP} must hold one node with this uuid, it holds {len(blocks)}')
+    block = blocks[0].group(0)
+    block, count = re.subn(r'<ip>[^<]*</ip>|<ip\s*/>', '<ip>127.0.0.1</ip>', block)
+    if count != 1:
+        raise Failed(f'/{NETWORK_MAP}: the node has no <ip>')
+    # The engine names the fade target by this, and gradient-motiond keeps only
+    # what carries the OS hostname: without it every fade is silently dropped.
+    # <hostname> is the last element the schema allows in a node.
+    block = re.sub(r'\s*<hostname>[^<]*</hostname>|\s*<hostname\s*/>', '', block)
+    block = re.sub(r'(\n[ \t]*)?</node>$',
+                   lambda m: f'{m.group(1) or ""}    <hostname>{mac}</hostname>'
+                             f'{m.group(1) or ""}</node>', block)
+    return text[:blocks[0].start()] + block + text[blocks[0].end():]
+
+
+def write_identity(system, own_uuid, mac, profile):
+    """The uuid lives in four places. Everything is read and checked before the
+    first one is written; writing again after a failure changes nothing."""
+    def fill(text):
+        return text.replace(SENTINEL, own_uuid).replace(MAC_PLACEHOLDER, mac)
+
+    writes = {}
+    for rel in [SETTINGS, NETWORK_MAP] + AVAHI_TEMPLATES:
+        text = system.read(rel)
+        if text is None:
+            raise Failed(f'/{rel} is missing')
+        if SENTINEL not in text and own_uuid not in text:
+            raise Failed(f'/{rel} holds neither the sentinel uuid nor this box\'s: '
+                         'the image was not sealed as it should be')
+        writes[rel] = fill(text)
+    writes[NETWORK_MAP] = set_own_node(writes[NETWORK_MAP], own_uuid, mac)
+
+    mappings = system.read(MAPPINGS)
+    if mappings is None:
+        # Only where the box has none: a mappings file is the room's, once set up.
+        start = f'usr/share/cuems/platform/{profile.id}/default_mappings.xml'
+        text = system.read(start)
+        if text is None:
+            raise Failed(f'/{start} is missing: this platform has no starting mappings')
+        writes[MAPPINGS] = fill(text)
+    elif SENTINEL in mappings:
+        writes[MAPPINGS] = fill(mappings)
+    elif f'<uuid>{own_uuid}</uuid>' not in mappings:
+        raise Failed(f'/{MAPPINGS} is about another identity: remove it or correct it')
+
+    writes[AVAHI_RECORD] = writes[BORN_TEMPLATE]
+
+    for rel, text in writes.items():
+        if SENTINEL in text or 'REPLACE-WITH-' in text:
+            raise Failed(f'/{rel} would still hold a placeholder')
+        try:
+            ET.fromstring(text.encode())
+        except ET.ParseError as e:
+            raise Failed(f'/{rel} would not be XML: {e}')
+    for rel, text in writes.items():
+        if system.read(rel) != text:
+            system.write(rel, text)
+
+
+def set_hostname(system, name):
+    system.write('etc/hostname', f'{name}\n')
+    lines, named = [], False
+    for line in (system.read('etc/hosts') or '127.0.0.1\tlocalhost\n').splitlines():
+        words = line.split('#')[0].split()
+        if words[:1] == ['127.0.1.1']:
+            if not named:
+                lines.append(f'127.0.1.1\t{name}')
+                named = True
+            continue
+        if 'controller.local' in words[1:]:
+            # Until the box is commissioned it looks for no controller but itself.
+            others = [w for w in words[1:] if w != 'controller.local']
+            if others:
+                lines.append(f'{words[0]}\t{" ".join(others)}')
+            continue
+        lines.append(line)
+    if not named:
+        lines.insert(1, f'127.0.1.1\t{name}')
+    lines.insert(1, '127.0.0.1\tcontroller.local')
+    system.write('etc/hosts', '\n'.join(lines) + '\n')
+    run_checked(system, ['hostname', name])
+
+
+def enable_services(system):
+    run_checked(system, ['systemctl', 'enable', 'cuems-gradient-motiond.service'])
+
+
+def make_keys(system, hostname):
+    """Certificate and bridge key, each made the way its package makes it."""
+    run_checked(system, [MAKE_TLS_CERT])
+    bridge = system.run(['dpkg-query', '-W', '-f=${Status}', 'cuems-power-bridge'])
+    if bridge.returncode != 0 or 'install ok installed' not in (bridge.stdout or ''):
+        return
+    key = system.path(BRIDGE_KEY)
+    if key.exists():
+        return
+    run_checked(system, ['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(key),
+                         '-C', f'cuems-power-bridge@{hostname}'])
+    os.chmod(key, 0o600)
+    os.chmod(f'{key}.pub', 0o644)
+    run_checked(system, ['chown', 'cuems:cuems', str(key), f'{key}.pub'])
+
+
+def grow_root(system):
+    """The image's root partition is small; it takes the rest of the disk."""
+    device = run_checked(system, ['findmnt', '-no', 'SOURCE', '/']).strip()
+    fstype = run_checked(system, ['findmnt', '-no', 'FSTYPE', '/']).strip()
+    number = re.search(r'(\d+)$', device)
+    if not device.startswith('/dev/') or not number or fstype != 'ext4':
+        raise Failed(f'cannot grow the root file system: it is {fstype} on {device}')
+    disk = run_checked(system, ['lsblk', '-no', 'PKNAME', device]).split()
+    if not disk:
+        raise Failed(f'no disk found for {device}')
+    done = system.run(['growpart', f'/dev/{disk[0]}', number.group(1)])
+    output = (done.stdout or '') + (done.stderr or '')
+    if done.returncode != 0 and 'NOCHANGE' not in output:
+        raise Failed(f'growpart failed ({done.returncode}): {output.strip()[-500:]}')
+    run_checked(system, ['resize2fs', device])
+
+
+# --- the run ----------------------------------------------------------------------
+
+def first_boot(system, platform, profile_dir, mint=lambda: str(uuid_module.uuid4()), wait=60):
+    if not system.path(ARMED).exists():
+        say('not armed: nothing to do')
+        return DONE
+    report = {'status': 'failed', 'image_id': image_id(system), 'warnings': []}
+    step = 'SSH host keys'
+    try:
+        make_host_keys(system)
+
+        step = 'is the box new'
+        seed = read_seed(system)
+        state = read_state(system)
+        check_new(system, state, seed)
+
+        step = 'platform settings'
+        profiles = platform.load_profiles(profile_dir)
+        wait_for_hardware(system, platform, profiles, wait)
+        applied, ports = apply_platform(system, platform, profiles)
+        report.update(platform=applied.profile.id, platform_accepted=applied.profile.accepted)
+        report['warnings'] += applied.warnings
+        if not applied.profile.accepted:
+            report['warnings'].append(f'the "{applied.profile.id}" platform is not accepted')
+
+        step = 'identity'
+        mac = permanent_mac(system, ports['ethernet0'])
+        if not state.get('uuid'):
+            # Saved before the first document changes, so that a boot after a
+            # failure goes on with the same identity.
+            state = {'uuid': seed or mint(), 'uuid_source': 'seed' if seed else 'minted'}
+            write_json(system, STATE, state)
+        own_uuid = state['uuid']
+        report.update(uuid=own_uuid, uuid_source=state['uuid_source'], mac=mac, hostname=mac)
+        write_identity(system, own_uuid, mac, applied.profile)
+
+        step = 'hostname'
+        set_hostname(system, mac)
+
+        step = 'services'
+        enable_services(system)
+
+        step = 'keys and certificate'
+        make_keys(system, mac)
+
+        step = 'grow the root partition'
+        grow_root(system)
+
+        step = 'finish'
+        report['status'] = 'done'
+        write_json(system, REPORT, report)
+        write_json(system, STATE, dict(state, completed=True))
+        system.path(SEED).unlink(missing_ok=True)
+        system.path(ARMED).unlink()
+        os.sync()
+    except Refused as e:
+        report.update(status='refused', reason=str(e))
+        write_json(system, REPORT, report)
+        system.path(ARMED).unlink()
+        say(f'refused: {e}. This box is left as it is and goes on to its normal boot.')
+        # Disarmed: reload so that the normal target is the default again.
+        system.run(['systemctl', 'daemon-reload'])
+        system.run(['systemctl', '--no-block', 'start', 'default.target'])
+        return REFUSED
+    except Exception as e:  # every failure must end in a report and a rescue
+        report.update(status='failed', step=step, reason=f'{e}')
+        write_json(system, REPORT, report)
+        say(f'FAILED at "{step}": {e}. The box stays armed.')
+        return FAILED
+
+    for warning in report['warnings']:
+        say(f'warning: {warning}')
+    say(f'done platform={report["platform"]} uuid={report["uuid"]} '
+        f'({report["uuid_source"]}) hostname={report["hostname"]} image={report["image_id"]}')
+    system.run(['systemctl', '--no-block', 'reboot'])
+    return DONE
+
+
+def load_platform_tool(path=PLATFORM_TOOL):
+    loader = importlib.machinery.SourceFileLoader('cuems_platform', path)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[loader.name] = module
+    loader.exec_module(module)
+    return module
+
+
+def main():
+    if os.geteuid() != 0:
+        say('cuems-firstboot needs root')
+        return FAILED
+    sys.dont_write_bytecode = True
+    platform = load_platform_tool()
+    return first_boot(platform.System(), platform, platform.PROFILE_DIR)
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -1,0 +1,70 @@
+<?xml version='1.0' encoding='utf-8'?>
+<!--
+SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+SPDX-License-Identifier: GPL-3.0-or-later
+SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+
+Starting /etc/cuems/default_mappings.xml of the n97 platform: every video output
+of the box and the internal analog output. The first boot installs it, with the
+box's own uuid and mac, only where the box has none. What a room needs (names,
+DMX, other interfaces) is set up afterwards.
+-->
+<cms:CuemsProjectMappings xmlns:cms="https://stagelab.coop/cuems/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <number_of_nodes>1</number_of_nodes>
+    <default_audio_input>00000000-0000-0000-0000-000000000000_system:capture_1</default_audio_input>
+    <default_audio_output>00000000-0000-0000-0000-000000000000_system:playback_1</default_audio_output>
+    <default_video_input />
+    <default_video_output>00000000-0000-0000-0000-000000000000_0</default_video_output>
+    <default_dmx_input />
+    <default_dmx_output>00000000-0000-0000-0000-000000000000</default_dmx_output>
+    <nodes>
+        <node>
+            <uuid>00000000-0000-0000-0000-000000000000</uuid>
+            <mac>REPLACE-WITH-NODE-MAC</mac>
+            <audio>
+                <outputs>
+                    <output>
+                        <id>0</id>
+                        <name>Minijack L</name>
+                        <mappings>
+                            <mapped_to>system:playback_1</mapped_to>
+                        </mappings>
+                    </output>
+                    <output>
+                        <id>1</id>
+                        <name>Minijack R</name>
+                        <mappings>
+                            <mapped_to>system:playback_2</mapped_to>
+                        </mappings>
+                    </output>
+                </outputs>
+            </audio>
+            <video>
+                <outputs>
+                    <output>
+                        <id>0</id>
+                        <name>HDMI 1</name>
+                        <mappings>
+                            <mapped_to>HDMI-A-1</mapped_to>
+                        </mappings>
+                    </output>
+                    <output>
+                        <id>1</id>
+                        <name>HDMI 2</name>
+                        <mappings>
+                            <mapped_to>HDMI-A-2</mapped_to>
+                        </mappings>
+                    </output>
+                    <output>
+                        <id>2</id>
+                        <name>HDMI 3</name>
+                        <mappings>
+                            <mapped_to>HDMI-A-3</mapped_to>
+                        </mappings>
+                    </output>
+                </outputs>
+            </video>
+        </node>
+    </nodes>
+    <new_nodes />
+</cms:CuemsProjectMappings>

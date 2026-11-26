@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+
+# Booted instead of the normal target while the first boot is armed (see
+# /lib/systemd/system-generators/cuems-firstboot-generator). It must pull in
+# nothing else: that is what keeps a box without an identity off the network.
+
+[Unit]
+Description=First boot of a box written from the CUEMS base image
+Requires=basic.target
+Wants=cuems-firstboot.service
+After=basic.target
+AllowIsolate=yes

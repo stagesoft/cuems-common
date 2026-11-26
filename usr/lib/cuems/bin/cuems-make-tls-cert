@@ -1,0 +1,53 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# Make the web server's self-signed certificate, unless there is one already.
+# Used by the package's postinst and by the first boot. A client can see what is
+# in it, so it says FormitGo.
+
+set -e
+
+cert=${CUEMS_TLS_CERT:-/etc/ssl/certs/apache-selfsigned.crt}
+key=${CUEMS_TLS_KEY:-/etc/ssl/private/apache-selfsigned.key}
+name=formitgo.local
+alias=controller.local
+
+[ -f "$cert" ] && [ -f "$key" ] && exit 0
+
+command -v openssl >/dev/null 2>&1 || {
+    echo "cuems-make-tls-cert: openssl not found" >&2
+    exit 1
+}
+
+mkdir -p "$(dirname "$cert")" "$(dirname "$key")"
+
+# The key is never readable by others, not even while it is being written.
+umask 077
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout "$key" -out "$cert" -config /dev/stdin -extensions v3_req 2>/dev/null <<EOF
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+
+[req_distinguished_name]
+C = ES
+ST = State
+L = City
+O = FormitGo
+CN = ${name}
+
+[v3_req]
+keyUsage = keyEncipherment, dataEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = ${name}
+DNS.2 = ${alias}
+EOF
+chmod 644 "$cert"
+chmod 600 "$key"
+echo "Generated SSL certificate for ${name} and ${alias}"

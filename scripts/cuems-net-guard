@@ -20,6 +20,10 @@
 # the `<5>` / `<4>` lines below reach the journal.
 set -u
 
+# A box waiting for its first boot has no identity and must stay off the network.
+# Checked here and not by a unit condition, for the reason the unit file gives.
+[ -e "${CUEMS_FIRSTBOOT_ARMED:-/var/lib/cuems/firstboot.armed}" ] && exit 0
+
 # shellcheck source=usr/lib/cuems/net-mode.sh
 . /usr/lib/cuems/net-mode.sh
 

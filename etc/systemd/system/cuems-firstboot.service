@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+
+# No [Install] section on purpose: only cuems-firstboot.target starts it.
+
+[Unit]
+Description=Give this box its own identity (first boot)
+Documentation=file:/usr/share/doc/cuems-common/first-boot.md
+ConditionPathExists=/var/lib/cuems/firstboot.armed
+After=local-fs.target
+RequiresMountsFor=/var/lib/cuems /boot/efi
+Wants=network-pre.target
+Before=network-pre.target
+OnFailure=cuems-firstboot-rescue.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/cuems/bin/cuems-firstboot
+# 10: refused, the box is not new. It has already started its normal boot.
+SuccessExitStatus=10
+TimeoutStartSec=900
+StandardOutput=journal+console
+StandardError=journal+console
+SyslogIdentifier=cuems-firstboot

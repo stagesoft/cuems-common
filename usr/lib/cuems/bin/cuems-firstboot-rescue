@@ -1,0 +1,37 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# The first boot failed: make the box reachable and say so on the screen. The
+# box stays in cuems-firstboot.target: nothing of CUEMS runs. It only asks for
+# addresses (DHCP client on every wired port, whatever its name) and serves SSH.
+
+say() {
+    echo "$*"
+    echo "$*" > /dev/console 2>/dev/null || true
+}
+
+ssh-keygen -A >/dev/null 2>&1
+plymouth quit >/dev/null 2>&1 || true
+
+for dir in /sys/class/net/*; do
+    name=${dir##*/}
+    # Wired hardware only: a real device, Ethernet type, not wireless.
+    [ -e "$dir/device" ] || continue
+    [ "$(cat "$dir/type" 2>/dev/null)" = 1 ] || continue
+    [ -e "$dir/wireless" ] && continue
+    ip link set dev "$name" up
+    # -nw: keeps asking, so a cable plugged in later works too.
+    dhclient -nw -pf "/run/cuems-rescue-$name.pid" \
+        -lf "/run/cuems-rescue-$name.leases" "$name" \
+        || say "rescue: no DHCP client on $name"
+done
+
+# Without systemd-user-sessions, /run/nologin keeps every user but root out.
+systemctl start --no-block systemd-user-sessions.service ssh.service getty@tty1.service
+
+say "FIRST BOOT FAILED. Nothing of this box is running."
+say "Report: /var/lib/cuems/firstboot.json  Log: journalctl -u cuems-firstboot"
+say "SSH is on; addresses: ip -4 addr. Fix the cause and reboot to try again."
+exit 0

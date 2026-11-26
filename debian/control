@@ -39,7 +39,13 @@ Depends: ${misc:Depends},
          cpufrequtils,
          ddcutil,
          zita-ajbridge
-# SUGGESTS, never Depends or Recommends — deliberately. cuems-cluster-poweroff
+# The first boot of a box written from the base image grows the root partition
+# with these (growpart; sgdisk for GPT). Recommends and not Depends: a box in
+# service never needs them, and an upgrade by dpkg on a venue box without
+# internet must not fail for them. The image recipe installs them.
+Recommends: cloud-guest-utils,
+            gdisk
+# SUGGESTS for the bridge, never Depends or Recommends — deliberately. cuems-cluster-poweroff
 # and cuems-displays-on drive the cuems-power-bridge library through its venv
 # interpreter, but cuems-common must stay installable and fully functional on a
 # host with no bridge at all (every node, and any controller that does not want

@@ -87,7 +87,8 @@ if [ -d /usr/lib/cuems/bin ]; then
     chmod +x /usr/lib/cuems/bin/*.py 2>/dev/null || true
     # Scripts without standard extensions
     for f in cuems-extract-video-latency cuems-log-collector-url cuems-write-rtpmidid-config cuems-write-hostapd-config cuems-arm-wol cuems-gpu-pin \
-             cuems-ap-path cuems-bond0-dhclient cuems-net-guard cuems-dhcp-probe; do
+             cuems-ap-path cuems-bond0-dhclient cuems-net-guard cuems-dhcp-probe \
+             cuems-firstboot cuems-firstboot-rescue cuems-make-tls-cert; do
         [ -f "/usr/lib/cuems/bin/$f" ] && chmod +x "/usr/lib/cuems/bin/$f"
     done
 
@@ -367,64 +368,13 @@ if [ ! -e "$ADMIN_MARKER" ]; then
     touch "$ADMIN_MARKER"
 fi
 
-# Generate SSL certificates for Apache2 if they don't exist
-SSL_CERT="/etc/ssl/certs/apache-selfsigned.crt"
-SSL_KEY="/etc/ssl/private/apache-selfsigned.key"
-SSL_SERVER_NAME="formitgo.local"
-SSL_ALIAS_NAME="controller.local"
-
-if [ ! -f "$SSL_CERT" ] || [ ! -f "$SSL_KEY" ]; then
-    # Ensure directories exist
-    mkdir -p /etc/ssl/certs
-    mkdir -p /etc/ssl/private
-    
-    # Generate self-signed certificate with Subject Alternative Name (SAN)
-    if command -v openssl >/dev/null 2>&1; then
-        # Create temporary config file for SAN extension
-        SSL_CONFIG=$(mktemp)
-        cat > "$SSL_CONFIG" <<EOF
-[req]
-distinguished_name = req_distinguished_name
-req_extensions = v3_req
-prompt = no
-
-[req_distinguished_name]
-C = ES
-ST = State
-L = City
-O = FormitGo
-CN = ${SSL_SERVER_NAME}
-
-[v3_req]
-keyUsage = keyEncipherment, dataEncipherment
-extendedKeyUsage = serverAuth
-subjectAltName = @alt_names
-
-[alt_names]
-DNS.1 = ${SSL_SERVER_NAME}
-DNS.2 = ${SSL_ALIAS_NAME}
-EOF
-        
-        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-            -keyout "$SSL_KEY" \
-            -out "$SSL_CERT" \
-            -config "$SSL_CONFIG" \
-            -extensions v3_req \
-            2>/dev/null
-        
-        # Clean up temporary config file
-        rm -f "$SSL_CONFIG"
-        
-        # Set proper permissions
-        chmod 644 "$SSL_CERT"
-        chmod 600 "$SSL_KEY"
-        
-        echo "Generated SSL certificate for ${SSL_SERVER_NAME} and ${SSL_ALIAS_NAME}"
-    else
-        echo "WARNING: openssl not found, cannot generate SSL certificates!" >&2
-        echo "Apache2 SSL site may not work without certificates." >&2
-    fi
-fi
+# Generate SSL certificates for Apache2 if they don't exist (the first boot of a
+# box written from the base image uses the same helper). A failure here must not
+# leave the package half configured.
+/usr/lib/cuems/bin/cuems-make-tls-cert || {
+    echo "WARNING: cannot generate SSL certificates!" >&2
+    echo "Apache2 SSL site may not work without certificates." >&2
+}
 
 # Enable Apache2 modules
 if command -v a2enmod >/dev/null 2>&1; then

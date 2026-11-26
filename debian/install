@@ -54,6 +54,7 @@ usr/share/doc/cuems-common/firewall.README usr/share/doc/cuems-common/
 # the TTY console can find the recovery account.
 docs/default-credentials.md usr/share/doc/cuems-common/
 docs/platform-profiles.md usr/share/doc/cuems-common/
+docs/first-boot.md usr/share/doc/cuems-common/
 usr/lib/cuems/bin/cuems-wait-controller usr/lib/cuems/bin/
 
 # rtpmidid role-aware INI templates (read by cuems-write-rtpmidid-config)
@@ -104,6 +105,16 @@ etc/systemd/system/cuems-displays-on.service lib/systemd/system/
 # GPU clock pin (869eq54nj). Same arrangement: enabled unconditionally in
 # postinst, gated behind enabled= in /etc/cuems/gpu-pin.conf, shipped false.
 etc/systemd/system/cuems-gpu-pin.service lib/systemd/system/
+# First boot of a box written from the base image. All of it is inert unless
+# /var/lib/cuems/firstboot.armed exists, which only sealing an image creates:
+# the generator picks cuems-firstboot.target only then.
+etc/systemd/system/cuems-firstboot.target lib/systemd/system/
+etc/systemd/system/cuems-firstboot.service lib/systemd/system/
+etc/systemd/system/cuems-firstboot-rescue.service lib/systemd/system/
+usr/lib/cuems/systemd/cuems-firstboot-generator lib/systemd/system-generators/
+usr/lib/cuems/bin/cuems-firstboot usr/lib/cuems/bin/
+usr/lib/cuems/bin/cuems-firstboot-rescue usr/lib/cuems/bin/
+usr/lib/cuems/bin/cuems-make-tls-cert usr/lib/cuems/bin/
 # hostapd.service itself is owned by the upstream `hostapd` Debian package.
 # cuems-common adds cuems-wifi.target / cuems-wifi.service plumbing and the
 # /run/cuems/hostapd.conf redirect via drop-ins under hostapd.service.d/
@@ -127,6 +138,7 @@ etc/systemd/system/*.path lib/systemd/system/
 etc/systemd/system/*.timer lib/systemd/system/
 # Systemd drop-in directories (package-provided overrides)
 etc/systemd/system/avahi-daemon.d/* lib/systemd/system/avahi-daemon.service.d/
+etc/systemd/system/avahi-daemon.socket.d/* lib/systemd/system/avahi-daemon.socket.d/
 etc/systemd/system/apache2.service.d/* lib/systemd/system/apache2.service.d/
 etc/systemd/system/hostapd.service.d/* lib/systemd/system/hostapd.service.d/
 etc/systemd/system/isc-dhcp-server.service.d/* lib/systemd/system/isc-dhcp-server.service.d/

@@ -27,6 +27,8 @@ override_dh_install:
 	# grub-mkconfig silently SKIPS a non-executable /etc/grub.d file, so a
 	# lost mode bit would drop the recovery entry with no error anywhere.
 	chmod 0755 debian/cuems-common/etc/grub.d/11_cuems_recovery 2>/dev/null || true
+	# systemd silently ignores a generator that is not executable.
+	chmod 0755 debian/cuems-common/lib/systemd/system-generators/cuems-firstboot-generator
 
 override_dh_installdeb:
 	dh_installdeb

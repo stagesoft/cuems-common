@@ -1,0 +1,19 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+#
+# systemd generator, run at every boot before any unit. While the first boot is
+# armed, the box boots cuems-firstboot.target instead of its normal target, so
+# that nothing of CUEMS and no network service can start before the box has its
+# own identity. Unarmed (every box in service) it does nothing.
+# Arguments: normal, early and late generator directories. The early one wins
+# over /etc, which is where default.target is set.
+
+armed=${CUEMS_FIRSTBOOT_ARMED:-/var/lib/cuems/firstboot.armed}
+early=${2:-}
+
+[ -n "$early" ] || exit 0
+[ -e "$armed" ] || exit 0
+ln -sf /lib/systemd/system/cuems-firstboot.target "$early/default.target"
+exit 0
