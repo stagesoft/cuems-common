@@ -17,6 +17,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Base image work (not released, no version yet)
 
+- **Build:** `dpkg-buildpackage` no longer runs the workspace `Makefile`. Its `clean` step ran `make clean`, which removes git worktrees of other repositories.
 - **`net.ipv4.ip_forward = 0`.** An upgrade changes it at the next boot on every box whose sysctl file was not edited by hand. A site that needs forwarding sets it in a file under `/etc/sysctl.d/` that sorts after `99-cuems-performance.conf` (for example `99-zz-site-forwarding.conf`); an earlier name is overridden.
 - **SSH jump to the nodes:** `AllowTcpForwarding local` with `PermitOpen` for port 22 of `169.254.0.11`–`169.254.0.26` only (it was `no`). The node has to be named by that IP; a hostname is refused.
 - **Audio with nothing plugged:** `jack-alsa-bridges` is skipped when the `HID` card is absent; `cuems-node-engine` no longer requires it; `cuems-hdmi-audio-map` succeeds with no screen and `jackd-cuems` only `Wants=` it. A site drop-in that bridges a card other than `HID` must clear `ExecCondition=`. A USB card that is away for more than 5 s is not re-bridged by itself (before, retries covered about 50 s): `systemctl start jack-alsa-bridges`.
