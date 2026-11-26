@@ -24,7 +24,8 @@ sound card are found on each box by a rule.
 Exit codes: 0 done / all checks pass; 1 a check failed, or another error;
 2 usage; 3 unknown platform; 4 the network ports do not fit the rule (nothing
 was written); 5 update-initramfs or update-grub failed (run apply again);
-6 a project is loaded.
+6 a project is loaded; 7 /etc/default/jack names the sound card by an id that
+apply would take away (nothing was written).
 """
 
 import argparse
@@ -46,6 +47,10 @@ GPU_PIN_CONF = 'etc/cuems/gpu-pin.conf'
 SHOW_LOCK = 'tmp/cuems.show.lock'
 # Rebuild commands still owed, so that a failed one is not forgotten.
 PENDING = 'var/lib/cuems/platform.pending'
+# Read only: its one owner is the operator (or the package, when it is missing).
+JACK_DEFAULTS = 'etc/default/jack'
+# A .link file that was there before apply is kept beside it; udev ignores it.
+BACKUP_SUFFIX = '.cuems-before-apply'
 
 ANALOG_ID = 'Analog'
 PORT_NAMES = ('ethernet0', 'ethernet1', 'wifi0')
@@ -60,7 +65,8 @@ CLASS_ETHERNET, CLASS_WIFI, CLASS_DISPLAY = '0200', '0280', '03'
 BASE_CMDLINE_WORDS = ('ro', 'quiet', 'splash')
 BASE_CMDLINE_PREFIXES = ('BOOT_IMAGE=', 'root=', 'initrd=')
 
-HEADER = ('# Written by cuems-platform for the "{id}" platform. Do not edit: the next\n'
+OUR_MARK = '# Written by cuems-platform'
+HEADER = (OUR_MARK + ' for the "{id}" platform. Do not edit: the next\n'
           '# `cuems-platform apply` overwrites it.\n')
 
 
@@ -86,6 +92,10 @@ class RebuildFailed(PlatformError):
 
 class ProjectLoaded(PlatformError):
     exit_code = 6
+
+
+class JackNamesOldCard(PlatformError):
+    exit_code = 7
 
 
 def run_command(argv):
@@ -285,6 +295,15 @@ def find_analog_card(system, profile):
     return found[0], None
 
 
+def jack_card(system):
+    """The card name in the -d hw:... argument of /etc/default/jack, or None."""
+    match = re.search(r'^\s*DAEMON_ARGS\s*=\s*"([^"]*)"', system.read(JACK_DEFAULTS) or '', re.M)
+    if not match:
+        return None
+    device = re.search(r'-d\s*hw:(?:CARD=)?(\w+)', match.group(1))
+    return device.group(1) if device else None
+
+
 # --- apply -----------------------------------------------------------------------
 
 def gpu_pin_text(current, enabled):
@@ -354,6 +373,23 @@ class Result:
     warnings: list
 
 
+def renamed_card(system, analog_address):
+    """The id the analog card has now, if apply is going to change it."""
+    for _, card_id, address in sound_cards(system):
+        if analog_address and address == analog_address and card_id != ANALOG_ID:
+            return card_id
+    return None
+
+
+def moved_ports(system, ports):
+    """Port names in use today that the rule gives to another port."""
+    for address, _, _ in pci_devices(system):
+        for netdev in system.glob(f'sys/bus/pci/devices/{address}/net/*'):
+            wanted = ports.get(netdev.name)
+            if netdev.name in PORT_NAMES and wanted != address:
+                yield netdev.name, address, wanted
+
+
 def apply(system, profiles, dry_run=False):
     if not dry_run and system.path(SHOW_LOCK).exists():
         raise ProjectLoaded(f'/{SHOW_LOCK} exists: a project is loaded. Unload it (after STOP) '
@@ -365,6 +401,18 @@ def apply(system, profiles, dry_run=False):
     ports = assign_ports(system, profile)
     analog, reason = find_analog_card(system, profile)
     warnings = [] if analog else [f'{reason}: no "{ANALOG_ID}" sound card id was set']
+    old_id = renamed_card(system, analog)
+    if old_id:
+        if jack_card(system) == old_id:
+            raise JackNamesOldCard(
+                f'/{JACK_DEFAULTS} opens hw:{old_id}, and that card will be called '
+                f'{ANALOG_ID} after the reboot: JACK would not start. Change it to '
+                f'hw:{ANALOG_ID} there, then run apply again.')
+        warnings.append(f'the sound card {old_id} becomes {ANALOG_ID}. ALSA keeps mixer levels '
+                        'under the card id: check the analog levels after the reboot')
+    for name, now, wanted in moved_ports(system, ports):
+        warnings.append(f'{name} is {now} today and will be {wanted or "no port"} after the '
+                        'reboot: check where the cables are')
     if system.read(GPU_PIN_CONF) is None:
         warnings.append(f'/{GPU_PIN_CONF} is missing: the GPU pin was not set')
 
@@ -379,6 +427,10 @@ def apply(system, profiles, dry_run=False):
     if owed:
         system.write(PENDING, '\n'.join(sorted(owed)) + '\n')
     for rel in changed:
+        current = system.read(rel)
+        if (rel.endswith('.link') and current is not None and OUR_MARK not in current
+                and not system.path(rel + BACKUP_SUFFIX).exists()):
+            system.write(rel + BACKUP_SUFFIX, current)
         system.write(rel, files[rel])
     for name, argv in REBUILDS.items():
         if name not in owed:
@@ -472,6 +524,17 @@ def check_analog_card(system, profile):
                                                 f'not {ANALOG_ID}. Rebooted since apply?')
 
 
+def check_jack(system, profile):
+    name = jack_card(system)
+    if name is None or name.isdigit():
+        return
+    if name in [card_id for _, card_id, _ in sound_cards(system)]:
+        yield 'PASS', 'JACK card', f'/{JACK_DEFAULTS} opens hw:{name}'
+    else:
+        yield 'FAIL', 'JACK card', (f'/{JACK_DEFAULTS} opens hw:{name} and no card has that id '
+                                    '(an unplugged interface, or an old id)')
+
+
 def check_gpu_pin(system, profile):
     text = system.read(GPU_PIN_CONF) or ''
     values = re.findall(r'^enabled=(.*)$', text, re.M)
@@ -506,8 +569,9 @@ def check_bios(system, profile):
             status = 'PASS' if size == int(profile.aperture_mb) else 'FAIL'
             yield status, 'BIOS aperture size', f'{size} MB, expected {profile.aperture_mb} MB'
     if profile.vram_mb:
-        values = [system.read(p.relative_to(system.root))
+        values = [(system.read(p.relative_to(system.root)) or '').strip()
                   for p in system.glob('sys/class/drm/card*/device/mem_info_vram_total')]
+        values = [v for v in values if v.isdigit()]
         if not values:
             yield 'MANUAL', 'BIOS video memory', f'not readable; expected {profile.vram_mb} MB'
         else:
@@ -539,7 +603,7 @@ def check(system, profiles):
         results.append(('MANUAL', 'profile', 'not accepted: no box of this platform has passed '
                                              'the image tests yet'))
     for part in (check_cmdline, check_modprobe, check_ports, check_analog_card,
-                 check_gpu_pin, check_firmware, check_bios):
+                 check_jack, check_gpu_pin, check_firmware, check_bios):
         results.extend(part(system, profile))
     results.extend(('MANUAL', 'BIOS', item) for item in profile.manual)
     if system.path(PENDING).exists():
@@ -580,6 +644,9 @@ def main(argv=None, system=None, profile_dir=PROFILE_DIR):
         verb = 'would write' if args.dry_run else 'wrote'
         for rel in result.changed:
             print(f'{verb} /{rel}')
+        if args.dry_run and result.reboot_needed and not result.changed:
+            print('no file would change; update-initramfs or update-grub is still owed: '
+                  + ' '.join((system.read(PENDING) or '').split()))
         if not result.reboot_needed and not result.changed:
             print(f'{result.profile.id}: already applied, nothing changed')
         elif not args.dry_run:

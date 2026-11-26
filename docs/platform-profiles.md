@@ -36,9 +36,25 @@ the next `apply` runs it again. Nothing changes until the **next reboot**. A
 second `apply` changes nothing.
 
 It writes nothing when the platform is unknown (exit 3), when the ports do not
-fit the rule (exit 4) or when a project is loaded (exit 6,
-`/tmp/cuems.show.lock`). Exit 5 means a rebuild failed: run it again before
+fit the rule (exit 4), when a project is loaded (exit 6,
+`/tmp/cuems.show.lock`) or when `/etc/default/jack` opens the analog card by
+the id it is about to lose (exit 7: change it to `hw:Analog,N` first; `apply`
+never writes that file). Exit 5 means a rebuild failed: run it again before
 rebooting. With no analog card to be found it warns and applies the rest.
+
+## Before running it on a box that is already in use
+
+`apply` is made for a box coming from the base image. On an installed box:
+
+- **Ports can move.** The rule for the N97 names the higher-addressed wired port
+  `ethernet0`; the `.link` files that cuems-common ships name the lower one. On
+  an N97 still using those files, `apply` swaps `ethernet0` and `ethernet1`, so
+  the cables have to follow. It warns when a name in use would move. The old
+  `.link` files are kept as `*.link.cuems-before-apply`.
+- **Mixer levels.** ALSA saves them under the card id. When the analog card is
+  renamed they are not restored: check the levels after the reboot.
+
+Run `cuems-platform apply --dry-run` first and read its warnings.
 
 ## Rules instead of PCI addresses
 
@@ -75,9 +91,10 @@ a profile does not write addresses down.
 ## What `check` compares
 
 The platform, whether the profile is accepted, the kernel command line (a
-missing parameter **or one no profile declares** fails), `options` lines in
-`/etc/modprobe.d/` (the same), the `.link` files and the live port names, the
-analog card's id, the GPU pin, the firmware packages and the BIOS items.
+missing parameter **or one this platform's profile does not declare** fails),
+`options` lines in `/etc/modprobe.d/` (the same), the `.link` files and the live
+port names, the analog card's id, the card that `/etc/default/jack` opens, the
+GPU pin, the firmware packages and the BIOS items.
 It exits 1 if any line says FAIL.
 
 ## The platforms

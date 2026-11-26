@@ -422,6 +422,87 @@ def test_a_failed_rebuild_is_remembered_and_run_again(box, profiles):
     assert not box.exists(cp.PENDING)
 
 
+# --- what apply could break on a box that is already in use ----------------------
+
+def jack_file(box, device):
+    box.write('etc/default/jack', f'DAEMON_ARGS="-R -dalsa -d{device} -r48000 -p512 -n3"\n')
+
+
+@pytest.mark.parametrize('device', ['hw:PCH,0', 'hw:CARD=PCH,DEV=0'])
+def test_apply_refuses_when_jack_names_the_card_by_the_id_it_would_lose(box, profiles, device):
+    n97(box)
+    jack_file(box, device)
+    with pytest.raises(cp.JackNamesOldCard, match='hw:Analog'):
+        apply(box, profiles)
+    assert not box.exists('etc/systemd/network')
+    assert box.commands == []
+    assert cp.JackNamesOldCard.exit_code == 7
+
+
+@pytest.mark.parametrize('device', ['hw:Analog,0', 'hw:HID,0', 'hw:0,0', 'multi_hdmi'])
+def test_apply_goes_on_when_jack_does_not_depend_on_the_old_id(box, profiles, device):
+    n97(box)
+    jack_file(box, device)
+    assert apply(box, profiles).changed
+
+
+def test_apply_never_writes_the_jack_file(box, profiles):
+    n97(box)
+    jack_file(box, 'hw:Analog,0')
+    before = box.read('etc/default/jack')
+    apply(box, profiles)
+    assert box.read('etc/default/jack') == before
+
+
+def test_renaming_the_card_warns_about_the_saved_mixer_levels(box, profiles):
+    n97(box)
+    assert any('mixer' in w and 'PCH' in w for w in apply(box, profiles).warnings)
+
+
+def test_a_card_that_already_has_the_id_warns_nothing(box, profiles):
+    n97(box)
+    box.write('proc/asound/card0/id', 'Analog\n')
+    assert apply(box, profiles).warnings == []
+
+
+def test_apply_warns_when_a_port_name_in_use_moves_to_another_port(box, profiles):
+    n97(box)
+    for bdf, name in (('0000:01:00.0', 'ethernet0'), ('0000:02:00.0', 'ethernet1')):
+        (box.root / f'sys/bus/pci/devices/{bdf}/net/{name}').mkdir(parents=True)
+    warnings = apply(box, profiles).warnings
+    assert any('ethernet0' in w and '0000:01:00.0' in w and '0000:02:00.0' in w
+               for w in warnings)
+
+
+def test_kernel_names_in_use_do_not_count_as_a_move(box, profiles):
+    n97(box)
+    (box.root / 'sys/bus/pci/devices/0000:01:00.0/net/enp1s0').mkdir(parents=True)
+    assert not any('ethernet' in w for w in apply(box, profiles).warnings)
+
+
+def test_a_link_file_that_was_not_ours_is_kept_beside(box, profiles):
+    n97(box)
+    own = '[Match]\nPath=pci-0000:01:00.0\n\n[Link]\nName=ethernet0\n'
+    box.write('etc/systemd/network/10-ethernet0.link', own)
+    apply(box, profiles)
+    kept = 'etc/systemd/network/10-ethernet0.link.cuems-before-apply'
+    assert box.read(kept) == own
+    # Our own file is never saved over the one that was there first.
+    box.write('etc/systemd/network/10-ethernet0.link',
+              cp.link_text(profiles['n97'], 'ethernet0', '0000:09:00.0'))
+    assert apply(box, profiles).changed
+    assert box.read(kept) == own
+    assert not box.exists('etc/systemd/network/10-ethernet1.link.cuems-before-apply')
+
+
+def test_a_dry_run_says_when_only_a_rebuild_is_owed(box, profiles, capsys):
+    n97(box)
+    apply(box, profiles)
+    box.write(cp.PENDING, 'update-grub\n')
+    assert cp.main(['apply', '--dry-run'], system=box.system(), profile_dir=PROFILES) == 0
+    assert 'update-grub' in capsys.readouterr().out
+
+
 # --- check ---------------------------------------------------------------------
 
 def healthy_n97(box, profiles):
@@ -530,3 +611,18 @@ def test_check_exit_code(box, profiles, capsys):
     box.write('proc/cmdline', 'root=UUID=x ro pci=nommconf\n')
     assert run() == 1
     assert 'FAIL' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('device, bad', [
+    ('hw:Analog,0', False), ('hw:0,0', False), ('multi_hdmi', False), ('hw:PCH,0', True),
+])
+def test_check_fails_when_jack_names_a_card_that_is_not_there(box, profiles, device, bad):
+    healthy_n97(box, profiles)
+    jack_file(box, device)
+    assert any(f.startswith('JACK') for f in failures(box, profiles)) is bad
+
+
+def test_check_prints_a_line_for_an_unreadable_video_memory(box, profiles):
+    fp530(box)
+    (box.root / 'sys/class/drm/card0/device/mem_info_vram_total').mkdir(parents=True)
+    assert ('MANUAL', 'BIOS video memory') in [(s, n) for s, n, _ in results(box, profiles)]
