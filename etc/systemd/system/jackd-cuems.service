@@ -1,10 +1,13 @@
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+
 [Unit]
 Description=JACK Audio Connection Kit
 Documentation=man:jackd(1)
 PartOf=cuems-node.target
 After=sound.target cuems-hdmi-audio-map.service
-Wants=sound.target
-Requires=cuems-hdmi-audio-map.service
+# Wants, not Requires: the HDMI map only defines the multi_hdmi device. If it
+# fails it shows as a failed unit, and JACK on another card still starts.
+Wants=sound.target cuems-hdmi-audio-map.service
 
 [Service]
 Type=simple

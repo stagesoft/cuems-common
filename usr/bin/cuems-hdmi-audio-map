@@ -323,11 +323,18 @@ def generate_asound_conf(mapping, card):
 def main():
     dry_run = '--dry-run' in sys.argv or '-n' in sys.argv
 
-    mapping = detect_mapping()
+    # A box with no screen (or no DRM device yet) is not a failure: JACK may well
+    # run on the analog card, and this unit must not stop it. Anything else that
+    # goes wrong still fails the unit, so that it shows.
+    try:
+        mapping = detect_mapping()
+    except FileNotFoundError as e:
+        log.warning(f'no DRM device ({e.filename}). Leaving asound.conf unchanged.')
+        return
 
     if not mapping:
-        log.error('No HDMI/DP audio outputs detected. Leaving asound.conf unchanged.')
-        sys.exit(1)
+        log.warning('No HDMI/DP audio outputs detected. Leaving asound.conf unchanged.')
+        return
 
     card = detect_hda_card()
     conf = generate_asound_conf(mapping, card)
