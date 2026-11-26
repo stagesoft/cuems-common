@@ -364,7 +364,7 @@ fi
 # Generate SSL certificates for Apache2 if they don't exist
 SSL_CERT="/etc/ssl/certs/apache-selfsigned.crt"
 SSL_KEY="/etc/ssl/private/apache-selfsigned.key"
-SSL_SERVER_NAME="cuems.local"
+SSL_SERVER_NAME="formitgo.local"
 SSL_ALIAS_NAME="controller.local"
 
 if [ ! -f "$SSL_CERT" ] || [ ! -f "$SSL_KEY" ]; then
@@ -386,7 +386,7 @@ prompt = no
 C = ES
 ST = State
 L = City
-O = CUEMS
+O = FormitGo
 CN = ${SSL_SERVER_NAME}
 
 [v3_req]

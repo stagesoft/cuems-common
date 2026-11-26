@@ -94,7 +94,7 @@ for _kver in $(ls -1 /boot/vmlinuz-* 2>/dev/null | sed 's#.*/vmlinuz-##' | sort 
     [ -f "/boot/initrd.img-${_kver}" ] || continue
     grub_file_is_not_garbage "/boot/vmlinuz-${_kver}" || continue
 
-    _title="CUEMS Recovery (${_kver}) — videocomposer disabled"
+    _title="FormitGo Recovery (${_kver}) — videocomposer disabled"
     # --id is stable (it does not depend on the title string), so a future
     # GRUB_DEFAULT can address the entry directly.
     cat <<EOF
@@ -102,7 +102,7 @@ menuentry '$(echo "${_title}" | grub_quote)' --class recovery --class cuems \$me
 	load_video
 	insmod gzio
 ${prepare_boot}
-	echo	'CUEMS recovery: booting with ${MASK_UNITS} masked ...'
+	echo	'FormitGo recovery: booting with the video compositor disabled ...'
 	linux	${rel_dirname}/vmlinuz-${_kver} root=UUID=${GRUB_DEVICE_UUID} ro ${cmdline} systemd.mask=${MASK_UNITS}
 	initrd	${rel_dirname}/initrd.img-${_kver}
 }
