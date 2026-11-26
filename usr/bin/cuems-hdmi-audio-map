@@ -235,7 +235,7 @@ def jack_device_hint(path='/etc/default/jack'):
         return f'DAEMON_ARGS={args} (no -d device found)'
     d = dev.group(1)
     note = ''
-    if re.fullmatch(r'hw:(PCH|Generic\w*|0),0', d):
+    if re.fullmatch(r'hw:(Analog|PCH|Generic\w*|0),0', d):
         note = '  <-- ALC897 analog / minijack, NOT HDMI'
     elif 'multi_hdmi' in d or 'hdmi' in d.lower():
         note = '  <-- the HDMI slots defined below'
