@@ -14,7 +14,7 @@ controller's is 169.254.0.1 unless --controller says otherwise.
 Run by an operator, never by a package script. It writes files and switches
 units on and off; it starts and restarts nothing: reboot at once to apply (some
 of the files are read while running, see docs/set-role.md). It is
-reversible and safe to run twice. It does not use cuems-nodeconf, and listing a
+reversible and safe to run twice. It does not touch cuems-nodeconf, and listing a
 node on its controller is still done by hand (docs/set-role.md).
 
 Exit codes: 0 done; 1 refused or failed; 2 usage; 6 a project is loaded.
@@ -35,6 +35,8 @@ from xml.sax.saxutils import escape
 PLATFORM_TOOL = '/usr/bin/cuems-platform'
 
 CONTROLLER_ADDRESS = '169.254.0.1'
+# cuems-nodeconf is in none of the lists below, on purpose: whether it runs is
+# not this command's to decide.
 # The same list as PermitOpen in sshd_config.d/50-cuems.conf: a node outside it
 # cannot be reached through its controller.
 NODE_ADDRESSES = tuple(f'169.254.0.{n}' for n in range(11, 27))
@@ -59,7 +61,6 @@ RTPMIDID_SHADOW = 'etc/systemd/system/rtpmidid.service.d/cuems-node-group.conf'
 ARMED = 'var/lib/cuems/firstboot.armed'
 CONTROLLER_PATH = 'cuems-controller.path'
 ENGINE = 'cuems-controller-engine.service'
-NODECONF = 'cuems-nodeconf.service'
 
 # The order of the elements of a node in network_map.xsd.
 NODE_FIELDS = ('uuid', 'mac', 'name', 'node_type', 'ip', 'adopted', 'online',
@@ -70,17 +71,17 @@ CONTROLLER_UNITS = ('cuems-controller.target', ENGINE, 'cuems-editor.service',
                     'cuems-power-bridge.service', 'cuems-cluster-poweroff.service',
                     'systemd-journal-remote.socket', 'systemd-journal-remote.service')
 UNITS = {
-    'controller': {'unmask': (ENGINE, NODECONF),
+    'controller': {'unmask': (ENGINE,),
                    'enable': ('cuems-node.target',) + CONTROLLER_UNITS,
-                   'disable': ('systemd-journal-upload.service', NODECONF),
+                   'disable': ('systemd-journal-upload.service',),
                    'mask': (),
                    'required': ('cuems-node.target', 'cuems-controller.target', ENGINE)},
     'node': {'unmask': (),
              'enable': ('cuems-node.target', 'systemd-journal-upload.service'),
-             'disable': CONTROLLER_UNITS + (NODECONF,),
+             'disable': CONTROLLER_UNITS,
              # Masked, not only disabled: installing the engine package enables
-             # and starts both engines on any box. nodeconf as the manual lists did.
-             'mask': (ENGINE, NODECONF),
+             # and starts both engines on any box.
+             'mask': (ENGINE,),
              'required': ('cuems-node.target',)},
 }
 
@@ -252,7 +253,6 @@ def network_map_text(system, role, uuid, address, controller, name, warnings):
     for match, fields in found:
         fields = dict(fields)
         mine = fields.get('uuid') == uuid
-        placeholder = not mine and fields.get('uuid') == SENTINEL
         master = fields.get('node_type') == 'NodeType.master'
         if mine:
             fields['node_type'] = 'NodeType.master' if role == 'controller' else 'NodeType.slave'
@@ -263,9 +263,6 @@ def network_map_text(system, role, uuid, address, controller, name, warnings):
             # keeps only what carries the OS host name.
             fields['hostname'] = name
         elif role == 'controller':
-            if placeholder:
-                new.append((match, None))
-                continue
             if master:
                 fields['node_type'] = 'NodeType.slave'
                 if fields.get('role_id') == 'controller':
@@ -279,27 +276,15 @@ def network_map_text(system, role, uuid, address, controller, name, warnings):
 
     pieces, end = [], 0
     for match, fields in new:
-        before = text[end:match.start()]
-        if fields is None:
-            pieces.append(before.rstrip(' \t\n'))
-        else:
-            pieces += [before, node_block(fields)]
+        pieces += [text[end:match.start()], node_block(fields)]
         end = match.end()
     result = ''.join(pieces) + text[end:]
 
     if role == 'node' and not controller_listed:
-        # Log upload and chrony take the controller's address from this file,
-        # and fail without a controller in it.
-        entry = node_block({
-            'uuid': SENTINEL, 'mac': '000000000000', 'name': 'controller.local',
-            'node_type': 'NodeType.master', 'ip': controller, 'adopted': 'True',
-            'online': 'True', 'role_id': 'controller', 'alias': 'controller (not listed yet)'})
-        result, count = re.subn(r'([ \t]*)</node_list>',
-                                lambda m: f'        {entry}\n{m.group(1)}</node_list>', result)
-        if count != 1:
-            raise RoleError(f'/{NETWORK_MAP} has no </node_list>')
-        warnings.append('the controller is not listed in this map: a placeholder holds its '
-                        'address. Put its real entry here when the cluster is put together')
+        # Nothing is invented here: nodeconf accepts on a node only the
+        # controller its map lists. Until it is listed, the name finds it.
+        warnings.append('the controller is not listed in this map. Until it is, the box finds '
+                        'it by controller.local')
     try:
         ET.fromstring(result.encode())
     except ET.ParseError as e:

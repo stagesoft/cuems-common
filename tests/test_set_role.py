@@ -156,7 +156,6 @@ def test_a_node_switches_the_controller_units_off_and_masks_its_engine(box):
         assert box.units[unit] == 'disabled', unit
     # Masked: installing the engine package again cannot start it.
     assert box.units['cuems-controller-engine.service'] == 'masked'
-    assert box.units['cuems-nodeconf.service'] == 'masked'
     assert box.units['cuems-node.target'] == 'enabled'
     assert box.units['systemd-journal-upload.service'] == 'enabled'
 
@@ -251,18 +250,17 @@ def test_a_template_that_lost_the_uuid_still_publishes_this_box(box):
     assert re.findall(r'uuid=([^<]*)', box.read('etc/avahi/services/cuems.service')) == [MINTED]
 
 
-def test_the_node_map_has_itself_and_a_controller_to_send_logs_to(box):
-    """Journal upload and chrony read the controller's <ip> from this file."""
+def test_the_node_map_gets_no_invented_controller(box):
+    """nodeconf accepts on a node only the controller its map lists: an invented
+    one would make it ignore the real one."""
     result = box.role('node')
     own = box.own()
     assert (own['node_type'], own['ip'], own['role_id']) == ('NodeType.slave', NODE_ADDR, 'node01')
-    masters = [n for n in box.nodes() if n['node_type'] == 'NodeType.master']
-    assert [m['ip'] for m in masters] == ['169.254.0.1']
-    assert masters[0]['uuid'] == SENTINEL
-    assert any('not listed' in w for w in result.warnings)
+    assert [n['uuid'] for n in box.nodes()] == [MINTED]
+    assert any('not listed' in w and 'controller.local' in w for w in result.warnings)
 
 
-def test_a_controller_already_listed_gets_the_link_address_and_no_placeholder(box):
+def test_a_controller_already_listed_gets_the_link_address(box):
     other = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
     box.write(MAP, box.read(MAP).replace('</node_list>', f'''    <node>
             <uuid>{other}</uuid>
@@ -562,3 +560,19 @@ def test_a_local_copy_of_the_engine_unit_stops_it_before_anything_is_written(box
 def test_the_reboot_is_asked_for_as_a_must(box, capsys):
     assert sr.main(['node', NODE_ADDR], system=box.system(), platform=cp) == 0
     assert 'Reboot now' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('state', ['disabled', 'enabled', 'masked', None])
+def test_nodeconf_is_left_alone_in_both_roles(box, state):
+    """Whether it runs is not the role command's to decide: some controllers run
+    it, and it is how boxes will get their role later."""
+    if state is None:
+        del box.units['cuems-nodeconf.service']
+    else:
+        box.units['cuems-nodeconf.service'] = state
+    box.calls.clear()
+    box.role('node')
+    box.path_active = True
+    box.role('controller')
+    assert box.units.get('cuems-nodeconf.service') == state
+    assert not [c for c in box.calls if 'cuems-nodeconf.service' in c]

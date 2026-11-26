@@ -36,7 +36,8 @@ runs, so until the reboot the box is half one thing and half the other:
 
 It refuses while a project is loaded (`/tmp/cuems.show.lock`, exit 6), before
 the first boot has finished, and, for a node, on a box with no identity. It is
-safe to run twice. It does not use `cuems-nodeconf`. No package script runs it.
+safe to run twice. **It does not touch `cuems-nodeconf`** in either role: whether
+it runs is decided elsewhere. No package script runs it.
 
 ## What each role gets
 
@@ -44,7 +45,7 @@ safe to run twice. It does not use `cuems-nodeconf`. No package script runs it.
 |---|---|---|
 | `/etc/cuems/master.ip`, `master.lock` | present | absent |
 | Units on | node target; controller target, both controller services, power bridge and cluster power-off where installed; journal collector | node target; journal upload |
-| Units off | journal upload, nodeconf | controller target, editor, power bridge, cluster power-off, journal collector; **`cuems-controller-engine` and `cuems-nodeconf` masked** |
+| Units off | journal upload | controller target, editor, power bridge, cluster power-off, journal collector; **`cuems-controller-engine` masked** |
 | `/etc/network/interfaces` | `ethernet1` static `169.254.0.1/16`; an existing `bond0` stanza is kept | `bridge0` over both wired ports with the node's address; no gateway; Wi-Fi left down |
 | `/etc/hosts` | `controller.local` is the box itself | `controller.local` is the controller's link address |
 | Avahi record | controller | node |
@@ -63,7 +64,7 @@ packaged one.
 engines on whatever box it is installed on. With the unit masked, that step of
 the install only prints warnings ("Failed to enable", "Failed to start") and
 the install goes on. It is masked even when it is not installed yet. Going back
-to controller unmasks it (and nodeconf, which stays disabled). A copy of the
+to controller unmasks it. A copy of the
 engine unit under `/etc/systemd/system` prevents masking: the command says so
 before it changes anything.
 
@@ -82,11 +83,12 @@ find a controller named otherwise.
 
 ## What is left to do by hand
 
-- **Put the cluster together.** The command knows one box. A new node's map has
-  a placeholder controller (uuid all zeros, alias "controller (not listed
-  yet)"), there only so that log upload and the time source find an address.
-  List each node in the controller's `network_map.xml` and
-  `default_mappings.xml`, and put the controller's real entry in the node's map.
+- **Put the cluster together.** The command knows one box and invents no entry
+  for another. List each node in the controller's `network_map.xml` and
+  `default_mappings.xml`, and the controller in the node's map. Until then the
+  node finds the controller by `controller.local`, which its `/etc/hosts` pins:
+  log upload and the time source use that name first and the map second, as the
+  engine does.
 - On a controller going back from a node with `NET_MODE` `cable-static` or `ap`,
   run `cuems-net-mode` again after the reboot (the command says so).
 - Outputs, Wi-Fi name and passphrase, passwords: commissioning.
@@ -97,3 +99,18 @@ A box is born with the controller form of everything above. **The image recipe
 gets there by running `cuems-set-role controller`** during the install, while
 the box has no identity yet (the one case where that is allowed). So going to
 node and back returns the box to the state it was born in.
+
+## Limits, and what is still to be designed
+
+- **One address plan.** A controller gets `169.254.0.1` and nodes `.11` to
+  `.26`. **Do not run `cuems-set-role controller` on a cluster that uses other
+  addresses** on its cluster link: it re-addresses the controller, and nodes
+  pinned to the old address lose it. Nodes with automatic or other link-local
+  addresses cannot be reached by the SSH jump either.
+- **How boxes will get a role later.** The intended flow, not finished: a box
+  comes as `firstrun`, and `cuems-nodeconf` makes it the controller when the
+  network has none, or the controller adopts it as a node. Today boxes are
+  set up by hand before delivery, which is what this command is for.
+- cuems-nodeconf has a pre-spec that makes it the only owner of a role's
+  networking (`specs/planning/networking-ownership.md`, feature 006, for
+  agreement). This command and that one must not end as two implementations.
