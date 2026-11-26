@@ -19,11 +19,20 @@ cuems-set-role node 169.254.0.11 --dry-run      # what would change
 `169.254.0.26`: the addresses the SSH jump through the controller allows. The
 controller's address on that link is `169.254.0.1`.
 
-**It changes nothing that is running.** It writes files and switches units on
-and off, and asks for a reboot. The one thing it stops is
-`cuems-controller.path`, before it creates `master.lock`: systemd watches that
-file and would start the controller there and then. Avahi reads its service
-record when it changes, so the box announces its new role at once.
+**It starts and restarts nothing.** It writes files and switches units on and
+off. The one thing it stops is `cuems-controller.path`, before it creates
+`master.lock`: systemd watches that file and would start the controller there
+and then.
+
+**Reboot at once all the same.** Some of what it writes is read while the box
+runs, so until the reboot the box is half one thing and half the other:
+
+- Avahi reads its service record when it changes: the new role is announced
+  straight away.
+- `/etc/hosts` is read at every lookup: `controller.local` changes at once for
+  whatever asks again.
+- Without `master.ip`, the network guard, the DHCP hook and the access point
+  gates stop treating the box as a controller from that moment.
 
 It refuses while a project is loaded (`/tmp/cuems.show.lock`, exit 6), before
 the first boot has finished, and, for a node, on a box with no identity. It is
@@ -35,22 +44,28 @@ safe to run twice. It does not use `cuems-nodeconf`. No package script runs it.
 |---|---|---|
 | `/etc/cuems/master.ip`, `master.lock` | present | absent |
 | Units on | node target; controller target, both controller services, power bridge and cluster power-off where installed; journal collector | node target; journal upload |
-| Units off | journal upload, nodeconf | controller target, editor, power bridge, cluster power-off, journal collector, nodeconf; **`cuems-controller-engine` masked** |
+| Units off | journal upload, nodeconf | controller target, editor, power bridge, cluster power-off, journal collector; **`cuems-controller-engine` and `cuems-nodeconf` masked** |
 | `/etc/network/interfaces` | `ethernet1` static `169.254.0.1/16`; an existing `bond0` stanza is kept | `bridge0` over both wired ports with the node's address; no gateway; Wi-Fi left down |
 | `/etc/hosts` | `controller.local` is the box itself | `controller.local` is the controller's link address |
 | Avahi record | controller | node |
 | `network_map.xml`, own node | master, `127.0.0.1`, `role_id` `controller` | slave, its address, `role_id` `node01`…`node16` from the address (`.11` is `node01`) |
 
-The interfaces file it replaces is kept as
-`/etc/network/interfaces.cuems-before-set-role`. On a node, an unowned copy of
+The interfaces file it replaces is kept beside it: a controller one as
+`interfaces.cuems-controller`, a node one as `interfaces.cuems-node`, anything
+else as `interfaces.cuems-before-set-role` (the first one only). **Going back to
+controller starts from the kept controller file**, so what was set on `bond0`
+comes back; without one it starts from the packaged template. A node file is
+always made from the template: edits to it are only in the kept copy. On a node, an unowned copy of
 rtpmidid's `cuems-node-group.conf` under `/etc` is set aside: it hides the
 packaged one.
 
 **Why the engine is masked.** The engine package enables and starts both
 engines on whatever box it is installed on. With the unit masked, that step of
 the install only prints warnings ("Failed to enable", "Failed to start") and
-the install goes on. Going back to controller unmasks it. A copy of that unit
-under `/etc/systemd/system` prevents masking, and the command says so.
+the install goes on. It is masked even when it is not installed yet. Going back
+to controller unmasks it (and nodeconf, which stays disabled). A copy of the
+engine unit under `/etc/systemd/system` prevents masking: the command says so
+before it changes anything.
 
 ## The name
 

@@ -12,7 +12,8 @@ ADDRESS is the node's own address on the cluster link, 169.254.0.11 to .26. The
 controller's is 169.254.0.1 unless --controller says otherwise.
 
 Run by an operator, never by a package script. It writes files and switches
-units on and off; it starts and restarts nothing: reboot to apply. It is
+units on and off; it starts and restarts nothing: reboot at once to apply (some
+of the files are read while running, see docs/set-role.md). It is
 reversible and safe to run twice. It does not use cuems-nodeconf, and listing a
 node on its controller is still done by hand (docs/set-role.md).
 
@@ -43,7 +44,12 @@ SETTINGS = 'etc/cuems/settings.xml'
 NETWORK_MAP = 'etc/cuems/network_map.xml'
 ROLE_FLAGS = ('etc/cuems/master.ip', 'etc/cuems/master.lock')
 INTERFACES = 'etc/network/interfaces'
-BACKUP = '.cuems-before-set-role'
+# The interfaces file being replaced is kept beside it, by what it was. The
+# controller one is what going back to controller starts from.
+KEPT_CONTROLLER = '.cuems-controller'
+KEPT_NODE = '.cuems-node'
+# Anything else: the first one only, never overwritten.
+KEPT_OTHER = '.cuems-before-set-role'
 HOSTS = 'etc/hosts'
 HOSTNAME = 'etc/hostname'
 AVAHI_CONF = 'etc/avahi/avahi-daemon.conf'
@@ -53,6 +59,7 @@ RTPMIDID_SHADOW = 'etc/systemd/system/rtpmidid.service.d/cuems-node-group.conf'
 ARMED = 'var/lib/cuems/firstboot.armed'
 CONTROLLER_PATH = 'cuems-controller.path'
 ENGINE = 'cuems-controller-engine.service'
+NODECONF = 'cuems-nodeconf.service'
 
 # The order of the elements of a node in network_map.xsd.
 NODE_FIELDS = ('uuid', 'mac', 'name', 'node_type', 'ip', 'adopted', 'online',
@@ -63,17 +70,17 @@ CONTROLLER_UNITS = ('cuems-controller.target', ENGINE, 'cuems-editor.service',
                     'cuems-power-bridge.service', 'cuems-cluster-poweroff.service',
                     'systemd-journal-remote.socket', 'systemd-journal-remote.service')
 UNITS = {
-    'controller': {'unmask': (ENGINE,),
+    'controller': {'unmask': (ENGINE, NODECONF),
                    'enable': ('cuems-node.target',) + CONTROLLER_UNITS,
-                   'disable': ('systemd-journal-upload.service', 'cuems-nodeconf.service'),
+                   'disable': ('systemd-journal-upload.service', NODECONF),
                    'mask': (),
                    'required': ('cuems-node.target', 'cuems-controller.target', ENGINE)},
     'node': {'unmask': (),
              'enable': ('cuems-node.target', 'systemd-journal-upload.service'),
-             'disable': CONTROLLER_UNITS + ('cuems-nodeconf.service',),
+             'disable': CONTROLLER_UNITS + (NODECONF,),
              # Masked, not only disabled: installing the engine package enables
-             # and starts both engines on any box.
-             'mask': (ENGINE,),
+             # and starts both engines on any box. nodeconf as the manual lists did.
+             'mask': (ENGINE, NODECONF),
              'required': ('cuems-node.target',)},
 }
 
@@ -149,6 +156,23 @@ def set_stanza(text, iface, address):
     return text[:match.start()] + new + text[match.end():]
 
 
+def interfaces_kind(text):
+    if re.search(r'^iface bond0 ', text, re.M):
+        return 'controller'
+    return 'node' if re.search(r'^iface bridge0 ', text, re.M) else 'other'
+
+
+def keep_interfaces(system):
+    """Copy the file about to be replaced to the name that says what it is."""
+    current = system.read(INTERFACES)
+    if current is None:
+        return
+    kind = interfaces_kind(current)
+    suffix = {'controller': KEPT_CONTROLLER, 'node': KEPT_NODE, 'other': KEPT_OTHER}[kind]
+    if kind != 'other' or system.read(INTERFACES + suffix) is None:
+        system.write(INTERFACES + suffix, current)
+
+
 def interfaces_text(system, role, address, warnings):
     current = system.read(INTERFACES) or ''
     if not current.endswith('\n'):
@@ -158,10 +182,15 @@ def interfaces_text(system, role, address, warnings):
         # No Wi-Fi on a node: it is left defined and down.
         text = re.sub(r'^auto lo wifi0[ \t]*$', 'auto lo', text, flags=re.M)
         return set_stanza(text, 'bridge0', address)
-    if re.search(r'^iface bond0 ', current, re.M):
+    if interfaces_kind(current) == 'controller':
         # bond0 belongs to the site and to cuems-net-mode: only the cluster
         # port is the role's.
         return set_stanza(current, 'ethernet1', CONTROLLER_ADDRESS)
+    kept = system.read(INTERFACES + KEPT_CONTROLLER)
+    if kept is not None and interfaces_kind(kept) == 'controller':
+        warnings.append(f'the controller network file comes back from /{INTERFACES}'
+                        f'{KEPT_CONTROLLER}, as it was when this box stopped being one')
+        return set_stanza(kept, 'ethernet1', CONTROLLER_ADDRESS)
     mode = re.findall(r'^NET_MODE=(\S+)', system.read(NET_MODE_CONF) or '', re.M)
     if mode and mode[-1] in ('cable-static', 'ap'):
         warnings.append(f'the network file is the standard controller one. After the reboot run '
@@ -327,6 +356,11 @@ def planned_units(system, role):
     states = {u: unit_state(system, u)
               for u in sorted({u for key in ('unmask', 'enable', 'disable', 'mask')
                                for u in wanted[key]} | set(wanted['required']))}
+    if ENGINE in wanted['mask'] and states[ENGINE] != 'masked':
+        local = system.path(f'etc/systemd/system/{ENGINE}')
+        if local.exists() and not local.is_symlink():
+            raise RoleError(f'/etc/systemd/system/{ENGINE} is a local copy of the unit and '
+                            'stops it being masked: move it away first')
     missing = [u for u in wanted['required'] if not states[u]]
     if missing:
         raise RoleError(f'these units do not exist here: {", ".join(missing)}')
@@ -342,7 +376,9 @@ def planned_units(system, role):
         if states[unit] == 'disabled':
             steps.append(('enable', unit))
     for unit in wanted['mask']:
-        if states[unit] and states[unit] != 'masked':
+        # The engine even when it is not installed: a later install must find
+        # it masked.
+        if states[unit] != 'masked' and (states[unit] or unit == ENGINE):
             steps.append(('mask', unit))
     return steps, [u for u in wanted['enable'] if states[u] == 'masked']
 
@@ -392,8 +428,8 @@ def set_role(system, platform, role, address=None, controller=CONTROLLER_ADDRESS
         if system.run(['systemctl', 'is-active', '--quiet', CONTROLLER_PATH]).returncode == 0:
             raise RoleError(f'{CONTROLLER_PATH} could not be stopped: nothing was written')
 
-    if INTERFACES in changed and system.read(INTERFACES) is not None:
-        system.write(INTERFACES + BACKUP, system.read(INTERFACES))
+    if INTERFACES in changed:
+        keep_interfaces(system)
     for rel, text in changed.items():
         if text is None:
             system.path(rel).unlink(missing_ok=True)
@@ -460,7 +496,8 @@ def main(argv=None, system=None, platform=None):
     for change in result.changes:
         print(f'{"would " if args.dry_run else ""}{change}')
     if not args.dry_run:
-        print(f'This box is now set up as a {args.role}. Reboot to apply it.')
+        print(f'This box is now set up as a {args.role}. Reboot now: until then it is half '
+              'one thing and half the other.')
     return 0
 
 

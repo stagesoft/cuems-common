@@ -156,6 +156,7 @@ def test_a_node_switches_the_controller_units_off_and_masks_its_engine(box):
         assert box.units[unit] == 'disabled', unit
     # Masked: installing the engine package again cannot start it.
     assert box.units['cuems-controller-engine.service'] == 'masked'
+    assert box.units['cuems-nodeconf.service'] == 'masked'
     assert box.units['cuems-node.target'] == 'enabled'
     assert box.units['systemd-journal-upload.service'] == 'enabled'
 
@@ -178,10 +179,55 @@ def test_a_node_leaves_the_wifi_down(box):
     assert ['lo'] in auto and not any('wifi0' in words for words in auto)
 
 
-def test_the_interfaces_file_it_replaces_is_kept(box):
+def test_the_controller_network_file_is_kept(box):
     before = box.read(INTERFACES)
     box.role('node')
-    assert box.read(INTERFACES + sr.BACKUP) == before
+    assert box.read(INTERFACES + sr.KEPT_CONTROLLER) == before
+
+
+def site_bond(box):
+    own = box.read(INTERFACES).replace(
+        'iface bond0 inet dhcp\n',
+        'iface bond0 inet dhcp\n\thwaddress ether 02:00:00:00:00:09\n')
+    box.write(INTERFACES, own)
+    return own
+
+
+def test_there_and_back_keeps_the_sites_bond(box):
+    """A round trip must not lose what was set on the controller's bond."""
+    site_bond(box)
+    box.role('controller')
+    before = box.read(INTERFACES)
+    box.role('node')
+    box.role('node', address='169.254.0.12')
+    box.path_active = True
+    result = box.role('controller')
+    assert box.read(INTERFACES) == before
+    assert any(sr.KEPT_CONTROLLER in w for w in result.warnings)
+
+
+def test_a_second_trip_does_not_lose_the_kept_controller_file(box):
+    own = site_bond(box)
+    box.role('node')
+    box.role('node', address='169.254.0.12')
+    assert box.read(INTERFACES + sr.KEPT_CONTROLLER) == own
+
+
+def test_a_hand_edited_node_file_is_kept(box):
+    box.role('node')
+    edited = box.read(INTERFACES) + '# by hand\n'
+    box.write(INTERFACES, edited)
+    box.role('node', address='169.254.0.12')
+    assert box.read(INTERFACES + sr.KEPT_NODE) == edited
+
+
+def test_an_unknown_file_is_kept_once_and_never_overwritten(box):
+    box.write(INTERFACES, 'auto eth0\niface eth0 inet dhcp\n')
+    box.role('node')
+    assert box.read(INTERFACES + sr.KEPT_OTHER) == 'auto eth0\niface eth0 inet dhcp\n'
+    box.write(INTERFACES, 'auto eth1\niface eth1 inet dhcp\n')
+    box.role('node')
+    assert box.read(INTERFACES + sr.KEPT_OTHER) == 'auto eth0\niface eth0 inet dhcp\n'
 
 
 @pytest.mark.parametrize('controller', ['169.254.0.1', '169.254.7.7'])
@@ -302,9 +348,9 @@ def test_there_and_back_gives_the_same_controller(box):
     box.role('node')
     box.path_active = True
     box.role('controller')
-    after = box.snapshot()
-    kept = INTERFACES + sr.BACKUP
-    born.pop(kept, None), after.pop(kept, None)
+    after = {k: v for k, v in box.snapshot().items()
+             if not k.startswith(INTERFACES + '.cuems-')}
+    born = {k: v for k, v in born.items() if not k.startswith(INTERFACES + '.cuems-')}
     assert after == born
     assert box.units == born_units
 
@@ -373,6 +419,7 @@ def test_a_site_network_mode_is_pointed_out_when_the_bond_is_rewritten(box):
     box.role('node')
     box.path_active = True
     box.write('etc/cuems/net-mode.conf', 'NET_MODE=cable-static\n')
+    (box.root / (INTERFACES + sr.KEPT_CONTROLLER)).unlink()
     assert any('cuems-net-mode cable-static' in w for w in box.role('controller').warnings)
 
 
@@ -494,3 +541,24 @@ def test_exit_codes_and_the_call_for_a_reboot(box, capsys):
     with pytest.raises(SystemExit) as e:
         run('node')
     assert e.value.code == 2
+
+
+def test_the_engine_is_masked_even_when_its_package_is_absent(box):
+    """A later install must not find it free to start."""
+    del box.units['cuems-controller-engine.service']
+    box.role('node')
+    assert box.units['cuems-controller-engine.service'] == 'masked'
+
+
+def test_a_local_copy_of_the_engine_unit_stops_it_before_anything_is_written(box):
+    box.write('etc/systemd/system/cuems-controller-engine.service', '[Service]\n')
+    before = box.snapshot()
+    with pytest.raises(sr.RoleError, match='etc/systemd/system/cuems-controller-engine'):
+        box.role('node')
+    assert box.snapshot() == before
+    assert not [c for c in box.calls if c[1] in ('enable', 'disable', 'mask', 'unmask')]
+
+
+def test_the_reboot_is_asked_for_as_a_must(box, capsys):
+    assert sr.main(['node', NODE_ADDR], system=box.system(), platform=cp) == 0
+    assert 'Reboot now' in capsys.readouterr().out
