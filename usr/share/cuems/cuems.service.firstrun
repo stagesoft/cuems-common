@@ -1,16 +1,19 @@
+<!-- SPDX-FileContributor: Ion Reguera <ion@stagelab.coop> -->
+<!-- The all-zero uuid is a sentinel: whoever installs this record on a box
+     replaces it with the uuid of that box. -->
 <service-group>
   <name replace-wildcards="yes">%h</name>
   <service protocol="ipv4">
     <type>_cuems_nodeconf._tcp</type>
     <port>9000</port>
     <txt-record>node_type=firstrun</txt-record>
-    <txt-record>uuid=a3811d78-099f-11f0-a075-00e04c01b7e3</txt-record>
+    <txt-record>uuid=00000000-0000-0000-0000-000000000000</txt-record>
   </service>
 
   <service protocol="ipv4">
     <type>_cuems_osc._tcp</type>
     <port>9090</port>
     <txt-record>node_type=firstrun</txt-record>
-    <txt-record>uuid=a3811d78-099f-11f0-a075-00e04c01b7e3</txt-record>
+    <txt-record>uuid=00000000-0000-0000-0000-000000000000</txt-record>
   </service>
 </service-group>
