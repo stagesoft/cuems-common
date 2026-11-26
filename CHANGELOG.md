@@ -17,6 +17,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 MTC-bias latency compensation completed for the video pipeline; audio stack hardened against Pipewire/Wireplumber interference; OLA DMX infrastructure packaged as first-class CUEMS services; all services migrated to the dedicated `cuems` system user with uniform security hardening.
 
+### Fixed
+
+- **Build:** `dpkg-buildpackage` no longer runs the workspace `Makefile`. Its `clean` step, which a plain build runs first, ran `make clean`, and that removes git worktrees of other repositories. Every `dh_auto_*` step is now empty.
+
 ### Added
 
 - **Controller network modes** (1.3.0-23) — `/etc/cuems/net-mode.conf` (`NET_MODE=auto|cable-dhcp|cable-static|ap|manual`, `AP_ARMED=yes|no`) and the operator tool `/usr/bin/cuems-net-mode {status [--check]|apply [--fix-now]|<mode>} [--yes]`. `auto` is the standard: a lease when a DHCP server answers, `192.168.6.1` when none does (asking again every minute, and **never** serving DHCP on the cable), the WiFi AP when there is no cable. A missing file or an unknown value means `manual`, in which the package does nothing — so a file-copy deploy, which runs no postinst, inherits no new behaviour. Everything acts on a controller only: `/etc/cuems/master.ip` **and** `bond0`. Written after the taller power cut of 2026-09-29, where three controllers that booted before their router served `192.168.6.0/24` on the wired LAN, to each other included. Plan and review: `Plans/2026-09-29-controller-network-modes.md`.
